@@ -1277,6 +1277,9 @@ func (service *RemoteClusterService) formErrorFromValidatingRemotehost(ref *meta
 	} else {
 		// if encryption is on, several different errors could be returned here, e.g., invalid hostname, invalid certificate, certificate by unknown authority, etc.
 		// just return the err
+		if err == nil {
+			err = fmt.Errorf("refName: %v hostname: %v port: %v", ref.Name(), hostName, port)
+		}
 		return wrapAsInvalidRemoteClusterError(err.Error())
 	}
 }
