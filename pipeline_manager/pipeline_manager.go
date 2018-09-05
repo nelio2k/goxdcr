@@ -54,8 +54,10 @@ type PipelineManager struct {
 type Pipeline_mgr_iface interface {
 	// External APIs
 	InitiateRepStatus(pipelineName string) error
+	ReInitializeStreams(pipelineName string) error
 	UpdatePipeline(pipelineName string, cur_err error) error
 	DeletePipeline(pipelineName string) error
+	CheckPipelines()
 
 	// Internal APIs
 	OnExit() error
@@ -69,6 +71,7 @@ type Pipeline_mgr_iface interface {
 	AllReplications() []string
 	AllReplicationsForTargetCluster(targetClusterUuid string) []string
 	RemoveReplicationStatus(topic string) error
+	RemoveReplicationCheckpoints(topic string) error
 	AllReplicationSpecsForTargetCluster(targetClusterUuid string) map[string]*metadata.ReplicationSpecification
 	GetOrCreateReplicationStatus(topic string, cur_err error) (*pipeline.ReplicationStatus, error)
 	GetLastUpdateResult(topic string) bool // whether or not the last update was successful
@@ -169,6 +172,20 @@ func (pipelineMgr *PipelineManager) RemoveReplicationStatus(topic string) error 
 	}
 
 	return nil
+}
+
+func (pipelineMgr *PipelineManager) RemoveReplicationCheckpoints(topic string) error {
+	rep_status, err := pipelineMgr.ReplicationStatus(topic)
+	if err != nil {
+		return err
+	}
+	replId := rep_status.RepId()
+
+	err = pipelineMgr.checkpoint_svc.DelCheckpointsDocs(replId)
+	if err != nil {
+		pipelineMgr.logger.Errorf("Unable to delete checkpoints for pipeline %v\n", topic)
+	}
+	return err
 }
 
 // External APIs
@@ -581,6 +598,10 @@ func (pipelineMgr *PipelineManager) GetLastUpdateResult(topic string) bool {
 		updater := repStatus.Updater().(*PipelineUpdater)
 		return updater.getLastResult()
 	}
+}
+
+func (pipelineMgr *PipelineManager) ReInitializeStreams(pipelineName string) error {
+	return pipelineMgr.serializer.ReInit(pipelineName)
 }
 
 // Bunch of getters

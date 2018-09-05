@@ -1,4 +1,4 @@
-// Copyright (c) 2013 Couchbase, Inc.
+// Copyright (c) 2013-2019 Couchbase, Inc.
 // Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file
 // except in compliance with the License. You may obtain a copy of the License at
 //   http://www.apache.org/licenses/LICENSE-2.0
@@ -17,13 +17,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	mcc "github.com/couchbase/gomemcached/client"
 	"github.com/couchbase/goxdcr/log"
+	"github.com/couchbaselabs/gojsonsm"
+	"io/ioutil"
 	"math"
 	mrand "math/rand"
 	"net"
 	"net/http"
 	"net/url"
 	"reflect"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -888,4 +892,92 @@ func ConstructVbServerMap(vbList []uint16, serverVbMap map[string][]uint16) map[
 		}
 	}
 	return vbServerMap
+}
+
+func UpgradeFilter(oldFilter string) string {
+	return fmt.Sprintf("KEY LIKE \"%v\"", oldFilter)
+}
+
+func ValidateAdvFilter(filter string) error {
+	_, err := gojsonsm.ParseSimpleExpression(filter)
+	if err != nil {
+		err = fmt.Errorf("Error validating advanced filter: %v", err.Error())
+	}
+	return err
+}
+
+// Given a destination, insert the "ins" at pos
+// This insert should not generate garbage unless a contiguous block of memory cannot be found
+func CleanInsert(dest, ins []byte, pos int) ([]byte, error) {
+	insLen := len(ins)
+
+	if pos >= len(dest) {
+		return nil, ErrorInvalidInput
+	}
+
+	dest = append(dest, ins...)
+	copy(dest[pos+insLen:], dest[pos:])
+	copy(dest[pos:], ins[:])
+	return dest, nil
+}
+
+var AddFilterKeyExtraBytes int = 6 + len(ReservedWordsMap["KEY"])
+
+// For advanced filtering, need to populate key into the actual data to be filtered
+func AddKeyToBeFiltered(currentValue []byte, key []byte) ([]byte, error) {
+	if string(currentValue[0]) != "{" {
+		return currentValue, ErrorInvalidInput
+	}
+	keyBytesToBeInserted := json.RawMessage(fmt.Sprintf("\"%v\":\"%v\",", ReservedWordsMap["KEY"], string(key)))
+	return CleanInsert(currentValue, keyBytesToBeInserted, 1)
+}
+
+var AddFilterXattrExtraBytes int = 4 + len(ReservedWordsMap["META"])
+
+func AddXattrToBeFiltered(currentValue []byte, xAttr []byte) ([]byte, error) {
+	if string(currentValue[0]) != "{" {
+		return currentValue, ErrorInvalidInput
+	}
+	// Always insert Xattr at the end, no need for comma at the end
+	xattrBytesToBeInserted := json.RawMessage(fmt.Sprintf(",\"%v\":%v", ReservedWordsMap["META"], string(xAttr)))
+	// Look for reverse pos, for the last }
+	var i int
+	for i = len(currentValue) - 1; string(currentValue[i]) != "}" && i >= 0; i-- {
+	}
+	if i < 0 {
+		return currentValue, ErrorInvalidInput
+	}
+	return CleanInsert(currentValue, xattrBytesToBeInserted, i)
+}
+
+func RetrieveUprJsonAndConvert(fileName string) (*mcc.UprEvent, error) {
+	data, err := ioutil.ReadFile(fileName)
+	if err != nil {
+		return nil, err
+	}
+
+	var uprEvent mcc.UprEvent
+	err = json.Unmarshal(data, &uprEvent)
+	if err != nil {
+		return nil, err
+	}
+
+	return &uprEvent, nil
+}
+
+func ReplaceKeyWordsForExpression(expression string) string {
+	// There's no lookaround because pcre is not in yet. So do dummy substitution and then substitute back
+	// Replace KEY with XDCRInternalKey
+	for old, new := range ReservedWordsMap {
+		// substitute out escaped literals
+		regex := regexp.MustCompile(old)
+		expression = regex.ReplaceAllString(expression, fmt.Sprintf("`%s`", new))
+	}
+
+	// There's no lookaround so go through and for any ``XDCRInternalKey``, change it back to KEY
+	for new, old := range ReservedWordsMap {
+		debugStr := fmt.Sprintf("``%v``", old)
+		expression = strings.Replace(expression, debugStr, new, -1)
+	}
+	return expression
 }

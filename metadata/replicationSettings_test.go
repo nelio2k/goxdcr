@@ -2,6 +2,7 @@ package metadata
 
 import (
 	"fmt"
+	"github.com/couchbase/goxdcr/base"
 	"github.com/stretchr/testify/assert"
 	"testing"
 )
@@ -54,4 +55,26 @@ func TestValidateCompressionSetting(t *testing.T) {
 	converted, err = ValidateAndConvertSettingsValue(CompressionType, "asdf", "", true, false)
 	assert.NotNil(err)
 	fmt.Println("============== Test case end: TestValidateCompressionSetting =================")
+}
+
+func TestDefaultFilterLevel(t *testing.T) {
+	assert := assert.New(t)
+	fmt.Println("============== Test case start: TestDefaultFilterLevel =================")
+	defaultSettings := *DefaultSettings()
+	assert.Equal(1, defaultSettings.FilterVersion)
+	fmt.Println("============== Test case end: TestDefaultFilterLevel =================")
+}
+
+func TestViewOldFilterAsNew(t *testing.T) {
+	assert := assert.New(t)
+	fmt.Println("============== Test case start: TestViewOldFilterAsNew =================")
+	settings := *DefaultSettings()
+	settings.FilterVersion = 0
+	var expression string = "^abc"
+	settings.FilterExpression = expression
+
+	outMap := settings.ToOutputMap()
+	assert.Equal(base.UpgradeFilter(expression), outMap[FilterExpression])
+
+	fmt.Println("============== Test case end: TestViewOldFilterAsNew =================")
 }

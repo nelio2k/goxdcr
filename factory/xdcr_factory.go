@@ -541,7 +541,11 @@ func (xdcrf *XDCRFactory) constructRouter(id string, spec *metadata.ReplicationS
 	logger_ctx *log.LoggerContext) (*parts.Router, error) {
 	routerId := "Router" + PART_NAME_DELIMITER + id
 	router, err := parts.NewRouter(routerId, spec.Id, spec.Settings.FilterExpression, downStreamParts, vbNozzleMap, sourceCRMode, logger_ctx, pipeline_manager.NewMCRequestObj, xdcrf.utils)
-	xdcrf.logger.Infof("Constructed router %v", routerId)
+	if err != nil {
+		xdcrf.logger.Errorf("Error constructing router %v", err.Error())
+	} else {
+		xdcrf.logger.Infof("Constructed router %v", routerId)
+	}
 	return router, err
 }
 

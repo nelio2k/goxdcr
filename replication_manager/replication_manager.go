@@ -69,7 +69,7 @@ type replicationManager struct {
 	// supervises the livesness of adminport
 	supervisor.GenericSupervisor
 	// Single instance of pipeline_mgr here instead of using a global
-	pipelineMgr *pipeline_manager.PipelineManager
+	pipelineMgr pipeline_manager.Pipeline_mgr_iface
 
 	//replication specification service handle
 	repl_spec_svc service_def.ReplicationSpecSvc
@@ -556,9 +556,30 @@ func UpdateDefaultReplicationSettings(settings metadata.ReplicationSettingsMap, 
 	return nil, nil
 }
 
+func compressionSettingsChanged(changedSettingsMap metadata.ReplicationSettingsMap, oldCompressionType int) bool {
+	if compressionType, ok := changedSettingsMap[metadata.CompressionType]; ok && (base.GetCompressionType(compressionType.(int)) != base.CompressionTypeNone) &&
+		base.GetCompressionType(oldCompressionType) != base.GetCompressionType(compressionType.(int)) {
+		return true
+	}
+	return false
+}
+
+func filterSettingsChanged(changedSettingsMap metadata.ReplicationSettingsMap, oldFilterExpression string) bool {
+	if newFilterExpression, ok := changedSettingsMap[FilterExpression]; ok {
+		if newFilterExpression != oldFilterExpression {
+			return true
+		}
+	}
+	return false
+}
+
 //update the per-replication settings
 func UpdateReplicationSettings(topic string, settings metadata.ReplicationSettingsMap, realUserId *service_def.RealUserId) (map[string]error, error) {
 	logger_rm.Infof("Update replication settings for %v, settings=%v\n", topic, settings.CloneAndRedact())
+
+	var internalChangesTookPlace bool
+	_, incomingFilterHasRestreamFlag := settings[metadata.FilterSkipRestream]
+
 	// read replication spec with the specified replication id
 	replSpec, err := ReplicationSpecService().ReplicationSpec(topic)
 	if err != nil {
@@ -571,30 +592,66 @@ func UpdateReplicationSettings(topic string, settings metadata.ReplicationSettin
 		return nil, err
 	}
 
+	defaultSettings, err := ReplicationSettingsService().GetDefaultReplicationSettings()
+	if err != nil {
+		return nil, err
+	}
+
 	// Save some old values that we may need
 	oldFilterExpression := replSpec.Settings.FilterExpression
 	oldCompressionType := replSpec.Settings.CompressionType
+	filterVersion := replSpec.Settings.FilterVersion
+	filterSkipRestream := replSpec.Settings.FilterSkipRestream
 
 	// update replication spec with input settings
 	changedSettingsMap, errorMap := replSpec.Settings.UpdateSettingsFromMap(settings)
 
-	// Only Re-evaluate Compression pre-requisites if it is turned on and actually switched algorithms to catch any cluster-wide compression changes
-	if compressionType, ok := changedSettingsMap[metadata.CompressionType]; ok && (base.GetCompressionType(compressionType.(int)) != base.CompressionTypeNone) &&
-		base.GetCompressionType(oldCompressionType) != base.GetCompressionType(compressionType.(int)) {
+	if len(errorMap) != 0 {
+		return errorMap, nil
+	}
+
+	// If nonfilter-settings invoked this change, take this opportunity to fix stale infos if there is an existing expression present
+	if !filterSettingsChanged(changedSettingsMap, oldFilterExpression) && len(oldFilterExpression) > 0 {
+		fix := false
+		if filterVersion == 0 {
+			newFilter := base.UpgradeFilter(oldFilterExpression)
+			settings[metadata.FilterExpression] = newFilter
+			settings[metadata.FilterVersion] = 1
+			fix = true
+		}
+		if filterSkipRestream && settings[metadata.FilterSkipRestream] != defaultSettings[metadata.FilterSkipRestream] {
+			// The skipRestream flag should *not* be set if filter is not being changed. Reset it to default value
+			settings[metadata.FilterSkipRestream] = defaultSettings[metadata.FilterSkipRestream]
+			fix = true
+		}
+		if fix {
+			_, errorMap = replSpec.Settings.UpdateSettingsFromMap(settings)
+			if len(errorMap) != 0 {
+				return errorMap, fmt.Errorf("Internal XDCR Error related to internal filter management: %v", errorMap)
+			}
+			internalChangesTookPlace = true
+		}
+	} else {
+		// When user changes the filter, but does not send the restream flag, the restream flag will take after the
+		// last time the replication was changed. So if user did not send in the restream flag, and the current spec
+		// differs from the default, forcefully set it to default to enforce consistency
+		if !incomingFilterHasRestreamFlag && filterSkipRestream != defaultSettings[metadata.FilterSkipRestream] {
+			settings[metadata.FilterSkipRestream] = defaultSettings[metadata.FilterSkipRestream]
+			_, errorMap = replSpec.Settings.UpdateSettingsFromMap(settings)
+			if len(errorMap) != 0 {
+				return errorMap, fmt.Errorf("Internal XDCR Error related to internal filter management: %v", errorMap)
+			}
+			internalChangesTookPlace = true
+		}
+	}
+
+	if compressionSettingsChanged(changedSettingsMap, oldCompressionType) || filterSettingsChanged(changedSettingsMap, oldFilterExpression) {
 		validateRoutineErrorMap, validateErr := ReplicationSpecService().ValidateReplicationSettings(replSpecificFields.SourceBucketName,
 			replSpecificFields.RemoteClusterName, replSpecificFields.TargetBucketName, settings)
 		if len(validateRoutineErrorMap) > 0 {
 			return validateRoutineErrorMap, nil
 		} else if validateErr != nil {
 			return nil, validateErr
-		}
-	}
-
-	// enforce that filter expression cannot be changed
-	newFilterExpression, ok := settings[FilterExpression]
-	if ok {
-		if newFilterExpression != oldFilterExpression {
-			errorMap[FilterExpression] = errors.New("Filter expression cannot be changed after the replication is created")
 		}
 	}
 
@@ -621,6 +678,13 @@ func UpdateReplicationSettings(topic string, settings metadata.ReplicationSettin
 			}
 		}
 		logger_rm.Infof("Done with replication settings auditing for replication %v\n", topic)
+
+	} else if internalChangesTookPlace {
+		err = ReplicationSpecService().SetReplicationSpec(replSpec)
+		if err != nil {
+			return nil, err
+		}
+		logger_rm.Infof("Internally updated replication settings for replication %v\n", topic)
 
 	} else {
 		logger_rm.Infof("Did not update replication settings for replication %v since there are no real changes", topic)

@@ -1,4 +1,4 @@
-// Copyright (c) 2013 Couchbase, Inc.
+// Copyright (c) 2013-2019 Couchbase, Inc.
 // Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file
 // except in compliance with the License. You may obtain a copy of the License at
 //   http://www.apache.org/licenses/LICENSE-2.0
@@ -462,6 +462,14 @@ func (service *ReplicationSpecService) validateReplicationSettingsInternal(error
 			return nil, warnings
 		}
 	}
+
+	if filter, ok := settings[metadata.FilterExpression].(string); ok {
+		err = base.ValidateAdvFilter(filter)
+		if err != nil {
+			return err, warnings
+		}
+	}
+
 	return nil, warnings
 }
 
@@ -657,7 +665,11 @@ func (service *ReplicationSpecService) validateBucket(sourceBucket, targetCluste
 }
 
 func (service *ReplicationSpecService) AddReplicationSpec(spec *metadata.ReplicationSpecification, additionalInfo string) error {
-	service.logger.Infof("Start AddReplicationSpec, spec=%v, additionalInfo=%v\n", spec, additionalInfo)
+	if spec == nil {
+		service.logger.Errorf("Start AddReplicationSpec has nil spec")
+		return base.ErrorInvalidInput
+	}
+	service.logger.Infof("Start AddReplicationSpec, spec=%v, additionalInfo=%v\n", spec.String(), additionalInfo)
 
 	value, err := json.Marshal(spec)
 	if err != nil {

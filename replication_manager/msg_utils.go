@@ -69,6 +69,8 @@ const (
 	ReplicationTypeValue           = "continuous"
 	GoMaxProcs                     = "goMaxProcs"
 	GoGC                           = "goGC"
+	FilterVersion                  = "filterVersion"
+	FilterSkipRestream             = "filterSkipRestream"
 )
 
 // constants for parsing create replication response
@@ -138,6 +140,8 @@ var RestKeyToSettingsKeyMap = map[string]string{
 	GoMaxProcs:                     metadata.GoMaxProcs,
 	GoGC:                           metadata.GoGC,
 	base.CompressionTypeREST: metadata.CompressionType,
+	FilterVersion:            metadata.FilterVersion,
+	FilterSkipRestream:       metadata.FilterSkipRestream,
 	/*MaxExpectedReplicationLag:      metadata.MaxExpectedReplicationLag,
 	TimeoutPercentageCap:           metadata.TimeoutPercentageCap,*/
 }
@@ -160,6 +164,8 @@ var SettingsKeyToRestKeyMap = map[string]string{
 	metadata.GoMaxProcs:                     GoMaxProcs,
 	metadata.GoGC:                           GoGC,
 	metadata.CompressionType:                base.CompressionTypeREST,
+	metadata.FilterVersion:                  FilterVersion,
+	metadata.FilterSkipRestream:             FilterSkipRestream,
 	/*metadata.MaxExpectedReplicationLag:      MaxExpectedReplicationLag,
 	metadata.TimeoutPercentageCap:           TimeoutPercentageCap,*/
 }
@@ -235,7 +241,7 @@ func getReplicationDocMap(replSpec *metadata.ReplicationSpecification) map[strin
 		}
 
 		// copy other replication settings into replication doc
-		for key, value := range replSpec.Settings.ToMap() {
+		for key, value := range replSpec.Settings.ToRESTMap() {
 			if key != metadata.ReplicationType && key != metadata.Active {
 				replDocMap[key] = value
 			}
@@ -525,19 +531,28 @@ func DecodeCreateReplicationRequest(request *http.Request) (justValidate bool, f
 		errorsMap[key] = value
 	}
 
+	err = filterExpressionEnterpriseCheck(settings)
+	if err != nil {
+		errorsMap[FilterExpression] = err
+	}
+
+	return
+}
+
+func filterExpressionEnterpriseCheck(settings metadata.ReplicationSettingsMap) error {
 	isEnterprise, err := XDCRCompTopologyService().IsMyClusterEnterprise()
 	if err != nil {
-		return
+		return err
 	}
 
 	if !isEnterprise {
 		filterExpression, ok := settings[metadata.FilterExpression]
 		if ok && len(filterExpression.(string)) > 0 {
-			errorsMap[FilterExpression] = errors.New("Filter expression can be specified in Enterprise edition only")
+			return errors.New("Filter expression can be specified in Enterprise edition only")
 		}
 	}
 
-	return
+	return nil
 }
 
 func DecodeChangeReplicationSettings(request *http.Request, replicationId string) (justValidate bool, settings metadata.ReplicationSettingsMap, errorsMap base.ErrorMap) {
@@ -575,6 +590,11 @@ func DecodeChangeReplicationSettings(request *http.Request, replicationId string
 	settings, settingsErrorsMap := DecodeSettingsFromRequest(request, isDefaultSettings, true, isCapi)
 	for key, value := range settingsErrorsMap {
 		errorsMap[key] = value
+	}
+
+	err = filterExpressionEnterpriseCheck(settings)
+	if err != nil {
+		errorsMap[FilterExpression] = err
 	}
 
 	return
@@ -624,6 +644,11 @@ func DecodeSettingsFromRequest(request *http.Request, isDefaultSettings bool, is
 	if err != nil {
 		errorsMap[base.PlaceHolderFieldKey] = err
 		return nil, errorsMap
+	}
+
+	if !isUpdate {
+		// From Mad-Hatter and onwards, only allow creation of advanced filter
+		settings[metadata.FilterVersion] = 1
 	}
 
 	for key, valArr := range request.Form {
@@ -796,7 +821,7 @@ func convertSettingsToRestSettingsMap(settings *metadata.ReplicationSettings, is
 	if isDefaultSettings {
 		settingsMap = settings.ToDefaultSettingsMap()
 	} else {
-		settingsMap = settings.ToMap()
+		settingsMap = settings.ToOutputMap()
 	}
 
 	for key, value := range settingsMap {

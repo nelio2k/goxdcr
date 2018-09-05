@@ -3,6 +3,7 @@ package pipeline_manager
 import (
 	"errors"
 	"fmt"
+	"github.com/couchbase/goxdcr/base"
 	"github.com/couchbase/goxdcr/log"
 	"github.com/couchbase/goxdcr/pipeline"
 	"sync"
@@ -15,10 +16,11 @@ var ErrQueueMaxed error = errors.New("The requested action has been persisted in
 var SerializerStoppedErr error = errors.New("Pipeline Manager is shutting down. The requested action is unable to be processed.")
 
 const (
-	PipelineGetOrCreate PipelineMgtOpType = iota
-	PipelineInit        PipelineMgtOpType = iota
-	PipelineUpdate      PipelineMgtOpType = iota
-	PipelineDeletion    PipelineMgtOpType = iota
+	PipelineGetOrCreate  PipelineMgtOpType = iota
+	PipelineInit         PipelineMgtOpType = iota
+	PipelineUpdate       PipelineMgtOpType = iota
+	PipelineDeletion     PipelineMgtOpType = iota
+	PipelineReinitStream PipelineMgtOpType = iota
 )
 
 type PipelineOpSerializerIface interface {
@@ -26,6 +28,7 @@ type PipelineOpSerializerIface interface {
 	Delete(topic string) error
 	Update(topic string, err error) error
 	Init(topic string) error
+	ReInit(topic string) error
 
 	// Synchronous User APIs - call and get data from a channel
 	GetOrCreateReplicationStatus(topic string, cur_err error) (*pipeline.ReplicationStatus, error)
@@ -117,6 +120,18 @@ func (serializer *PipelineOpSerializer) Init(topic string) error {
 	initJob.pipelineTopic = topic
 
 	return serializer.distributeJob(initJob)
+}
+
+func (serializer *PipelineOpSerializer) ReInit(topic string) error {
+	if serializer.isStopped() {
+		return SerializerStoppedErr
+	}
+
+	var resetJob Job
+	resetJob.jobType = PipelineReinitStream
+	resetJob.pipelineTopic = topic
+
+	return serializer.distributeJob(resetJob)
 }
 
 // Synchronous call
@@ -241,6 +256,33 @@ forloop:
 				if err != nil {
 					serializer.logger.Warnf("Error updating pipeline %v. err=%v", job.pipelineTopic, err)
 				}
+			case PipelineReinitStream:
+				// Any errors here would be considered critical, as filters in replication spec has already been
+				// changed but replication is not reflecting the changes. Raise UI errors to get users' attention
+				// as this would cause serious data inconsistencies
+				rep_status, err := serializer.pipelineMgr.GetOrCreateReplicationStatus(job.pipelineTopic, nil)
+				if err != nil {
+					errMsg := fmt.Sprintf("Error during re-intializing XDCR replication: getting replication status for pipeline %v, err=%v", job.pipelineTopic, err)
+					serializer.logger.Errorf(errMsg)
+					serializer.pipelineMgr.GetLogSvc().Write(errMsg)
+					continue forloop
+				}
+				errMap := serializer.pipelineMgr.StopPipeline(rep_status)
+				if len(errMap) > 0 {
+					errMsg := fmt.Sprintf("Error during re-initializing XDCR replication: stopping pipeline resulted in err(s)=%v", base.FlattenErrorMap(errMap))
+					serializer.pipelineMgr.GetLogSvc().Write(errMsg)
+					serializer.logger.Errorf(errMsg)
+					continue forloop
+				}
+				err = serializer.pipelineMgr.RemoveReplicationCheckpoints(job.pipelineTopic)
+				if err != nil {
+					errMsg := fmt.Sprintf("Error during re-intializing XDCR replication: removing obsolete checkpoints for pipeline %v, err=%v", job.pipelineTopic, err)
+					serializer.logger.Errorf(errMsg)
+					serializer.pipelineMgr.GetLogSvc().Write(errMsg)
+					continue forloop
+				}
+				// Update() will have its own retry mechanisms
+				serializer.pipelineMgr.Update(job.pipelineTopic, job.errForUpdateOp)
 			default:
 				serializer.logger.Errorf(fmt.Sprintf("Unknown job type: %v -> %v", job.jobType, job))
 			}

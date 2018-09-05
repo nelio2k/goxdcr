@@ -410,3 +410,47 @@ func TestElasticSearch(t *testing.T) {
 
 	fmt.Println("============== Test case start: TestElasticSearch =================")
 }
+
+func TestOriginalRegexInvalidateFilter(t *testing.T) {
+	assert := assert.New(t)
+	fmt.Println("============== Test case start: TestOriginalRegexInvalidateFilter =================")
+	xdcrTopologyMock, metadataSvcMock, uiLogSvcMock, remoteClusterMock,
+		clusterInfoSvcMock, utilitiesMock, replSpecSvc,
+		sourceBucket, targetBucket, targetCluster, settings, clientMock := setupBoilerPlate()
+
+	// Begin mocks
+	setupMocks(base.ConflictResolutionType_Seqno, base.ConflictResolutionType_Seqno,
+		xdcrTopologyMock, metadataSvcMock, uiLogSvcMock, remoteClusterMock,
+		clusterInfoSvcMock, utilitiesMock, replSpecSvc, clientMock, true, /*IsEnterprise*/
+		true /*IsElastic*/, false /*CompressionPass*/)
+
+	// Xmem using elas
+	settings[metadata.FilterExpression] = "^abc"
+
+	_, _, _, _, err, _ := replSpecSvc.ValidateNewReplicationSpec(sourceBucket, targetCluster, targetBucket, settings)
+	assert.NotNil(err)
+
+	fmt.Println("============== Test case end: TestOriginalRegexInvalidateFilter =================")
+}
+
+func TestOriginalRegexUpgradedFilter(t *testing.T) {
+	assert := assert.New(t)
+	fmt.Println("============== Test case start: TestOriginalRegexUpgradedFilter =================")
+	xdcrTopologyMock, metadataSvcMock, uiLogSvcMock, remoteClusterMock,
+		clusterInfoSvcMock, utilitiesMock, replSpecSvc,
+		sourceBucket, targetBucket, targetCluster, settings, clientMock := setupBoilerPlate()
+
+	// Begin mocks
+	setupMocks(base.ConflictResolutionType_Seqno, base.ConflictResolutionType_Seqno,
+		xdcrTopologyMock, metadataSvcMock, uiLogSvcMock, remoteClusterMock,
+		clusterInfoSvcMock, utilitiesMock, replSpecSvc, clientMock, true, /*IsEnterprise*/
+		true /*IsElastic*/, false /*CompressionPass*/)
+
+	// Xmem using elas
+	settings[metadata.FilterExpression] = base.UpgradeFilter("^abc")
+
+	_, _, _, _, err, _ := replSpecSvc.ValidateNewReplicationSpec(sourceBucket, targetCluster, targetBucket, settings)
+	assert.Nil(err)
+
+	fmt.Println("============== Test case end: TestOriginalRegexUpgradedFilter =================")
+}

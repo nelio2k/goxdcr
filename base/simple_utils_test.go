@@ -1,6 +1,7 @@
 package base
 
 import (
+	"encoding/json"
 	"fmt"
 	"github.com/stretchr/testify/assert"
 	"testing"
@@ -41,4 +42,20 @@ func TestMapUnionNils(t *testing.T) {
 	fmt.Println("============== Test case start: TestMapUnionNils =================")
 	assert.Equal(GetUnionOfErrorMapsSize(nil, nil), 0)
 	fmt.Println("============== Test case start: TestMapUnionNils =================")
+}
+
+func TestInSert(t *testing.T) {
+	assert := assert.New(t)
+	fmt.Println("============== Test case start: TestInsert =================")
+	totalBytes := json.RawMessage(`abcdef`)
+	insertBytes := json.RawMessage(`12345`)
+
+	totalBytes, err := CleanInsert(totalBytes, insertBytes, 1)
+	assert.Nil(err)
+
+	resultBytes := json.RawMessage(`a12345bcdef`)
+
+	assert.Equal(resultBytes, totalBytes)
+
+	fmt.Println("============== Test case end: TestInsert =================")
 }

@@ -186,6 +186,21 @@ func (rscl *ReplicationSpecChangeListener) replicationSpecChangeHandlerCallback(
 	if specActive_old && specActive {
 		// if some critical settings have been changed, stop, reconstruct, and restart pipeline
 		if needToReconstructPipeline(oldSettings, newSpec.Settings) {
+			if needToRestreamPipeline(oldSettings, newSpec.Settings) {
+				rscl.logger.Infof("Filter has changed - removing all checkpoints prior to restarting pipeline")
+				retryOp := func() error {
+					err := replication_mgr.pipelineMgr.ReInitializeStreams(topic)
+					if err != nil {
+						rscl.logger.Errorf("Unable to queue re-initialize streams job for pipeline %v to restart: %v", topic, err)
+					}
+					return err
+				}
+				err := rscl.utils.ExponentialBackoffExecutor("specChangeRestreamPipeline", base.PipelineSerializerRetryWaitTime, base.PipelineSerializerMaxRetry, base.PipelineSerializerRetryFactor, retryOp)
+				if err != nil {
+					rscl.logger.Errorf("Unable to queue re-initialize streams job for pipeline %v to restart: %v", topic, err)
+					return err
+				}
+			}
 			rscl.logger.Infof("Restarting pipeline %v since the changes to replication spec are critical\n", topic)
 			return replication_mgr.pipelineMgr.UpdatePipeline(topic, nil)
 		} else {
@@ -240,6 +255,7 @@ func needToReconstructPipeline(oldSettings *metadata.ReplicationSettings, newSet
 	sourceNozzlePerNodeChanged := !(oldSettings.SourceNozzlePerNode == newSettings.SourceNozzlePerNode)
 	targetNozzlePerNodeChanged := !(oldSettings.TargetNozzlePerNode == newSettings.TargetNozzlePerNode)
 	compressionTypeChanged := base.GetCompressionType(oldSettings.CompressionType) != base.GetCompressionType(newSettings.CompressionType)
+	filterChanged := !(oldSettings.FilterExpression == newSettings.FilterExpression)
 
 	// the following may qualify for live update in the future.
 	// batchCount is tricky since the sizes of xmem data channels depend on it.
@@ -248,7 +264,13 @@ func needToReconstructPipeline(oldSettings *metadata.ReplicationSettings, newSet
 	batchSizeChanged := (oldSettings.BatchSize != newSettings.BatchSize)
 
 	return repTypeChanged || sourceNozzlePerNodeChanged || targetNozzlePerNodeChanged ||
-		batchCountChanged || batchSizeChanged || compressionTypeChanged
+		batchCountChanged || batchSizeChanged || compressionTypeChanged || filterChanged
+}
+
+func needToRestreamPipeline(oldSettings *metadata.ReplicationSettings, newSettings *metadata.ReplicationSettings) bool {
+	filterChanged := !(oldSettings.FilterExpression == newSettings.FilterExpression)
+
+	return filterChanged && !newSettings.FilterSkipRestream
 }
 
 func (rscl *ReplicationSpecChangeListener) liveUpdatePipeline(topic string, oldSettings *metadata.ReplicationSettings, newSettings *metadata.ReplicationSettings, newSpecInternalId string) error {

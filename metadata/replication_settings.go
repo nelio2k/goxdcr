@@ -1,4 +1,4 @@
-// Copyright (c) 2013 Couchbase, Inc.
+// Copyright (c) 2013-2019 Couchbase, Inc.
 // Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file
 // except in compliance with the License. You may obtain a copy of the License at
 //   http://www.apache.org/licenses/LICENSE-2.0
@@ -14,7 +14,7 @@ import (
 	"fmt"
 	"github.com/couchbase/goxdcr/base"
 	"github.com/couchbase/goxdcr/log"
-	"regexp"
+	"github.com/couchbaselabs/gojsonsm"
 	"strconv"
 )
 
@@ -38,13 +38,15 @@ const (
 	XmemCertificate                = "certificate"
 	XmemClientCertificate          = "clientCertificate"
 	XmemClientKey                  = "clientKey"
+	FilterVersion                  = "filter_expression_version"
+	FilterSkipRestream             = "filter_skip_restream"
 )
 
 // settings whose default values cannot be viewed or changed through rest apis
-var ImmutableDefaultSettings = [3]string{ReplicationType, FilterExpression, Active}
+var ImmutableDefaultSettings = [4]string{ReplicationType, FilterExpression, Active, FilterVersion}
 
 // settings whose values cannot be changed after replication is created
-var ImmutableSettings = [1]string{FilterExpression}
+var ImmutableSettings = []string{}
 
 var MaxBatchCount = 10000
 
@@ -80,6 +82,8 @@ var PipelineLogLevelConfig = &SettingsConfig{log.LogLevelInfo, nil}
 var PipelineStatsIntervalConfig = &SettingsConfig{1000, &Range{200, 600000}}
 var BandwidthLimitConfig = &SettingsConfig{0, &Range{0, 1000000}}
 var CompressionTypeConfig = &SettingsConfig{base.CompressionTypeAuto, &Range{base.CompressionTypeStartMarker + 1, base.CompressionTypeEndMarker - 1}}
+var FilterVersionConfig = &SettingsConfig{1, &Range{0, 1}}
+var FilterSkipRestreamConfig = &SettingsConfig{false, nil}
 
 var SettingsConfigMap = map[string]*SettingsConfig{
 	ReplicationType:                ReplicationTypeConfig,
@@ -98,6 +102,8 @@ var SettingsConfigMap = map[string]*SettingsConfig{
 	PipelineStatsInterval:          PipelineStatsIntervalConfig,
 	BandwidthLimit:                 BandwidthLimitConfig,
 	CompressionType:                CompressionTypeConfig,
+	FilterVersion:                  FilterVersionConfig,
+	FilterSkipRestream:             FilterSkipRestreamConfig,
 }
 
 /***********************************
@@ -108,7 +114,7 @@ type ReplicationSettings struct {
 	//type - XMEM or CAPI
 	RepType string `json:"type"`
 
-	//the filter expression
+	//the filter expression - can be both version 1 (key-only regex) or version 2 (XDCR Advanced filtering)
 	FilterExpression string `json:"filter_exp"`
 
 	//if the replication is active
@@ -176,6 +182,12 @@ type ReplicationSettings struct {
 	// Compression type - 0: None, 1: Snappy - REST will be inputting with string coming in
 	CompressionType int `json:"compression_type"`
 
+	// 0 - original key-based filter, 1 - Advanced Filtering version
+	FilterVersion int `json:"filter_version"`
+
+	// Sets to true, in conjunction with a filter change means the new filter is to resume w/o removing ckpts
+	FilterSkipRestream bool `json:"filter_skip_restream"`
+
 	// revision number to be used by metadata service. not included in json - not currently being used/set
 	Revision interface{}
 }
@@ -198,6 +210,8 @@ func DefaultSettings() *ReplicationSettings {
 		StatsInterval:                  PipelineStatsIntervalConfig.defaultValue.(int),
 		BandwidthLimit:                 BandwidthLimitConfig.defaultValue.(int),
 		CompressionType:                CompressionTypeConfig.defaultValue.(int),
+		FilterVersion:                  FilterVersionConfig.defaultValue.(int),
+		FilterSkipRestream:             FilterSkipRestreamConfig.defaultValue.(bool),
 	}
 }
 
@@ -400,6 +414,26 @@ func (s *ReplicationSettings) UpdateSettingsFromMap(settingsMap ReplicationSetti
 				s.CompressionType = compressionType
 				changedSettingsMap[key] = compressionType
 			}
+		case FilterVersion:
+			filterVersion, ok := val.(int)
+			if !ok {
+				errorMap[key] = base.IncorrectValueTypeInMapError(key, val, "int")
+				continue
+			}
+			if s.FilterVersion != filterVersion {
+				s.FilterVersion = filterVersion
+				changedSettingsMap[key] = filterVersion
+			}
+		case FilterSkipRestream:
+			filterSkipRestream, ok := val.(bool)
+			if !ok {
+				errorMap[key] = base.IncorrectValueTypeInMapError(key, val, "bool")
+				continue
+			}
+			if s.FilterSkipRestream != filterSkipRestream {
+				s.FilterSkipRestream = filterSkipRestream
+				changedSettingsMap[key] = filterSkipRestream
+			}
 		default:
 			errorMap[key] = errors.New(fmt.Sprintf("Invalid key in map, %v", key))
 		}
@@ -408,12 +442,30 @@ func (s *ReplicationSettings) UpdateSettingsFromMap(settingsMap ReplicationSetti
 	return
 }
 
+// When outputting, certain special settings may be stored but output differently
+func (s *ReplicationSettings) ToOutputMap() ReplicationSettingsMap {
+	outputMap := s.ToMap()
+
+	filterVersion, ok := outputMap[FilterVersion].(int)
+	filter, ok2 := outputMap[FilterExpression].(string)
+
+	if ok && ok2 && filterVersion == 0 {
+		outputMap[FilterExpression] = base.UpgradeFilter(filter)
+	}
+
+	return outputMap
+}
+
 func (s *ReplicationSettings) ToMap() ReplicationSettingsMap {
-	return s.toMap(false)
+	return s.toMap(false /* defaultSettings */, false /* hideInternals */)
+}
+
+func (s *ReplicationSettings) ToRESTMap() ReplicationSettingsMap {
+	return s.toMap(false /* defaultSettings */, true /* hideInternals */)
 }
 
 func (s *ReplicationSettings) ToDefaultSettingsMap() ReplicationSettingsMap {
-	return s.toMap(true)
+	return s.toMap(true /* defaultSettings */, false /* hideInternals */)
 }
 
 func (s *ReplicationSettings) Clone() *ReplicationSettings {
@@ -444,7 +496,7 @@ func (s *ReplicationSettings) CloneAndRedact() *ReplicationSettings {
 	return s
 }
 
-func (s *ReplicationSettings) toMap(isDefaultSettings bool) ReplicationSettingsMap {
+func (s *ReplicationSettings) toMap(isDefaultSettings bool, hideInternals bool) ReplicationSettingsMap {
 	settings_map := make(ReplicationSettingsMap)
 	if !isDefaultSettings {
 		settings_map[ReplicationType] = s.RepType
@@ -465,6 +517,10 @@ func (s *ReplicationSettings) toMap(isDefaultSettings bool) ReplicationSettingsM
 	settings_map[PipelineStatsInterval] = s.StatsInterval
 	settings_map[BandwidthLimit] = s.BandwidthLimit
 	settings_map[CompressionType] = s.CompressionType
+	if !hideInternals {
+		settings_map[FilterVersion] = s.FilterVersion
+		settings_map[FilterSkipRestream] = s.FilterSkipRestream
+	}
 	return settings_map
 }
 
@@ -560,11 +616,19 @@ func ValidateAndConvertSettingsValue(key, value, errorKey string, isEnterprise b
 		}
 	case FilterExpression:
 		// check that filter expression is a valid regular expression
-		_, err = regexp.Compile(value)
+		_, err = gojsonsm.ParseSimpleExpression(base.ReplaceKeyWordsForExpression(value))
 		if err != nil {
 			return
 		}
 		convertedValue = value
+	case FilterSkipRestream:
+		var skip bool
+		skip, err = strconv.ParseBool(value)
+		if err != nil {
+			err = base.IncorrectValueTypeError("a boolean")
+			return
+		}
+		convertedValue = skip
 	case Active:
 		var paused bool
 		paused, err = strconv.ParseBool(value)

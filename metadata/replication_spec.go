@@ -1,4 +1,4 @@
-// Copyright (c) 2013 Couchbase, Inc.
+// Copyright (c) 2013-2019 Couchbase, Inc.
 // Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file
 // except in compliance with the License. You may obtain a copy of the License at
 //   http://www.apache.org/licenses/LICENSE-2.0
@@ -59,6 +59,15 @@ func NewReplicationSpecification(sourceBucketName string, sourceBucketUUID strin
 		TargetBucketName:  targetBucketName,
 		TargetBucketUUID:  targetBucketUUID,
 		Settings:          DefaultSettings()}, nil
+}
+
+func (spec *ReplicationSpecification) String() string {
+	var specSettingsMap ReplicationSettingsMap
+	if spec.Settings != nil {
+		specSettingsMap = spec.Settings.CloneAndRedact().ToMap()
+	}
+	return fmt.Sprintf("Id: %v InternalId: %v SourceBucketName: %v SourceBucketUUID: %v TargetClusterUUID: %v TargetBucketName: %v TargetBucketUUID: %v Settings: %v",
+		spec.Id, spec.InternalId, spec.SourceBucketName, spec.SourceBucketUUID, spec.TargetClusterUUID, spec.TargetBucketName, spec.TargetBucketUUID, specSettingsMap)
 }
 
 // checks if the passed in spec is the same as the current spec

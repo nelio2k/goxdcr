@@ -1,4 +1,4 @@
-// Copyright (c) 2013 Couchbase, Inc.
+// Copyright (c) 2013-2019 Couchbase, Inc.
 // Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file
 // except in compliance with the License. You may obtain a copy of the License at
 //   http://www.apache.org/licenses/LICENSE-2.0
@@ -199,6 +199,9 @@ var ErrorCompressionDcpInvalidHandshake = errors.New("DCP connection is establis
 var ErrorMaxReached = errors.New("Maximum entries has been reached")
 var ErrorNilPtr = errors.New("Nil pointer given")
 var ErrorNoHostName = errors.New("hostname is missing")
+var ErrorSizeExceeded = errors.New("Size is larger than maximum allowed")
+var ErrorNoMatcher = errors.New("Internal error - unable to establish GoJsonsm Matcher")
+var ErrorNoDataPool = errors.New("Internal error - unable to establish GoXDCR datapool")
 
 // the full error as of now is : "x509: cannot validate certificate for xxx because it doesn't contain any IP SANs"
 // use a much shorter version for matching to reduce the chance of false negatives - the error message may be changed by golang in the future
@@ -415,6 +418,11 @@ var RemoteMcRetryFactor = 2
 var BucketInfoOpMaxRetry = 5
 var BucketInfoOpWaitTime = 100 * time.Millisecond
 var BucketInfoOpRetryFactor = 2
+
+// Retry for serializer - should be relatively quick
+var PipelineSerializerMaxRetry = 3
+var PipelineSerializerRetryWaitTime = 100 * time.Millisecond
+var PipelineSerializerRetryFactor = 2
 
 // minimum versions where various features are supported
 var VersionForSANInCertificateSupport = []int{4, 0}
@@ -773,4 +781,12 @@ func InitConstants(topologyChangeCheckInterval time.Duration, maxTopologyChangeC
 	TimeoutPartsStop = timeoutPartsStop
 	TimeoutDcpCloseUprStreams = timeoutDcpCloseUprStreams
 	TimeoutDcpCloseUprFeed = timeoutDcpCloseUprFeed
+}
+
+// From end user's perspective, they will see the reserved word they entered
+// However, internally, XDCR will insert more obscure internal keys to prevent collision with actual
+// user's data
+var ReservedWordsMap = map[string]string{
+	"KEY":  "[$%XDCRInternalKey*%$]",
+	"META": "[$%XDCRInternalMeta*%$]",
 }
