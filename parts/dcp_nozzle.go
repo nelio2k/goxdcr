@@ -443,6 +443,8 @@ func (dcp *DcpNozzle) initializeUprFeed() error {
 		uprFeatures.Xattribute = true
 		uprFeatures.CompressionType = (int)(dcp.compressionSetting)
 		uprFeatures.IncludeDeletionTime = true
+		dcp.Logger().Info("NEIL DEBUG setting to low priority")
+		uprFeatures.SetPriority = mcc.PriorityLow
 		featuresErr, activatedFeatures := dcp.uprFeed.UprOpenWithFeatures(uprFeedName, uint32(0) /*seqno*/, base.UprFeedBufferSize, uprFeatures)
 		if featuresErr != nil {
 			err = featuresErr
