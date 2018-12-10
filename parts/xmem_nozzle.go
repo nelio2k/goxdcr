@@ -245,7 +245,8 @@ func (buf *requestBuffer) slotWithSentTime(pos uint16) (*base.WrappedMCRequest, 
 //@pos - the position of the slot
 //@modFunc - the callback function which is going to update the slot
 func (buf *requestBuffer) modSlot(pos uint16, modFunc func(req *bufferedMCRequest, p uint16) (bool, error)) (bool, error) {
-	err := buf.validatePos(pos)
+	var err error = nil
+	err = buf.validatePos(pos)
 	if err != nil {
 		return false, err
 	}
@@ -256,14 +257,9 @@ func (buf *requestBuffer) modSlot(pos uint16, modFunc func(req *bufferedMCReques
 
 //evictSlot allow caller to empty the slot
 //@pos - the position of the slot
+//note: not concurrency safe, should be called only in one goroutine
 func (buf *requestBuffer) evictSlot(pos uint16) error {
-	// set reservation_num to -1 to skip reservation number check
-	return buf.clearSlot(pos, -1 /*reservation_num*/)
-}
 
-// if reservation_num >=0, perform reservation number check
-// otherwise, skip reservation number check
-func (buf *requestBuffer) clearSlot(pos uint16, reservation_num int) error {
 	err := buf.validatePos(pos)
 	if err != nil {
 		return err
@@ -273,48 +269,71 @@ func (buf *requestBuffer) clearSlot(pos uint16, reservation_num int) error {
 	req.lock.Lock()
 	defer req.lock.Unlock()
 
-	if req.req == nil {
-		return nil
-	}
+	if req.req != nil {
+		resetBufferedMCRequest(req)
 
-	if reservation_num >= 0 && req.reservation != reservation_num {
-		return errors.New("Clear slot failed, reservation number doesn't match")
-	}
+		buf.empty_slots_pos <- pos
 
-	resetBufferedMCRequest(req)
+		//decrease the occupied_count
+		atomic.AddInt32(&buf.occupied_count, -1)
+		<-buf.token_ch
 
-	buf.empty_slots_pos <- pos
-
-	//decrease the occupied_count
-	atomic.AddInt32(&buf.occupied_count, -1)
-	<-buf.token_ch
-
-	//increase sequence
-	if buf.sequences[pos]+1 > 65535 {
-		buf.sequences[pos] = 0
-	} else {
-		buf.sequences[pos] = buf.sequences[pos] + 1
-	}
-
-	buf.notifych_lock.RLock()
-	defer buf.notifych_lock.RUnlock()
-
-	if buf.itemCountInBuffer() <= buf.notify_threshold {
-		if buf.notifych != nil {
-			select {
-			case buf.notifych <- true:
-			default:
-			}
+		//increase sequence
+		if buf.sequences[pos]+1 > 65535 {
+			buf.sequences[pos] = 0
 		} else {
-			buf.logger.Debugf("buffer's occupied slots is below threshold %v, no notify channel is specified though", buf.notify_threshold)
+			buf.sequences[pos] = buf.sequences[pos] + 1
+		}
+
+		buf.notifych_lock.RLock()
+		defer buf.notifych_lock.RUnlock()
+
+		if buf.itemCountInBuffer() <= buf.notify_threshold {
+			if buf.notifych != nil {
+				select {
+				case buf.notifych <- true:
+				default:
+				}
+			} else {
+				buf.logger.Debugf("buffer's occupied slots is below threshold %v, no notify channel is specified though", buf.notify_threshold)
+			}
 		}
 	}
-
 	return nil
+
 }
 
 func (buf *requestBuffer) cancelReservation(index uint16, reservation_num int) error {
-	return buf.clearSlot(index, reservation_num)
+
+	err := buf.validatePos(index)
+	if err == nil {
+
+		req := buf.slots[index]
+		var reservation_num int
+
+		req.lock.Lock()
+		defer req.lock.Unlock()
+
+		//non blocking
+		if req.req != nil {
+
+			if req.reservation == reservation_num {
+				resetBufferedMCRequest(req)
+
+				//increase sequence
+				if buf.sequences[index]+1 > 65535 {
+					buf.sequences[index] = 0
+				} else {
+					buf.sequences[index] = buf.sequences[index] + 1
+				}
+
+				buf.empty_slots_pos <- index
+			} else {
+				err = errors.New("Cancel reservation failed, reservation number doesn't match")
+			}
+		}
+	}
+	return err
 }
 
 func (buf *requestBuffer) enSlot(mcreq *base.WrappedMCRequest) (uint16, int, []byte) {
@@ -575,8 +594,6 @@ func (client *xmemClient) reportOpFailure(readOp bool) {
 	client.lock.Lock()
 	defer client.lock.Unlock()
 
-	client.success_counter = 0
-
 	if client.downtime_start.IsZero() {
 		client.downtime_start = time.Now()
 	}
@@ -593,7 +610,7 @@ func (client *xmemClient) reportOpSuccess() {
 	client.lock.Lock()
 	defer client.lock.Unlock()
 
-	client.downtime_start = time.Time{}
+	client.downtime_start = time.Date(1, time.January, 1, 0, 0, 0, 0, time.UTC)
 	client.continuous_write_failure_counter = 0
 	client.success_counter++
 	if client.success_counter > client.max_continuous_write_failure && client.backoff_factor > 0 {
@@ -916,15 +933,10 @@ func (xmem *XmemNozzle) Start(settings metadata.ReplicationSettingsMap) error {
 	go xmem.processData_sendbatch(xmem.finish_ch, &xmem.childrenWaitGrp)
 
 	xmem.start_time = time.Now()
-
-	err = xmem.SetState(common.Part_Running)
-	if err != nil {
-		return err
-	}
-
+	xmem.SetState(common.Part_Running)
 	xmem.Logger().Infof("%v has been started", xmem.Id())
 
-	return nil
+	return err
 }
 
 func (xmem *XmemNozzle) Stop() error {
@@ -957,14 +969,17 @@ func (xmem *XmemNozzle) batchReady() error {
 				xmem.handleGeneralError(errors.New(fmt.Sprintf("%v", r)))
 			}
 		}
+		xmem.Logger().Debugf("%v End moving batch, %v batches ready\n", xmem.Id(), len(xmem.batches_ready_queue))
 	}()
 
 	//move the batch to ready batches channel
 	// no need to lock batch since batch is always locked before entering batchReady()
 	count := xmem.batch.count()
 	if count > 0 {
+		xmem.Logger().Debugf("%v move the batch (count=%d) ready queue\n", xmem.Id(), count)
 		select {
 		case xmem.batches_ready_queue <- xmem.batch:
+			xmem.Logger().Debugf("%v There are %d batches in ready queue\n", xmem.Id(), len(xmem.batches_ready_queue))
 			xmem.initNewBatch()
 		// provides an alterntive exit path when xmem stops
 		case <-xmem.finish_ch:
@@ -1153,14 +1168,13 @@ done:
 }
 
 func (xmem *XmemNozzle) processBatch(batch *dataBatch) error {
-	if !xmem.IsOpen() {
-		return nil
+	if xmem.IsOpen() {
+		xmem.buf.flowControl()
+		err := xmem.sendSetMeta_internal(batch)
+		return err
 	}
-
-	xmem.buf.flowControl()
-	return xmem.sendSetMeta_internal(batch)
+	return nil
 }
-
 func (xmem *XmemNozzle) onExit() {
 	//in the process of stopping, no need to report any error to replication manager anymore
 	xmem.buf.close()
@@ -1214,6 +1228,12 @@ func (xmem *XmemNozzle) batchSetMetaWithRetry(batch *dataBatch, numOfRetry int) 
 	index_reservation_list := make([][]uint16, base.XmemMaxBatchSize+1)
 
 	for i := 0; i < int(count); i++ {
+		//check xmem's state, if it is already in stopping or stopped state, return
+		err = xmem.validateRunningState()
+		if err != nil {
+			return err
+		}
+
 		// Get a MCRequest from the data channel, which is a part of the batch
 		item, err := xmem.readFromDataChan()
 		if err != nil {
@@ -1422,6 +1442,10 @@ func (xmem *XmemNozzle) sendWithRetry(client *xmemClient, numOfRetry int, item_b
 func (xmem *XmemNozzle) sendSetMeta_internal(batch *dataBatch) error {
 	var err error
 	if batch != nil {
+		count := batch.count()
+		xmem.Logger().Debugf("%v send batch count=%d\n", xmem.Id(), count)
+		xmem.Logger().Debugf("So far, %v processed %d items", xmem.Id(), atomic.LoadUint64(&xmem.counter_sent))
+
 		//batch send
 		err = xmem.batchSetMetaWithRetry(batch, xmem.config.maxRetry)
 		if err != nil && err != PartStoppedError {
@@ -1552,6 +1576,7 @@ func (xmem *XmemNozzle) batchGetMeta(bigDoc_map base.McRequestMap) (map[string]b
 		return bigDoc_noRep_map, nil
 	}
 
+	xmem.Logger().Debugf("%v GetMeta for %v documents\n", xmem.Id(), len(bigDoc_map))
 	respMap := make(base.MCResponseMap, xmem.config.maxCount)
 	opaque_keySeqno_map := make(opaqueKeySeqnoMap)
 	receiver_fin_ch := make(chan bool, 1)
@@ -1763,7 +1788,7 @@ func (xmem *XmemNozzle) initializeConnection() (err error) {
 	xmem.Logger().Debugf("%v xmem.config= %v", xmem.Id(), xmem.config.connectStr)
 	xmem.Logger().Debugf("%v poolName=%v", xmem.Id(), poolName)
 	pool, err := xmem.getOrCreateConnPool()
-	if err == base.WrongConnTypeError {
+	if err != nil && err == base.WrongConnTypeError {
 		//there is a stale pool, the remote cluster settings are changed
 		base.ConnPoolMgr().RemovePool(poolName)
 		pool, err = xmem.getOrCreateConnPool()
@@ -1797,15 +1822,14 @@ func (xmem *XmemNozzle) initializeConnection() (err error) {
 	features, err := xmem.sendHELO(true /*setMeta*/)
 	if err != nil {
 		return err
+	} else {
+		// initialize these xmem members only once here
+		xmem.xattrEnabled = features.Xattribute
+		err = xmem.validateFeatures(features)
+		if err != nil {
+			return err
+		}
 	}
-
-	err = xmem.validateFeatures(features)
-	if err != nil {
-		return err
-	}
-
-	// initialize this only once here
-	xmem.xattrEnabled = features.Xattribute
 
 	// No need to check features for bare boned getMeta client
 	_, err = xmem.sendHELO(false /*setMeta */)
@@ -1818,15 +1842,10 @@ func (xmem *XmemNozzle) initializeConnection() (err error) {
 }
 
 func (xmem *XmemNozzle) validateFeatures(features utilities.HELOFeatures) error {
-	if xmem.compressionSetting != features.CompressionType {
-		errMsg := fmt.Sprintf("%v Attempted to send HELO with compression type: %v, but received response with %v",
-			xmem.Id(), xmem.compressionSetting, features.CompressionType)
-		xmem.Logger().Error(errMsg)
-		if xmem.compressionSetting != base.CompressionTypeNone {
-			return base.ErrorCompressionNotSupported
-		} else {
-			return errors.New(errMsg)
-		}
+	if (xmem.compressionSetting != base.CompressionTypeNone) && (xmem.compressionSetting != features.CompressionType) {
+		xmem.Logger().Errorf("Attempted to send HELO with compression type: %v, but received response with %v",
+			xmem.compressionSetting, features.CompressionType)
+		return base.ErrorCompressionNotSupported
 	}
 	return nil
 }
@@ -1836,6 +1855,7 @@ func (xmem *XmemNozzle) getPoolName() string {
 }
 
 func (xmem *XmemNozzle) initNewBatch() {
+	xmem.Logger().Debugf("%v initializing a new batch", xmem.Id())
 	xmem.batch = newBatch(uint32(xmem.config.maxCount), uint32(xmem.config.maxSize), xmem.Logger())
 	atomic.StoreUint32(&xmem.cur_batch_count, 0)
 }
@@ -1905,7 +1925,7 @@ func (xmem *XmemNozzle) receiveResponse(finch chan bool, waitGrp *sync.WaitGroup
 						if err == nil && wrappedReq != nil {
 							req := wrappedReq.Req
 							if req != nil && req.Opaque == response.Opaque {
-								xmem.Logger().Warnf("%v received fatal error from setMeta client. req=%v, seqno=%v, response=%v\n", xmem.Id(), req, wrappedReq.Seqno, response)
+								xmem.Logger().Infof("%v received fatal error from setMeta client. req=%v, seqno=%v, response=%v\n", xmem.Id(), req, wrappedReq.Seqno, response)
 							}
 						}
 					}
@@ -1924,7 +1944,7 @@ func (xmem *XmemNozzle) receiveResponse(finch chan bool, waitGrp *sync.WaitGroup
 
 					// error is temporary. resend doc
 					pos := xmem.getPosFromOpaque(response.Opaque)
-					xmem.Logger().Warnf("%v Received temporary error in setMeta response. Response status=%v, err = %v, response=%v%v%v\n", xmem.Id(), response.Status.String(), err,
+					xmem.Logger().Errorf("%v Received temporary error in setMeta response. Response status=%v, err = %v, response=%v%v%v\n", xmem.Id(), response.Status.String(), err,
 						base.UdTagBegin, response, base.UdTagEnd)
 					//resend and reset the retry=0 as retry is an indicator of network status,
 					//here we have received the response, so reset retry=0
@@ -2321,49 +2341,45 @@ func (xmem *XmemNozzle) timeoutDuration(numofRetry int) time.Duration {
 func (xmem *XmemNozzle) resendWithReset(req *bufferedMCRequest, pos uint16) (bool, error) {
 	req.lock.Lock()
 
+	var modified bool
+	var err error
 	// check that there is a valid WrappedMCRequest associated with req
-	if req.req == nil {
+	if req.req != nil {
+		bytesList := getBytesListFromReq(req)
+		old_sequence := xmem.buf.sequences[pos]
+
+		// reset num_of_retry to 0 and reset timedout to false
+		if req.num_of_retry != 0 || req.timedout {
+			req.num_of_retry = 0
+			req.timedout = false
+			modified = true
+		}
+
+		// release the lock on req before calling sendSingleSetMeta, which may block
+		req.lock.Unlock()
+
+		err = xmem.sendSingleSetMeta(bytesList, xmem.config.maxRetry)
+
+		if err == nil {
+			// lock req again since it needs to be accessed and possibly modified
+			req.lock.Lock()
+			// update req only if it contains the same WrappedMCRequest as before the sendSingleSetMeta op
+			// i.e., when the corresponding sequence number of the slot has not changed
+			// i.e., when evictSlot and cancelReservation have not been called on the slot
+			if req.req != nil && xmem.buf.sequences[pos] == old_sequence {
+				now := time.Now()
+				req.sent_time = &now
+				modified = true
+				// keep req.num_of_retry as 0 since the sendSingleSetMeta op counts as the first send
+				// and not as a retry
+			}
+			req.lock.Unlock()
+		}
+		return modified, err
+	} else {
 		req.lock.Unlock()
 		return false, nil
 	}
-
-	var modified bool
-	var err error
-
-	bytesList := getBytesListFromReq(req)
-	old_sequence := xmem.buf.sequences[pos]
-
-	// reset num_of_retry to 0 and reset timedout to false
-	if req.num_of_retry != 0 || req.timedout {
-		req.num_of_retry = 0
-		req.timedout = false
-		modified = true
-	}
-
-	// release the lock on req before calling sendSingleSetMeta, which may block
-	req.lock.Unlock()
-
-	err = xmem.sendSingleSetMeta(bytesList, xmem.config.maxRetry)
-
-	if err != nil {
-		return modified, err
-	}
-
-	// lock req again since it needs to be accessed and possibly modified
-	req.lock.Lock()
-	// update req only if it contains the same WrappedMCRequest as before the sendSingleSetMeta op
-	// i.e., when the corresponding sequence number of the slot has not changed
-	// i.e., when evictSlot and cancelReservation have not been called on the slot
-	if req.req != nil && xmem.buf.sequences[pos] == old_sequence {
-		now := time.Now()
-		req.sent_time = &now
-		modified = true
-		// keep req.num_of_retry as 0 since the sendSingleSetMeta op counts as the first send
-		// and not as a retry
-	}
-	req.lock.Unlock()
-
-	return modified, nil
 }
 
 func (xmem *XmemNozzle) getPosFromOpaque(opaque uint32) uint16 {
@@ -2463,7 +2479,8 @@ func (xmem *XmemNozzle) getConn(client *xmemClient, readTimeout bool, writeTimeo
 	if err != nil {
 		return nil, client.repairCount(), err
 	}
-	return client.getConn(readTimeout, writeTimeout)
+	ioConn, rev, err := client.getConn(readTimeout, writeTimeout)
+	return ioConn, rev, err
 }
 
 func (xmem *XmemNozzle) validateRunningState() error {
@@ -2493,7 +2510,7 @@ func (xmem *XmemNozzle) writeToClient(client *xmemClient, bytesList [][]byte, re
 			break
 		}
 
-		// Bandwidth throttling
+		// Bandwidth throttler
 		curBytesList := stack.Pop().([][]byte)
 		numberOfBytes, minNumberOfBytes, minIndex := computeNumberOfBytes(curBytesList)
 		bytesCanSend, bytesAllowed := xmem.bandwidthThrottler.Throttle(numberOfBytes, minNumberOfBytes)
@@ -2709,14 +2726,10 @@ func (xmem *XmemNozzle) repairConn(client *xmemClient, reason string, rev int) e
 				xmem.Logger().Errorf("%v - Failed to repair connections for %v. err=%v\n", xmem.Id(), client.name, err)
 				return err
 			}
-
 			err = xmem.validateFeatures(features)
 			if err != nil {
-				xmem.handleGeneralError(err)
 				return err
 			}
-
-			xmem.xattrEnabled = features.Xattribute
 			go xmem.onSetMetaConnRepaired()
 		} else {
 			// No need to check features for bare-bone getMeta client
