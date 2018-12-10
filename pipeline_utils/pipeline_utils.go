@@ -59,8 +59,18 @@ func GetSourceVBMap(cluster_info_svc service_def.ClusterInfoSvc, xdcr_topology_s
 	}
 
 	for _, node := range nodes {
-		if vbnos, ok := server_vbmap[node]; ok {
-			kv_vb_map[node] = vbnos
+		var kvaddr string = ""
+		var vbnos []uint16
+		// iterate through serverVBMap and look for server addr that starts with "kvHost:"
+		for kvaddr_iter, vbnos_iter := range server_vbmap {
+			if kvaddr_iter == node {
+				kvaddr = kvaddr_iter
+				vbnos = vbnos_iter
+				break
+			}
+		}
+		if kvaddr != "" {
+			kv_vb_map[kvaddr] = vbnos
 		}
 	}
 	return
