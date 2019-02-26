@@ -201,7 +201,9 @@ func (router *Router) route(data interface{}) (map[string]interface{}, error) {
 		if !matched || err != nil {
 			if err != nil {
 				// Let pipeline supervisor do the logging
-				router.RaiseEvent(common.NewEvent(common.DataUnableToFilter, err, router, nil, errDesc))
+				var dataSlice []interface{}
+				dataSlice = append(dataSlice, uprEvent)
+				router.RaiseEvent(common.NewEvent(common.DataUnableToFilter, err, router, dataSlice, errDesc))
 			} else {
 				// if data does not match filter expression, drop it. return empty result
 				router.RaiseEvent(common.NewEvent(common.DataFiltered, uprEvent, router, nil, nil))

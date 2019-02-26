@@ -10,6 +10,8 @@
 package pipeline_svc
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	mcc "github.com/couchbase/gomemcached/client"
@@ -292,6 +294,11 @@ func (pipelineSupervisor *PipelineSupervisor) OnEvent(event *common.Event) {
 		if filterErrIsRecoverable(err) {
 			// Raise error so pipeline will restart and take recovery actions
 			pipelineSupervisor.setError(event.Component.Id(), err)
+		} else {
+			uprEvent := event.DerivedData[0].(*mcc.UprEvent)
+			uprDumpBytes := new(bytes.Buffer)
+			json.NewEncoder(uprDumpBytes).Encode(*uprEvent)
+			pipelineSupervisor.Logger().Errorf("NEIL DEBUG uprEvent dump\n%v\n", uprDumpBytes.String())
 		}
 	default:
 		pipelineSupervisor.Logger().Errorf("%v Pipeline supervisor didn't register to recieve event %v for component %v", pipelineSupervisor.Id(), event.EventType, event.Component.Id())
