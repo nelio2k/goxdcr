@@ -138,3 +138,67 @@ func TestFilterPerfKeyOnly(t *testing.T) {
 
 	fmt.Println("============== Test case end: TestFilterPerfKeyOnly =================")
 }
+
+func TestKeyPanic(t *testing.T) {
+	fmt.Println("============== Test case start: TestKeyPanic =================")
+	assert := assert.New(t)
+
+	uprEvent, err := RetrieveUprFile("./testdata/edgyMB-33583.json")
+	assert.Nil(err)
+	assert.NotNil(uprEvent)
+
+	filter, err := NewFilter(filterId, "REGEXP_CONTAINS(META().id, \"C1-key-1\")", realUtil)
+	assert.Nil(err)
+	assert.NotNil(filter)
+	assert.True(filter.flags&base.FilterFlagKeyOnly > 0)
+
+	slices := make([][]byte, 0, 2)
+	dataSlice, err, _, releaseFunc, _ := realUtil.ProcessUprEventForFiltering(uprEvent, dp, filter.flags, &slices)
+	assert.Nil(err)
+	assert.NotNil(releaseFunc)
+
+	matchResult, err := filter.matcher.Match(dataSlice)
+	assert.Nil(err)
+	assert.False(matchResult)
+
+	fmt.Println("============== Test case end: TestKeyPanic =================")
+}
+
+func TestDpHolder(t *testing.T) {
+	fmt.Println("============== Test case start: TestDpHolder =================")
+	assert := assert.New(t)
+	holder := NewDpSlicesHolder()
+	assert.Equal(0, len(holder.slicesHolderCh))
+
+	slices := holder.GetSliceOfSlices()
+	assert.Equal(0, len(holder.slicesHolderCh))
+
+	holder.PutSliceOfSlices(slices)
+	assert.Equal(1, len(holder.slicesHolderCh))
+
+	slices = holder.GetSliceOfSlices()
+	assert.Equal(0, len(holder.slicesHolderCh))
+
+	slices2 := holder.GetSliceOfSlices()
+	holder.PutSliceOfSlices(slices)
+	holder.PutSliceOfSlices(slices2)
+	assert.Equal(2, len(holder.slicesHolderCh))
+
+	// Get > 20 slices
+	var holderOfHolder [][][]byte
+	for i := 0; i < 21; i++ {
+		holderOfHolder = append(holderOfHolder, holder.GetSliceOfSlices())
+	}
+
+	assert.Equal(0, len(holder.slicesHolderCh))
+	assert.Equal(21, len(holderOfHolder))
+
+	for i := 0; i < 21; i++ {
+		// should not block
+		holder.PutSliceOfSlices(holderOfHolder[i])
+	}
+
+	// Last one was tossed away
+	assert.Equal(20, len(holder.slicesHolderCh))
+	fmt.Println("============== Test case end: TestDpHolder =================")
+}

@@ -22,6 +22,37 @@ type FilterIface interface {
 	FilterUprEvent(uprEvent *mcc.UprEvent) bool
 }
 
+type DpSlicesHolder struct {
+	slicesHolderCh chan [][]byte
+}
+
+func NewDpSlicesHolder() *DpSlicesHolder {
+	return &DpSlicesHolder{
+		slicesHolderCh: make(chan [][]byte, 20), // Up to 20 concurrent source nozzles
+	}
+}
+
+func (dps *DpSlicesHolder) GetSliceOfSlices() [][]byte {
+	for {
+		select {
+		case aSlice := <-dps.slicesHolderCh:
+			return aSlice
+		default:
+			return make([][]byte, 0, 2)
+		}
+	}
+}
+
+func (dps *DpSlicesHolder) PutSliceOfSlices(doneSlice [][]byte) {
+	select {
+	case dps.slicesHolderCh <- doneSlice:
+		return
+	default:
+		// Holder is full, don't block - just let it go to waste
+		return
+	}
+}
+
 type Filter struct {
 	id                       string
 	filterExpressionInternal string
@@ -29,7 +60,7 @@ type Filter struct {
 	utils                    utilities.UtilsIface
 	dp                       utilities.DataPoolIface
 	flags                    base.FilterFlagType
-	slicesToBeReleasedBuf    [][]byte
+	slicesHolder             *DpSlicesHolder
 }
 
 func NewFilter(id string, filterExpression string, utils utilities.UtilsIface) (*Filter, error) {
@@ -47,7 +78,7 @@ func NewFilter(id string, filterExpression string, utils utilities.UtilsIface) (
 		filterExpressionInternal: base.ReplaceKeyWordsForExpression(filterExpression),
 		utils:                    utils,
 		dp:                       dpPtr,
-		slicesToBeReleasedBuf:    make([][]byte, 0, 2),
+		slicesHolder:             NewDpSlicesHolder(),
 	}
 
 	matcher, err := base.GoJsonsmGetFilterExprMatcher(filter.filterExpressionInternal)
@@ -89,8 +120,13 @@ func (filter *Filter) FilterUprEvent(uprEvent *mcc.UprEvent) (bool, error, strin
 		return true, nil, "", 0
 	}
 
-	sliceToBeFiltered, err, errDesc, releaseFunc, failedDpCnt := filter.utils.ProcessUprEventForFiltering(uprEvent, filter.dp, filter.flags, &filter.slicesToBeReleasedBuf)
+	slicesToBeReleased := filter.slicesHolder.GetSliceOfSlices()
+	// defer is last in first out - this is going to be the first defer on the stack, which will execute after releaseFunc() below has finished recycle datapools
+	defer filter.slicesHolder.PutSliceOfSlices(slicesToBeReleased)
+
+	sliceToBeFiltered, err, errDesc, releaseFunc, failedDpCnt := filter.utils.ProcessUprEventForFiltering(uprEvent, filter.dp, filter.flags, &slicesToBeReleased)
 	if releaseFunc != nil {
+		// releaseFunc() will do cleanup of slicesToBeReleased above
 		defer releaseFunc()
 	}
 
