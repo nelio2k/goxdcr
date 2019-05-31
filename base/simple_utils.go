@@ -958,7 +958,11 @@ func ValidateAndGetAdvFilter(filter string) (gojsonsm.Matcher, error) {
 		return nil, ErrorFilterInvalidExpression
 	}
 
-	matcher, err := GoJsonsmGetFilterExprMatcher(ReplaceKeyWordsForExpression(filter))
+	internalStr, err := ReplaceKeyWordsForExpressionWErr(filter)
+	if err != nil {
+		err = fmt.Errorf("NEIL DEBUG Error validating advanced filter: %v", err.Error())
+	}
+	matcher, err := GoJsonsmGetFilterExprMatcher(internalStr)
 	if err != nil {
 		err = fmt.Errorf("Error validating advanced filter: %v", err.Error())
 	}
@@ -1068,7 +1072,15 @@ func RetrieveUprJsonAndConvert(fileName string) (*mcc.UprEvent, error) {
 }
 
 func ReplaceKeyWordsForExpression(expression string) string {
-	InitPcreVars()
+	str, _ := ReplaceKeyWordsForExpressionWErr(expression)
+	return str
+}
+
+func ReplaceKeyWordsForExpressionWErr(expression string) (string, error) {
+	err := InitPcreVars()
+	if err != nil {
+		return "", err
+	}
 	expressionBytes := []byte(expression)
 
 	// Replace all backtick with quotes
@@ -1076,7 +1088,7 @@ func ReplaceKeyWordsForExpression(expression string) string {
 		expressionBytes = regexIface.ReplaceAll(expressionBytes, []byte(fmt.Sprintf("`%v`", ReservedWordsMap[k])), 0 /*flags*/)
 	}
 
-	return string(expressionBytes)
+	return string(expressionBytes), nil
 }
 
 func ReplaceKeyWordsForOutput(expression string) string {
@@ -1131,20 +1143,34 @@ func FilterOnlyContainsXattrExpression(expression string) bool {
 	return singleAwesomeXattrOnlyRegex.MatchString(expression)
 }
 
-func InitPcreVars() {
+func InitPcreVars() error {
+	var err error
 	ReservedWordsReplaceMapOnce.Do(func() {
 		ReservedWordsReplaceMap = make(map[string]PcreWrapperInterface)
 
-		externalKeyKeyReplace, err := MakePcreRegex(fmt.Sprintf("(?<!`)%v(?!`)", ExternalKeyKey))
+		defer func() {
+			errPtr := &err
+			if r := recover(); r != nil {
+				*errPtr = fmt.Errorf("Error from PCRE: %v", r)
+			}
+		}()
+		if err != nil {
+			return
+		}
+
+		var externalKeyKeyReplace PcreWrapperInterface
+		externalKeyKeyReplace, err = MakePcreRegex(fmt.Sprintf("(?<!`)%v(?!`)", ExternalKeyKey))
 		if err == nil {
 			ReservedWordsReplaceMap[ExternalKeyKey] = externalKeyKeyReplace
 		}
 
-		externalXattrReplace, err := MakePcreRegex(fmt.Sprintf("(?<!`)%v(?!`)", ExternalKeyXattr))
+		var externalXattrReplace PcreWrapperInterface
+		externalXattrReplace, err = MakePcreRegex(fmt.Sprintf("(?<!`)%v(?!`)", ExternalKeyXattr))
 		if err == nil {
 			ReservedWordsReplaceMap[ExternalKeyXattr] = externalXattrReplace
 		}
 	})
+	return err
 }
 
 // parse stats value from stats map
