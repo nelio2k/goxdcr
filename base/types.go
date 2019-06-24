@@ -643,3 +643,5 @@ func (list_obj *SortedSeqnoListWithLock) TruncateSeqnos(through_seqno uint64) {
 		list_obj.seqno_list = seqno_list[index:]
 	}
 }
+
+type Uleb128 []byte
