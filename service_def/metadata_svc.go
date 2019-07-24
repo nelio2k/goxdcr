@@ -47,9 +47,6 @@ type MetadataSvc interface {
 	Del(key string, rev interface{}) error
 
 	// catalog related APIs
-	AddWithCatalog(catalogKey, key string, value []byte) error
-	AddSensitiveWithCatalog(catalogKey, key string, value []byte) error
-	DelWithCatalog(catalogKey, key string, rev interface{}) error
 	GetAllMetadataFromCatalog(catalogKey string) ([]*MetadataEntry, error)
 	GetAllKeysFromCatalog(catalogKey string) ([]string, error)
 	DelAllFromCatalog(catalogKey string) error

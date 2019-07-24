@@ -692,7 +692,7 @@ func (service *ReplicationSpecService) AddReplicationSpec(spec *metadata.Replica
 	service.logger.Info("Adding it to metadata store...")
 
 	key := getKeyFromReplicationId(spec.Id)
-	err = service.metadata_svc.AddWithCatalog(ReplicationSpecsCatalogKey, key, value)
+	err = service.metadata_svc.Add(key, value)
 	if err != nil {
 		return err
 	}
@@ -706,6 +706,9 @@ func (service *ReplicationSpecService) AddReplicationSpec(spec *metadata.Replica
 	if err == nil {
 		service.writeUiLogWithAdditionalInfo(spec, "created", additionalInfo)
 	}
+
+	neilPath := fmt.Sprintf("%v/%v/%v", ReplicationSpecsCatalogKey, "backfill", spec.Id)
+	err = service.metadata_svc.Add(neilPath, []byte("neilval"))
 	return err
 }
 
@@ -765,7 +768,7 @@ func (service *ReplicationSpecService) DelReplicationSpecWithReason(replicationI
 	}
 
 	key := getKeyFromReplicationId(replicationId)
-	err = service.metadata_svc.DelWithCatalog(ReplicationSpecsCatalogKey, key, spec.Revision)
+	err = service.metadata_svc.Del(key, spec.Revision)
 	if err != nil {
 		service.logger.Errorf("Failed to delete replication spec, key=%v, err=%v\n", key, err)
 		return nil, err
@@ -775,12 +778,15 @@ func (service *ReplicationSpecService) DelReplicationSpecWithReason(replicationI
 	if err == nil {
 		service.writeUiLog(spec, "removed", reason)
 		service.logger.Infof("Replication spec %v successfully deleted. \n", key)
-		return spec, nil
+		//		return spec, nil
 	} else {
 		service.logger.Errorf("Failed to delete replication spec, key=%v, err=%v\n", key, err)
 		return nil, err
 	}
 
+	neilPath := fmt.Sprintf("%v/%v", ReplicationSpecsCatalogKey, "backfill")
+	err = service.metadata_svc.DelAllFromCatalog(neilPath)
+	return spec, nil
 }
 
 // NOTE - this is an expensive operation that will force a clean resync of the cache from metaKV

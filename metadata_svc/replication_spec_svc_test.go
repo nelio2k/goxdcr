@@ -131,8 +131,9 @@ func setupMocks(srcResolutionType string,
 	var err error
 
 	// MetaKV mock
-	metadataSvcMock.On("AddWithCatalog", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	metadataSvcMock.On("DelWithCatalog", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	metadataSvcMock.On("Add", mock.Anything, mock.Anything).Return(nil)
+	metadataSvcMock.On("Del", mock.Anything, mock.Anything).Return(nil)
+	metadataSvcMock.On("DelAllFromCatalog", mock.Anything, mock.Anything).Return(nil)
 	// Nil because this Get is simply to get the revision - if needed, try to link it to AddWithCatalog later
 	metadataSvcMock.On("Get", mock.Anything).Return(nil, 1, nil)
 

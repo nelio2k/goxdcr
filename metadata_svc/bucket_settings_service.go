@@ -94,7 +94,7 @@ func (service *BucketSettingsService) SetBucketSettings(bucketName string, bucke
 
 	_, rev, err := service.metadata_svc.Get(key)
 	if err == service_def.MetadataNotFoundErr {
-		err = service.metadata_svc.AddWithCatalog(BucketSettingsCatalogKey, key, value)
+		err = service.metadata_svc.Add(key, value)
 		if err != nil {
 			return err
 		}

@@ -36,34 +36,6 @@ func (_m *MetadataSvc) AddSensitive(key string, value []byte) error {
 	return r0
 }
 
-// AddSensitiveWithCatalog provides a mock function with given fields: catalogKey, key, value
-func (_m *MetadataSvc) AddSensitiveWithCatalog(catalogKey string, key string, value []byte) error {
-	ret := _m.Called(catalogKey, key, value)
-
-	var r0 error
-	if rf, ok := ret.Get(0).(func(string, string, []byte) error); ok {
-		r0 = rf(catalogKey, key, value)
-	} else {
-		r0 = ret.Error(0)
-	}
-
-	return r0
-}
-
-// AddWithCatalog provides a mock function with given fields: catalogKey, key, value
-func (_m *MetadataSvc) AddWithCatalog(catalogKey string, key string, value []byte) error {
-	ret := _m.Called(catalogKey, key, value)
-
-	var r0 error
-	if rf, ok := ret.Get(0).(func(string, string, []byte) error); ok {
-		r0 = rf(catalogKey, key, value)
-	} else {
-		r0 = ret.Error(0)
-	}
-
-	return r0
-}
-
 // Del provides a mock function with given fields: key, rev
 func (_m *MetadataSvc) Del(key string, rev interface{}) error {
 	ret := _m.Called(key, rev)
@@ -85,20 +57,6 @@ func (_m *MetadataSvc) DelAllFromCatalog(catalogKey string) error {
 	var r0 error
 	if rf, ok := ret.Get(0).(func(string) error); ok {
 		r0 = rf(catalogKey)
-	} else {
-		r0 = ret.Error(0)
-	}
-
-	return r0
-}
-
-// DelWithCatalog provides a mock function with given fields: catalogKey, key, rev
-func (_m *MetadataSvc) DelWithCatalog(catalogKey string, key string, rev interface{}) error {
-	ret := _m.Called(catalogKey, key, rev)
-
-	var r0 error
-	if rf, ok := ret.Get(0).(func(string, string, interface{}) error); ok {
-		r0 = rf(catalogKey, key, rev)
 	} else {
 		r0 = ret.Error(0)
 	}

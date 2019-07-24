@@ -693,7 +693,7 @@ func (agent *RemoteClusterAgent) deleteFromMetaKV() error {
 
 // Delete the reference information from metakv
 func (agent *RemoteClusterAgent) deleteFromMetaKVNoLock() error {
-	err := agent.metakvSvc.DelWithCatalog(RemoteClustersCatalogKey, agent.reference.Id(), agent.reference.Revision())
+	err := agent.metakvSvc.Del(agent.reference.Id(), agent.reference.Revision())
 	if err != nil {
 		agent.logger.Errorf(fmt.Sprintf("Error occured when deleting reference %v from metakv: %v\n", agent.reference.Name(), err.Error()))
 	} else {
@@ -723,7 +723,7 @@ func (agent *RemoteClusterAgent) writeToMetaKVNoLock() error {
 	}
 
 	if agent.reference.IsEmpty() {
-		err = agent.metakvSvc.AddSensitiveWithCatalog(RemoteClustersCatalogKey, key, value)
+		err = agent.metakvSvc.AddSensitive(key, value)
 	} else {
 		err = agent.metakvSvc.SetSensitive(key, value, agent.pendingRef.Revision())
 	}

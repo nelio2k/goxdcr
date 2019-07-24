@@ -80,8 +80,7 @@ func (ckpt_svc *CheckpointsService) DelCheckpointsDoc(replicationId string, vbno
 	if err != nil {
 		return err
 	}
-	catalogKey := ckpt_svc.getCheckpointCatalogKey(replicationId)
-	err = ckpt_svc.metadata_svc.DelWithCatalog(catalogKey, key, rev)
+	err = ckpt_svc.metadata_svc.Del(key, rev)
 	if err != nil {
 		ckpt_svc.logger.Errorf("Failed to delete checkpoints doc for replication %v and vbno %v\n", replicationId, vbno)
 	} else {

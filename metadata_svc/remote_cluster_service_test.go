@@ -103,9 +103,9 @@ func setupMetaSvcMockGeneric(metadataSvcMock *service_def.MetadataSvc, remoteClu
 	revision := 1
 
 	// metadatasvc mock
-	metadataSvcMock.On("AddSensitiveWithCatalog", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	metadataSvcMock.On("AddSensitive", mock.Anything, mock.Anything).Return(nil)
 	metadataSvcMock.On("Get", jsonKey).Return(jsonMarshalBytes, revision, nil)
-	metadataSvcMock.On("DelWithCatalog", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	metadataSvcMock.On("Del", mock.Anything, mock.Anything).Return(nil)
 	metadataSvcMock.On("SetSensitive", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 }
 
@@ -381,7 +381,7 @@ func TestAddThenSetRemoteClusterRef(t *testing.T) {
 	metadataSvcMock2 := &service_def.MetadataSvc{}
 	metadataSvcMock2.On("Get", mock.Anything).Return(jsonMarshalBytes, revision, nil)
 	metadataSvcMock2.On("SetSensitive", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	metadataSvcMock2.On("DelWithCatalog", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	metadataSvcMock2.On("Del", mock.Anything, mock.Anything).Return(nil)
 	remoteClusterSvc.metakv_svc = metadataSvcMock2
 	remoteClusterSvc.agentMutex.Lock()
 	remoteClusterSvc.agentMap[idAndName].metakvSvc = metadataSvcMock2

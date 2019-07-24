@@ -138,22 +138,6 @@ func (meta_svc *MetaKVMetadataSvc) add(key string, value []byte, sensitive bool)
 	return err
 }
 
-func (meta_svc *MetaKVMetadataSvc) AddWithCatalog(catalogKey, key string, value []byte) error {
-	if meta_svc.readOnly {
-		return nil
-	}
-	// ignore catalogKey
-	return meta_svc.Add(key, value)
-}
-
-func (meta_svc *MetaKVMetadataSvc) AddSensitiveWithCatalog(catalogKey, key string, value []byte) error {
-	if meta_svc.readOnly {
-		return nil
-	}
-	// ignore catalogKey
-	return meta_svc.AddSensitive(key, value)
-}
-
 func (meta_svc *MetaKVMetadataSvc) Set(key string, value []byte, rev interface{}) error {
 	if meta_svc.readOnly {
 		return nil
@@ -251,14 +235,6 @@ func (meta_svc *MetaKVMetadataSvc) Del(key string, rev interface{}) error {
 		err = expOpErr
 	}
 	return err
-}
-
-func (meta_svc *MetaKVMetadataSvc) DelWithCatalog(catalogKey, key string, rev interface{}) error {
-	if meta_svc.readOnly {
-		return nil
-	}
-	// ignore catalogKey
-	return meta_svc.Del(key, rev)
 }
 
 //Wrap metakv.RecursiveDelete with retries
