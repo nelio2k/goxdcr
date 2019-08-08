@@ -626,6 +626,21 @@ function waitForBgJobs {
 	done
 }
 
+# Input: 1. clusterName
+#		 2. bucketName
+function getManifest {
+	local clusterName="$1"
+	local bucketName="$2"
+	local port=${CLUSTER_NAME_PORT_MAP[$clusterName]:-}
+
+	if [[ -z "${port:-}" ]];then
+		echo ""
+		return 1
+	fi
+
+	$CURL -u $DEFAULT_ADMIN:$DEFAULT_PW -X GET http://localhost:$port/$POOLS_DEFAULT_BUCKETS_PATH/$bucketName/collections
+}
+
 # Print a summary of all the topology setup -> scope and collection info
 # Uses the manifest REST API
 function printGlobalScopeAndCollectionInfo {
@@ -643,7 +658,7 @@ function printGlobalScopeAndCollectionInfo {
 			# Get the manifest for this bucket
 			local manifestOutput=""
 			local manifestVersion=""
-			manifestOutput=`$CURL -u $DEFAULT_ADMIN:$DEFAULT_PW -X GET http://localhost:$port/$POOLS_DEFAULT_BUCKETS_PATH/$bucketName/collections`
+			manifestOutput=`getManifest $clusterName $bucketName`
 			if (( $? != 0 ));then
 				echo "Error retrieving manifest - Cluster $clusterName bucket $bucketName scope $scopeName"
 				continue
