@@ -811,7 +811,7 @@ func TestGenerateXattrUsingGoCB(t *testing.T) {
 		Password: "wewewe",
 	})
 
-	bucket, err := cluster.OpenBucket("b1", "")
+	bucket, err := cluster.OpenBucket("B1", "")
 	if err != nil {
 		return
 	}

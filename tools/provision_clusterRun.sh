@@ -50,14 +50,14 @@ declare -A DefaultBucketReplProperties=(["filterExpression"]="$pcre_filter" ["re
 
 # Bucket -> Scopes
 # -----------------
-declare -a scope1Arr=("S1" "S2")
-BUCKET_NAME_SCOPE_MAP=(["B1"]=${scope1Arr[@]} ["B2"]="S3")
+#declare -a scope1Arr=("S1" "S2")
+#BUCKET_NAME_SCOPE_MAP=(["B1"]=${scope1Arr[@]} ["B2"]="S3")
 
 # Scopes -> Collections
 # ----------------------
-declare -a collection1Arr=("col1" "col2")
-declare -a collection2Arr=("col1" "col2" "col3")
-SCOPE_NAME_COLLECTION_MAP=(["S1"]=${collection1Arr[@]} ["S2"]=${collection2Arr[@]} ["S3"]=${collection2Arr[@]})
+#declare -a collection1Arr=("col1" "col2")
+#declare -a collection2Arr=("col1" "col2" "col3")
+#SCOPE_NAME_COLLECTION_MAP=(["S1"]=${collection1Arr[@]} ["S2"]=${collection2Arr[@]} ["S3"]=${collection2Arr[@]})
 
 
 function runDataLoad {
@@ -86,6 +86,6 @@ sleep 1
 createBucketReplication "C1" "B1" "C2" "B2" DefaultBucketReplProperties
 createBucketReplication "C2" "B2" "C1" "B1" DefaultBucketReplProperties
 printGlobalScopeAndCollectionInfo
-runDataLoad
+#runDataLoad
 
 exportProvisionedConfig

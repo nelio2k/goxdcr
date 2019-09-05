@@ -486,6 +486,9 @@ var HELO_FEATURE_SNAPPY uint16 = 0x0a
 // value representing XERROR
 var HELO_FEATURE_XERROR uint16 = 0x07
 
+// Collections Feature
+var HELO_FEATURE_COLLECTIONS uint16 = 0x12
+
 // new XATTR bit in data type field in dcp mutations
 var PROTOCOL_BINARY_DATATYPE_XATTR uint8 = 0x04
 

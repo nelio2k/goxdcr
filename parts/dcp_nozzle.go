@@ -427,6 +427,10 @@ func (dcp *DcpNozzle) initializeMemcachedClient(settings metadata.ReplicationSet
 
 	dcpMcReqFeatures.CompressionType = dcp.memcachedCompressionSetting
 
+	// NEIL
+	dcpMcReqFeatures.Collections = true
+
+	dcp.Logger().Infof("NEIL DEBUG addr: %v userAgent: %v keepAlive %v\n", addr, dcp.user_agent, base.KeepAlivePeriod)
 	dcp.client, respondedFeatures, err = dcp.utils.GetMemcachedConnectionWFeatures(addr, dcp.sourceBucketName, dcp.user_agent, base.KeepAlivePeriod, dcpMcReqFeatures, dcp.Logger())
 
 	if err == nil && (dcp.memcachedCompressionSetting != base.CompressionTypeNone) && (respondedFeatures.CompressionType != dcp.memcachedCompressionSetting) {
@@ -434,6 +438,11 @@ func (dcp *DcpNozzle) initializeMemcachedClient(settings metadata.ReplicationSet
 			dcp.Id(), dcp.memcachedCompressionSetting, respondedFeatures.CompressionType)
 		// Let dcp.Stop() take care of client.Close()
 		return base.ErrorCompressionNotSupported
+	}
+
+	if err == nil && respondedFeatures.Collections != dcpMcReqFeatures.Collections {
+		dcp.Logger().Errorf("Collections not supported")
+		return base.ErrorNotSupported
 	}
 
 	return err
@@ -889,6 +898,9 @@ func (dcp *DcpNozzle) processData() (err error) {
 					dcp.Logger().Infof("%v: %v", dcp.Id(), err_streamend)
 					dcp.handleVBError(vbno, err_streamend)
 				}
+			} else if m.IsCollectionType() {
+				// For now just do filtered out
+				dcp.RaiseEvent(common.NewEvent(common.DataFiltered, m, dcp.Connector(), nil, nil))
 			} else {
 				// Regular mutations coming in from DCP stream
 				if dcp.IsOpen() {
@@ -918,7 +930,7 @@ func (dcp *DcpNozzle) processData() (err error) {
 					case mc.UPR_SNAPSHOT:
 						dcp.RaiseEvent(common.NewEvent(common.SnapshotMarkerReceived, m, dcp, nil /*derivedItems*/, nil /*otherInfos*/))
 					default:
-						dcp.Logger().Debugf("%v Uprevent OpCode=%v, is skipped\n", dcp.Id(), m.Opcode)
+						dcp.Logger().Infof("%v Uprevent OpCode=%v, is skipped\n", dcp.Id(), m.Opcode)
 					}
 				}
 			}

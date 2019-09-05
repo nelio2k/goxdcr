@@ -47,6 +47,9 @@ func (f *HELOFeatures) NumberOfActivatedFeatures() int {
 	if f.Xerror {
 		result++
 	}
+	if f.Collections {
+		result++
+	}
 	return result
 }
 
@@ -647,6 +650,9 @@ func (u *Utilities) SendHELOWithFeatures(client mcc.ClientIface, userAgent strin
 			if feature == base.HELO_FEATURE_XERROR {
 				respondedFeatures.Xerror = true
 			}
+			if feature == base.HELO_FEATURE_COLLECTIONS {
+				respondedFeatures.Collections = true
+			}
 			pos += 2
 		}
 		logger.Infof("Successfully sent HELO command with userAgent=%v. attributes=%v", userAgent, respondedFeatures)
@@ -699,6 +705,12 @@ func (u *Utilities) ComposeHELORequest(userAgent string, features HELOFeatures) 
 	// Xerror
 	if features.Xerror {
 		binary.BigEndian.PutUint16(value[sliceIndex:sliceIndex+base.HELO_BYTES_PER_FEATURE], base.HELO_FEATURE_XERROR)
+		sliceIndex += base.HELO_BYTES_PER_FEATURE
+	}
+
+	// Collections
+	if features.Collections {
+		binary.BigEndian.PutUint16(value[sliceIndex:sliceIndex+base.HELO_BYTES_PER_FEATURE], base.HELO_FEATURE_COLLECTIONS)
 		sliceIndex += base.HELO_BYTES_PER_FEATURE
 	}
 
