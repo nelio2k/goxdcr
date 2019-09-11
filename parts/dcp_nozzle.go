@@ -477,6 +477,7 @@ func (dcp *DcpNozzle) initializeUprFeed() error {
 		uprFeatures.DcpPriority = dcp.getDcpPrioritySetting()
 		uprFeatures.IncludeDeletionTime = true
 		uprFeatures.EnableExpiry = true
+		uprFeatures.CollectionsAlreadyEnabled = true /* NEIL*/
 		feed := dcp.getUprFeed()
 		if feed == nil {
 			err = fmt.Errorf("%v uprfeed is nil\n", dcp.Id())
