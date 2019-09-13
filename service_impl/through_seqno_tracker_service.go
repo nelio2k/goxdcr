@@ -66,6 +66,8 @@ type ThroughSeqnoTrackerSvc struct {
 	rep_id string
 
 	logger *log.CommonLogger
+
+	unitTesting bool
 }
 
 // struct containing two seqno lists that need to be accessed and locked together
@@ -106,18 +108,18 @@ func (list_obj *DualSortedSeqnoListWithLock) appendSeqnos(seqno_1 uint64, seqno_
 }
 
 // truncate all seqnos that are no larger than passed in through_seqno
-func (list_obj *DualSortedSeqnoListWithLock) truncateSeqnos(through_seqno uint64) {
+func (list_obj *DualSortedSeqnoListWithLock) truncateSeqnos(vbno uint16, through_seqno uint64) {
 	list_obj.lock.Lock()
 	defer list_obj.lock.Unlock()
 
-	list_obj.seqno_list_1 = truncateGapSeqnoList(through_seqno, list_obj.seqno_list_1)
-	list_obj.seqno_list_2 = truncateGapSeqnoList(through_seqno, list_obj.seqno_list_2)
+	list_obj.seqno_list_1 = truncateGapSeqnoList(vbno, through_seqno, list_obj.seqno_list_1)
+	list_obj.seqno_list_2 = truncateGapSeqnoList(vbno, through_seqno, list_obj.seqno_list_2)
 }
 
-func truncateGapSeqnoList(through_seqno uint64, seqno_list []uint64) []uint64 {
+func truncateGapSeqnoList(vbno uint16, through_seqno uint64, seqno_list []uint64) []uint64 {
 	index, found := base.SearchUint64List(seqno_list, through_seqno)
 	if found {
-		panic("through_seqno cannot be in gap_seqno_list")
+		panic(fmt.Sprintf("vbno: %v through_seqno %v cannot be in gap_seqno_list", vbno, through_seqno))
 	} else if index > 0 {
 		return seqno_list[index:]
 	}
@@ -204,24 +206,33 @@ func (tsTracker *ThroughSeqnoTrackerSvc) ProcessEvent(event *common.Event) error
 		vbno := event.OtherInfos.(parts.DataSentEventAdditional).VBucket
 		seqno := event.OtherInfos.(parts.DataSentEventAdditional).Seqno
 		tsTracker.addSentSeqno(vbno, seqno)
+		tsTracker.logger.Infof("NEIL vb %v sent seqno %v", vbno, seqno)
 	case common.DataFiltered:
 		uprEvent := event.Data.(*mcc.UprEvent)
+		seqno := uprEvent.Seqno
+		vbno := uprEvent.VBucket
 		tsTracker.markUprEventAsFiltered(uprEvent)
+		tsTracker.processGapSeqnos(vbno, seqno)
 	case common.DataUnableToFilter:
 		err := event.DerivedData[0].(error)
 		// If error is recoverable, do not mark it filtered in order to avoid data loss
 		if !base.FilterErrorIsRecoverable(err) {
 			uprEvent := event.Data.(*mcc.UprEvent)
+			seqno := uprEvent.Seqno
+			vbno := uprEvent.VBucket
 			tsTracker.markUprEventAsFiltered(uprEvent)
+			tsTracker.processGapSeqnos(vbno, seqno)
 		}
 	case common.DataFailedCRSource:
 		seqno := event.OtherInfos.(parts.DataFailedCRSourceEventAdditional).Seqno
 		vbno := event.OtherInfos.(parts.DataFailedCRSourceEventAdditional).VBucket
 		tsTracker.addFailedCRSeqno(vbno, seqno)
+		tsTracker.logger.Infof("NEIL vb %v failedCR seqno %v", vbno, seqno)
 	case common.DataReceived:
 		upr_event := event.Data.(*mcc.UprEvent)
 		seqno := upr_event.Seqno
 		vbno := upr_event.VBucket
+		tsTracker.logger.Infof("NEIL vb %v received seqno %v", vbno, seqno)
 		// Sets last sequence number, and should the sequence number skip due to gap, this will take care of it
 		tsTracker.processGapSeqnos(vbno, seqno)
 	default:
@@ -239,6 +250,7 @@ func (tsTracker *ThroughSeqnoTrackerSvc) addSentSeqno(vbno uint16, sent_seqno ui
 
 func (tsTracker *ThroughSeqnoTrackerSvc) addFilteredSeqno(vbno uint16, filtered_seqno uint64) {
 	tsTracker.validateVbno(vbno, "addFilteredSeqno")
+	tsTracker.logger.Infof("NEIL vb %v adding %v as filtered", vbno, filtered_seqno)
 	tsTracker.vb_filtered_seqno_list_map[vbno].AppendSeqno(filtered_seqno)
 }
 
@@ -265,14 +277,20 @@ func (tsTracker *ThroughSeqnoTrackerSvc) processGapSeqnos(vbno uint16, current_s
 	if last_seen_seqno < current_seqno-1 {
 		// If the current sequence number is not consecutive, then this means we have hit a gap. Store it in gap list.
 		tsTracker.vb_gap_seqno_list_map[vbno].appendSeqnos(last_seen_seqno+1, current_seqno-1, tsTracker.logger)
+		tsTracker.logger.Infof("NEIL vb %v received seqno %v creating gap [%v, %v]", vbno, current_seqno,
+			last_seen_seqno+1, current_seqno-1)
+	} else {
+		tsTracker.logger.Infof("NEIL vb %v last_seen_seqno was %v and processGap is %v, skip create gap",
+			vbno, last_seen_seqno, current_seqno)
 	}
 }
 
 func (tsTracker *ThroughSeqnoTrackerSvc) truncateSeqnoLists(vbno uint16, through_seqno uint64) {
+	tsTracker.logger.Infof("NEIL vb %v truncating anything below throughSeqno %v\n", vbno, through_seqno)
 	tsTracker.vb_sent_seqno_list_map[vbno].TruncateSeqnos(through_seqno)
 	tsTracker.vb_filtered_seqno_list_map[vbno].TruncateSeqnos(through_seqno)
 	tsTracker.vb_failed_cr_seqno_list_map[vbno].TruncateSeqnos(through_seqno)
-	tsTracker.vb_gap_seqno_list_map[vbno].truncateSeqnos(through_seqno)
+	tsTracker.vb_gap_seqno_list_map[vbno].truncateSeqnos(vbno, through_seqno)
 }
 
 /**
@@ -382,10 +400,13 @@ func (tsTracker *ThroughSeqnoTrackerSvc) GetThroughSeqno(vbno uint16) uint64 {
 	if last_sent_index >= 0 || last_filtered_index >= 0 || last_failed_cr_index >= 0 {
 		if found_seqno_type == SeqnoTypeSent {
 			through_seqno = sent_seqno_list[last_sent_index]
+			tsTracker.logger.Infof("NEIL vb %v updating last throughSeq from %v to %v vbno via sent index %v", vbno, last_through_seqno, through_seqno, last_sent_index)
 		} else if found_seqno_type == SeqnoTypeFiltered {
 			through_seqno = filtered_seqno_list[last_filtered_index]
+			tsTracker.logger.Infof("NEIL vb %v updating last throughSeq from %v to %v vbno via filtered index %v", vbno, last_through_seqno, through_seqno, last_filtered_index)
 		} else if found_seqno_type == SeqnoTypeFailedCR {
 			through_seqno = failed_cr_seqno_list[last_failed_cr_index]
+			tsTracker.logger.Infof("NEIL vb %v updating last throughSeq from %v to %v vbno via failedCR index %v", vbno, last_through_seqno, through_seqno, last_failed_cr_index)
 		} else {
 			panic(fmt.Sprintf("unexpected found_seqno_type, %v", found_seqno_type))
 		}
@@ -512,6 +533,10 @@ func (tsTracker *ThroughSeqnoTrackerSvc) Id() string {
 }
 
 func (tsTracker *ThroughSeqnoTrackerSvc) isPipelineRunning() bool {
+	if tsTracker.unitTesting {
+		return true
+	}
+
 	rep_status, _ := pipeline_manager.ReplicationStatus(tsTracker.rep_id)
 	if rep_status != nil {
 		pipeline := rep_status.Pipeline()

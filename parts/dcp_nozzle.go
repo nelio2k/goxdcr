@@ -443,7 +443,7 @@ func (dcp *DcpNozzle) initializeMemcachedClient(settings metadata.ReplicationSet
 	dcpMcReqFeatures.CompressionType = dcp.memcachedCompressionSetting
 
 	// NEIL
-	dcpMcReqFeatures.Collections = false
+	dcpMcReqFeatures.Collections = true
 
 	dcp.Logger().Infof("NEIL DEBUG addr: %v userAgent: %v keepAlive %v\n", addr, dcp.user_agent, base.KeepAlivePeriod)
 	dcp.client, respondedFeatures, err = dcp.utils.GetMemcachedConnectionWFeatures(addr, dcp.sourceBucketName, dcp.user_agent, base.KeepAlivePeriod, dcpMcReqFeatures, dcp.Logger())
@@ -1557,5 +1557,5 @@ func (dcp *DcpNozzle) getDcpDataChanLen() {
 }
 
 func (dcp *DcpNozzle) ResponsibleVBs() []uint16 {
-	return dcp.vbnos
+	return dcp.GetVBList()
 }
