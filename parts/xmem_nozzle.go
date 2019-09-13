@@ -817,7 +817,8 @@ type XmemNozzle struct {
 
 	vbList []uint16
 
-	collectionsManifest *metadata.CollectionsManifest
+	collectionsManifest        *metadata.CollectionsManifest
+	collectionsManifestVersion uint64 /* atomically updated */
 }
 
 func NewXmemNozzle(id string,
@@ -1027,6 +1028,10 @@ func (xmem *XmemNozzle) Receive(data interface{}) error {
 		return err
 
 	}
+
+	//	if !strings.Contains(string(request.Req.Key), "Collections") {
+	//		xmem.Logger().Infof("Sending %v", string(request.Req.Key))
+	//	}
 
 	err = xmem.accumuBatch(request)
 	if err != nil {
@@ -1547,7 +1552,7 @@ func (xmem *XmemNozzle) batchGetMetaHandler(count int, finch chan bool, return_c
 								// this response requires connection reset
 
 								// log the corresponding request to facilitate debugging
-								xmem.Logger().Warnf("%v received error from getMeta client. key=%v%v%v, seqno=%v, response=%v%v%v\n", xmem.Id(), base.UdTagBegin, key, base.UdTagEnd, seqno,
+								xmem.Logger().Warnf("%v received error from getMeta client. key=%v%v%v, seqno=%v, response=%v%v%v\n", xmem.Id(), base.UdTagBegin, string(key), base.UdTagEnd, seqno,
 									base.UdTagBegin, response, base.UdTagEnd)
 								err = fmt.Errorf("error response with status %v from memcached", response.Status)
 								xmem.repairConn(xmem.client_for_getMeta, err.Error(), rev)
@@ -1915,6 +1920,7 @@ func (xmem *XmemNozzle) initialize(settings metadata.ReplicationSettingsMap) err
 
 	getterFunc := settings[XMEM_SETTING_MANIFEST_GETTER].(service_def.CollectionsManifestPartsFunc)
 	xmem.collectionsManifest = getterFunc(xmem.vbList)
+	atomic.StoreUint64(&xmem.collectionsManifestVersion, xmem.collectionsManifest.Uid())
 
 	xmem.setDataChan(make(chan *base.WrappedMCRequest, xmem.config.maxCount*10))
 	xmem.bytes_in_dataChan = 0
@@ -2060,7 +2066,7 @@ func (xmem *XmemNozzle) receiveResponse(finch chan bool, waitGrp *sync.WaitGroup
 								xmem.handleVBError(req.VBucket, vb_err)
 							} else {
 								// for other non-temporary errors, repair connections
-								xmem.Logger().Errorf("%v received error response from setMeta client. Repairing connection. response status=%v, opcode=%v, seqno=%v, req.Key=%v%v%v, req.Cas=%v, req.Extras=%v\n", xmem.Id(), response.Status, response.Opcode, seqno, base.UdTagBegin, req.Key, base.UdTagEnd, req.Cas, req.Extras)
+								xmem.Logger().Errorf("%v received error response from setMeta client. Repairing connection. response status=%v, opcode=%v, seqno=%v, keyLen=%v, req.Key=%v%v%v, req.Cas=%v, req.Extras=%v\n", xmem.Id(), response.Status, response.Opcode, seqno, req.Keylen, base.UdTagBegin, string(req.Key), base.UdTagEnd, req.Cas, req.Extras)
 								xmem.repairConn(xmem.client_for_setMeta, "error response from memcached", rev)
 							}
 						} else if req != nil {

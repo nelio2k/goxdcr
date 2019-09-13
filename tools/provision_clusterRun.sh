@@ -45,8 +45,9 @@ insertPropertyIntoBucketNamePropertyMap "B0" BucketProperty
 insertPropertyIntoBucketNamePropertyMap "B1" Bucket1Properties
 insertPropertyIntoBucketNamePropertyMap "B2" BucketProperty
 
-pcre_filter='REGEXP_CONTAINS(click, "q(?!uit)")'
-declare -A DefaultBucketReplProperties=(["filterExpression"]="$pcre_filter" ["replicationType"]="continuous" ["checkpointInterval"]=60 ["statsInterval"]=500)
+#pcre_filter='REGEXP_CONTAINS(click, "q(?!uit)")'
+#declare -A DefaultBucketReplProperties=(["filterExpression"]="$pcre_filter" ["replicationType"]="continuous" ["checkpointInterval"]=60 ["statsInterval"]=500)
+declare -A DefaultBucketReplProperties=(["replicationType"]="continuous" ["checkpointInterval"]=60 ["statsInterval"]=500)
 
 # Bucket -> Scopes
 # -----------------
@@ -65,7 +66,7 @@ function runDataLoad {
 	runCbWorkloadGenBucket "C1" "B0" &
 	runCbWorkloadGenBucket "C1" "B1" &
 	runCbWorkloadGenBucket "C2" "B2" &
-	runCbWorkloadGenCollection "C1" "B1" "S1" "col1"
+#	runCbWorkloadGenCollection "C1" "B1" "S1" "col1"
 	waitForBgJobs
 }
 

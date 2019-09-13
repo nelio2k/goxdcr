@@ -382,7 +382,8 @@ func (xdcrf *XDCRFactory) constructSourceNozzles(spec *metadata.ReplicationSpeci
 			// partIds of the dcpNozzle nodes look like "dcpNozzle_$kvaddr_1"
 			id := xdcrf.partId(DCP_NOZZLE_NAME_PREFIX, spec.Id, kvaddr, i)
 			dcpNozzle := parts.NewDcpNozzle(id,
-				spec.SourceBucketName, spec.TargetBucketName, vbList, xdcrf.xdcr_topology_svc, isCapiReplication, logger_ctx, xdcrf.utils)
+				spec.SourceBucketName, spec.TargetBucketName, vbList, xdcrf.xdcr_topology_svc, isCapiReplication, logger_ctx,
+				xdcrf.utils, xdcrf.collectionsManifestSvc)
 			sourceNozzles[dcpNozzle.Id()] = dcpNozzle
 			xdcrf.logger.Debugf("Constructed source nozzle %v with vbList = %v \n", dcpNozzle.Id(), vbList)
 		}
@@ -846,6 +847,10 @@ func (xdcrf *XDCRFactory) constructSettingsForDcpNozzle(pipeline common.Pipeline
 	}
 	dcpNozzleSettings[parts.DCP_Manifest_Getter] = getterFunc
 
+	var getterFunc2 service_def.CollectionsManifestReqFunc = func(manifestUid uint64) (*metadata.CollectionsManifest, error) {
+		return xdcrf.collectionsManifestSvc.GetSpecificSourceManifest(spec, manifestUid)
+	}
+	dcpNozzleSettings[parts.DCP_Specific_Manifest_Getter] = getterFunc2
 	return dcpNozzleSettings, nil
 }
 

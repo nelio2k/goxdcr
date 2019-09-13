@@ -1378,7 +1378,7 @@ func (r_collector *routerCollector) ProcessEvent(event *common.Event) error {
 		} else if uprEvent.Opcode == mc.UPR_EXPIRATION {
 			metric_map[EXPIRY_FILTERED_METRIC].(metrics.Counter).Inc(1)
 		} else {
-			r_collector.stats_mgr.logger.Warnf("Invalid opcode, %v, in DataFiltered event from %v.", uprEvent.Opcode, event.Component.Id())
+			//			r_collector.stats_mgr.logger.Warnf("Invalid opcode, %v, in DataFiltered event from %v.", uprEvent.Opcode, event.Component.Id())
 		}
 
 		// Handle VB specific tasks

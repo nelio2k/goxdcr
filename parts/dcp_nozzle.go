@@ -31,14 +31,15 @@ import (
 
 const (
 	// start settings key name
-	DCP_VBTimestamp         = "VBTimestamps"
-	DCP_VBTimestampUpdater  = "VBTimestampUpdater"
-	DCP_Connection_Prefix   = "xdcr:"
-	EVENT_DCP_DISPATCH_TIME = "dcp_dispatch_time"
-	EVENT_DCP_DATACH_LEN    = "dcp_datach_length"
-	DCP_Stats_Interval      = "stats_interval"
-	DCP_Priority            = "dcpPriority"
-	DCP_Manifest_Getter     = "dcpManifestGetter"
+	DCP_VBTimestamp              = "VBTimestamps"
+	DCP_VBTimestampUpdater       = "VBTimestampUpdater"
+	DCP_Connection_Prefix        = "xdcr:"
+	EVENT_DCP_DISPATCH_TIME      = "dcp_dispatch_time"
+	EVENT_DCP_DATACH_LEN         = "dcp_datach_length"
+	DCP_Stats_Interval           = "stats_interval"
+	DCP_Priority                 = "dcpPriority"
+	DCP_Manifest_Getter          = "dcpManifestGetter"
+	DCP_Specific_Manifest_Getter = "dcpSpecManifestGetter"
 )
 
 type DcpStreamState int
@@ -326,6 +327,12 @@ type DcpNozzle struct {
 	// Each vb stream has its own helper to help with DCP handshaking
 	vbHandshakeMap map[uint16]*dcpStreamReqHelper
 
+	// Non-StreamID based vb stream will keep track of the top received manifest ID from DCP
+	// This is to ensure that the mutations coming in from DCP can be matched with the correct
+	// manifest ID
+	// DCP will only bump the manifest (via a system event) if all older manifest has been sent
+	vbHighestManifestUidArray [1024]uint64
+
 	xdcr_topology_svc service_def.XDCRCompTopologySvc
 	// stats collection interval in milliseconds
 	stats_interval              uint32
@@ -339,7 +346,10 @@ type DcpNozzle struct {
 	dcpPrioritySetting mcc.PriorityType
 	lockSetting        sync.RWMutex
 
-	collectionsManifest *metadata.CollectionsManifest
+	collectionsManifestSvc service_def.CollectionsManifestSvc
+
+	collectionsManifest        *metadata.CollectionsManifest
+	collectionsManifestVersion uint64 // atomic
 }
 
 func NewDcpNozzle(id string,
@@ -348,7 +358,8 @@ func NewDcpNozzle(id string,
 	xdcr_topology_svc service_def.XDCRCompTopologySvc,
 	is_capi bool,
 	logger_context *log.LoggerContext,
-	utilsIn utilities.UtilsIface) *DcpNozzle {
+	utilsIn utilities.UtilsIface,
+	collectionsManifestSvc service_def.CollectionsManifestSvc) *DcpNozzle {
 
 	part := NewAbstractPartWithLogger(id, log.NewLogger("DcpNozzle", logger_context))
 
@@ -370,6 +381,7 @@ func NewDcpNozzle(id string,
 		utils:                    utilsIn,
 		vbHandshakeMap:           make(map[uint16]*dcpStreamReqHelper),
 		dcpPrioritySetting:       mcc.PriorityDisabled,
+		collectionsManifestSvc:   collectionsManifestSvc,
 	}
 
 	for _, vbno := range vbnos {
@@ -431,7 +443,7 @@ func (dcp *DcpNozzle) initializeMemcachedClient(settings metadata.ReplicationSet
 	dcpMcReqFeatures.CompressionType = dcp.memcachedCompressionSetting
 
 	// NEIL
-	dcpMcReqFeatures.Collections = true
+	dcpMcReqFeatures.Collections = false
 
 	dcp.Logger().Infof("NEIL DEBUG addr: %v userAgent: %v keepAlive %v\n", addr, dcp.user_agent, base.KeepAlivePeriod)
 	dcp.client, respondedFeatures, err = dcp.utils.GetMemcachedConnectionWFeatures(addr, dcp.sourceBucketName, dcp.user_agent, base.KeepAlivePeriod, dcpMcReqFeatures, dcp.Logger())
@@ -445,7 +457,7 @@ func (dcp *DcpNozzle) initializeMemcachedClient(settings metadata.ReplicationSet
 
 	if err == nil && respondedFeatures.Collections != dcpMcReqFeatures.Collections {
 		dcp.Logger().Errorf("Collections not supported")
-		return base.ErrorNotSupported
+		//		return base.ErrorNotSupported
 	}
 
 	return err
@@ -480,7 +492,6 @@ func (dcp *DcpNozzle) initializeUprFeed() error {
 		uprFeatures.DcpPriority = dcp.getDcpPrioritySetting()
 		uprFeatures.IncludeDeletionTime = true
 		uprFeatures.EnableExpiry = true
-		uprFeatures.CollectionsAlreadyEnabled = true /* NEIL*/
 		feed := dcp.getUprFeed()
 		if feed == nil {
 			err = fmt.Errorf("%v uprfeed is nil\n", dcp.Id())
@@ -546,6 +557,13 @@ func (dcp *DcpNozzle) initialize(settings metadata.ReplicationSettingsMap) (err 
 
 	manifestGetterFunc := settings[DCP_Manifest_Getter].(service_def.CollectionsManifestPartsFunc)
 	dcp.collectionsManifest = manifestGetterFunc(dcp.vbnos)
+	if dcp.collectionsManifest == nil {
+		dcp.Logger().Errorf("NEIL DEBUG nil manifest")
+		return base.ErrorInvalidInput
+	}
+	for _, vbno := range dcp.vbnos {
+		atomic.StoreUint64(&dcp.vbHighestManifestUidArray[vbno], dcp.collectionsManifest.Uid())
+	}
 
 	dcp.initializeUprHandshakeHelpers()
 
@@ -905,7 +923,7 @@ func (dcp *DcpNozzle) processData() (err error) {
 					dcp.Logger().Infof("%v: %v", dcp.Id(), err_streamend)
 					dcp.handleVBError(vbno, err_streamend)
 				}
-			} else if m.IsCollectionType() {
+			} else if m.IsSystemEvent() {
 				// For now just do filtered out
 				dcp.RaiseEvent(common.NewEvent(common.DataFiltered, m, dcp.Connector(), nil, nil))
 			} else {
@@ -933,7 +951,7 @@ func (dcp *DcpNozzle) processData() (err error) {
 						dcp.incCounterSent()
 						// raise event for statistics collection
 						dispatch_time := time.Since(start_time)
-						dcp.RaiseEvent(common.NewEvent(common.DataProcessed, m, dcp, nil /*derivedItems*/, dispatch_time.Seconds()*1000000 /*otherInfos*/))
+						dcp.RaiseEvent(common.NewEvent(common.DataProcessed, m, dcp, dcp.getDataReceivedDerivedItems(m), dispatch_time.Seconds()*1000000 /*otherInfos*/))
 					case mc.UPR_SNAPSHOT:
 						dcp.RaiseEvent(common.NewEvent(common.SnapshotMarkerReceived, m, dcp, nil /*derivedItems*/, nil /*otherInfos*/))
 					default:
@@ -944,6 +962,17 @@ func (dcp *DcpNozzle) processData() (err error) {
 		}
 	}
 done:
+	return
+}
+
+// Creates additional items slice:
+// 1. Manifest UID
+// 2. Scope Name
+// 3. Collection Name
+func (dcp *DcpNozzle) getDataReceivedDerivedItems(m *mcc.UprEvent) (retVal []interface{}) {
+	topManifestUid := atomic.LoadUint64(&dcp.vbHighestManifestUidArray[m.VBucket])
+	retVal = append(retVal, topManifestUid)
+
 	return
 }
 

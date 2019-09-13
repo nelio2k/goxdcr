@@ -220,23 +220,20 @@ func (router *Router) route(data interface{}) (map[string]interface{}, error) {
 		return result, nil
 	}
 
-	// filter data if filter expession has been defined
-	if router.filter != nil {
-		needToReplicate, err, errDesc, failedDpCnt := router.filter.FilterUprEvent(uprEvent)
-		if failedDpCnt > 0 {
-			router.RaiseEvent(common.NewEvent(common.DataPoolGetFail, failedDpCnt, router, nil, nil))
+	needToReplicate, err, errDesc, failedDpCnt := router.filter.FilterUprEvent(uprEvent)
+	if failedDpCnt > 0 {
+		router.RaiseEvent(common.NewEvent(common.DataPoolGetFail, failedDpCnt, router, nil, nil))
+	}
+	if !needToReplicate || err != nil {
+		if err != nil {
+			// Let pipeline supervisor do the logging
+			router.RaiseEvent(common.NewEvent(common.DataUnableToFilter, uprEvent, router, []interface{}{err, errDesc}, nil))
+		} else {
+			// if data does not need to be replicated, drop it. return empty result
+			router.RaiseEvent(common.NewEvent(common.DataFiltered, uprEvent, router, nil, nil))
 		}
-		if !needToReplicate || err != nil {
-			if err != nil {
-				// Let pipeline supervisor do the logging
-				router.RaiseEvent(common.NewEvent(common.DataUnableToFilter, uprEvent, router, []interface{}{err, errDesc}, nil))
-			} else {
-				// if data does not need to be replicated, drop it. return empty result
-				router.RaiseEvent(common.NewEvent(common.DataFiltered, uprEvent, router, nil, nil))
-			}
-			// Let supervisor set the err instead of the router, to minimize pipeline interruption
-			return result, nil
-		}
+		// Let supervisor set the err instead of the router, to minimize pipeline interruption
+		return result, nil
 	}
 
 	mcRequest, err := router.ComposeMCRequest(uprEvent)

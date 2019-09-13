@@ -26,12 +26,13 @@ type HELOFeatures struct {
 
 type UtilsIface interface {
 	// Please keep the interface alphabetically ordered
+
+	ComposeHELORequest(userAgent string, features HELOFeatures) *mc.MCRequest
 	/**
 	 * ------------------------
 	 * Memcached utilities
 	 * ------------------------
 	 */
-	ComposeHELORequest(userAgent string, features HELOFeatures) *mc.MCRequest
 	FilterExpressionMatchesDoc(expression, docId, bucketName, addr string, port uint16) (result bool, err error)
 	GetMemcachedClient(serverAddr, bucketName string, kv_mem_clients map[string]mcc.ClientIface, userAgent string, keepAlivePeriod time.Duration, logger *log.CommonLogger) (mcc.ClientIface, error)
 	GetMemcachedConnection(serverAddr, bucketName, userAgent string, keepAlivePeriod time.Duration, logger *log.CommonLogger) (mcc.ClientIface, error)

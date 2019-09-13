@@ -3,7 +3,6 @@ package mocks
 import base "github.com/couchbase/goxdcr/base"
 import couchbase "github.com/couchbase/go-couchbase"
 import expvar "expvar"
-import gomemcached "github.com/couchbase/gomemcached"
 import http "net/http"
 import log "github.com/couchbase/goxdcr/log"
 import memcached "github.com/couchbase/gomemcached/client"
@@ -245,22 +244,6 @@ func (_m *UtilsIface) CheckWhetherClusterIsESBasedOnBucketInfo(bucketInfo map[st
 		r0 = rf(bucketInfo)
 	} else {
 		r0 = ret.Get(0).(bool)
-	}
-
-	return r0
-}
-
-// ComposeHELORequest provides a mock function with given fields: userAgent, features
-func (_m *UtilsIface) ComposeHELORequest(userAgent string, features utils.HELOFeatures) *gomemcached.MCRequest {
-	ret := _m.Called(userAgent, features)
-
-	var r0 *gomemcached.MCRequest
-	if rf, ok := ret.Get(0).(func(string, utils.HELOFeatures) *gomemcached.MCRequest); ok {
-		r0 = rf(userAgent, features)
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*gomemcached.MCRequest)
-		}
 	}
 
 	return r0
