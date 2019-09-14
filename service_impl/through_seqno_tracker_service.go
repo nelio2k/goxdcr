@@ -352,6 +352,8 @@ func (tsTracker *ThroughSeqnoTrackerSvc) GetThroughSeqno(vbno uint16) uint64 {
 		SeqnoTypeFailedCR int = 3
 	)
 
+	fmt.Printf("NEIL DEBUG maxSent: %v maxFiltered %v\n", max_sent_seqno, max_filtered_seqno)
+
 	for {
 		iter_seqno++
 		if iter_seqno <= max_sent_seqno {
@@ -365,8 +367,10 @@ func (tsTracker *ThroughSeqnoTrackerSvc) GetThroughSeqno(vbno uint16) uint64 {
 		}
 
 		if iter_seqno <= max_filtered_seqno {
+			fmt.Printf("Looking for %v in filtered_seqno_list\n", iter_seqno)
 			filtered_index, filtered_found := base.SearchUint64List(filtered_seqno_list, iter_seqno)
 			if filtered_found {
+				fmt.Printf("Found\n")
 				last_filtered_index = filtered_index
 				found_seqno_type = SeqnoTypeFiltered
 				// A sequence number, if exists in one of the list, will not be duplicated in the other lists
@@ -396,6 +400,9 @@ func (tsTracker *ThroughSeqnoTrackerSvc) GetThroughSeqno(vbno uint16) uint64 {
 		// stop if cannot find seqno in any of the lists
 		break
 	}
+
+	fmt.Printf("NEIL DEBUG lastSentIndex %v lastFilteredIdx %v lastFailedCrIndex %v iter_seqno: %v\n",
+		last_sent_index, last_filtered_index, last_failed_cr_index, iter_seqno)
 
 	if last_sent_index >= 0 || last_filtered_index >= 0 || last_failed_cr_index >= 0 {
 		if found_seqno_type == SeqnoTypeSent {
