@@ -684,7 +684,6 @@ func (u *Utilities) SendHELOWithFeatures(client mcc.ClientIface, userAgent strin
 	}
 
 	if requestedFeatures.Collections {
-		u.logger_utils.Infof("NEIL DEBUG sending HELO collections")
 		clientFeatureSet = append(clientFeatureSet, mcc.FeatureCollections)
 	}
 

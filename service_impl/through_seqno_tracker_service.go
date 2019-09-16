@@ -352,8 +352,6 @@ func (tsTracker *ThroughSeqnoTrackerSvc) GetThroughSeqno(vbno uint16) uint64 {
 		SeqnoTypeFailedCR int = 3
 	)
 
-	fmt.Printf("NEIL DEBUG maxSent: %v maxFiltered %v\n", max_sent_seqno, max_filtered_seqno)
-
 	for {
 		iter_seqno++
 		if iter_seqno <= max_sent_seqno {
@@ -367,10 +365,8 @@ func (tsTracker *ThroughSeqnoTrackerSvc) GetThroughSeqno(vbno uint16) uint64 {
 		}
 
 		if iter_seqno <= max_filtered_seqno {
-			fmt.Printf("Looking for %v in filtered_seqno_list\n", iter_seqno)
 			filtered_index, filtered_found := base.SearchUint64List(filtered_seqno_list, iter_seqno)
 			if filtered_found {
-				fmt.Printf("Found\n")
 				last_filtered_index = filtered_index
 				found_seqno_type = SeqnoTypeFiltered
 				// A sequence number, if exists in one of the list, will not be duplicated in the other lists
@@ -401,19 +397,13 @@ func (tsTracker *ThroughSeqnoTrackerSvc) GetThroughSeqno(vbno uint16) uint64 {
 		break
 	}
 
-	fmt.Printf("NEIL DEBUG lastSentIndex %v lastFilteredIdx %v lastFailedCrIndex %v iter_seqno: %v\n",
-		last_sent_index, last_filtered_index, last_failed_cr_index, iter_seqno)
-
 	if last_sent_index >= 0 || last_filtered_index >= 0 || last_failed_cr_index >= 0 {
 		if found_seqno_type == SeqnoTypeSent {
 			through_seqno = sent_seqno_list[last_sent_index]
-			tsTracker.logger.Infof("NEIL vb %v updating last throughSeq from %v to %v vbno via sent index %v", vbno, last_through_seqno, through_seqno, last_sent_index)
 		} else if found_seqno_type == SeqnoTypeFiltered {
 			through_seqno = filtered_seqno_list[last_filtered_index]
-			tsTracker.logger.Infof("NEIL vb %v updating last throughSeq from %v to %v vbno via filtered index %v", vbno, last_through_seqno, through_seqno, last_filtered_index)
 		} else if found_seqno_type == SeqnoTypeFailedCR {
 			through_seqno = failed_cr_seqno_list[last_failed_cr_index]
-			tsTracker.logger.Infof("NEIL vb %v updating last throughSeq from %v to %v vbno via failedCR index %v", vbno, last_through_seqno, through_seqno, last_failed_cr_index)
 		} else {
 			panic(fmt.Sprintf("unexpected found_seqno_type, %v", found_seqno_type))
 		}

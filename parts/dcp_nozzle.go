@@ -439,13 +439,11 @@ func (dcp *DcpNozzle) initializeMemcachedClient(settings metadata.ReplicationSet
 	if err != nil {
 		return err
 	}
-
 	dcpMcReqFeatures.CompressionType = dcp.memcachedCompressionSetting
 
 	// NEIL
 	dcpMcReqFeatures.Collections = true
 
-	dcp.Logger().Infof("NEIL DEBUG addr: %v userAgent: %v keepAlive %v\n", addr, dcp.user_agent, base.KeepAlivePeriod)
 	dcp.client, respondedFeatures, err = dcp.utils.GetMemcachedConnectionWFeatures(addr, dcp.sourceBucketName, dcp.user_agent, base.KeepAlivePeriod, dcpMcReqFeatures, dcp.Logger())
 
 	if err == nil && (dcp.memcachedCompressionSetting != base.CompressionTypeNone) && (respondedFeatures.CompressionType != dcp.memcachedCompressionSetting) {
@@ -924,8 +922,13 @@ func (dcp *DcpNozzle) processData() (err error) {
 					dcp.handleVBError(vbno, err_streamend)
 				}
 			} else if m.IsSystemEvent() {
-				// For now just do filtered out
-				dcp.RaiseEvent(common.NewEvent(common.DataFiltered, m, dcp.Connector(), nil, nil))
+				// Let's just pretend we received it and processed it in one shot
+				start_time := time.Now()
+				dcp.incCounterReceived()
+				dcp.RaiseEvent(common.NewEvent(common.DataReceived, m, dcp, nil /*derivedItems*/, nil /*otherInfos*/))
+				dcp.incCounterSent()
+				dispatch_time := time.Since(start_time)
+				dcp.RaiseEvent(common.NewEvent(common.DataProcessed, m, dcp, dcp.getDataReceivedDerivedItems(m), dispatch_time.Seconds()*1000000 /*otherInfos*/))
 			} else {
 				// Regular mutations coming in from DCP stream
 				if dcp.IsOpen() {
