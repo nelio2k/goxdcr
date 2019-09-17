@@ -331,7 +331,7 @@ type DcpNozzle struct {
 	// This is to ensure that the mutations coming in from DCP can be matched with the correct
 	// manifest ID
 	// DCP will only bump the manifest (via a system event) if all older manifest has been sent
-	vbHighestManifestUidArray [1024]uint64
+	vbHighestManifestUidArray [base.NumberOfVbs]uint64
 
 	xdcr_topology_svc service_def.XDCRCompTopologySvc
 	// stats collection interval in milliseconds
@@ -350,6 +350,8 @@ type DcpNozzle struct {
 
 	collectionsManifest        *metadata.CollectionsManifest
 	collectionsManifestVersion uint64 // atomic
+
+	specificManifestGetter service_def.CollectionsManifestReqFunc
 }
 
 func NewDcpNozzle(id string,
@@ -562,6 +564,8 @@ func (dcp *DcpNozzle) initialize(settings metadata.ReplicationSettingsMap) (err 
 	for _, vbno := range dcp.vbnos {
 		atomic.StoreUint64(&dcp.vbHighestManifestUidArray[vbno], dcp.collectionsManifest.Uid())
 	}
+
+	dcp.specificManifestGetter = settings[DCP_Specific_Manifest_Getter].(service_def.CollectionsManifestReqFunc)
 
 	dcp.initializeUprHandshakeHelpers()
 
@@ -946,8 +950,9 @@ func (dcp *DcpNozzle) processData() (err error) {
 						if !dcp.is_capi {
 							dcp.handleXattr(m)
 						}
+						wrappedUpr := dcp.composeWrappedUprEvent(m)
 						// forward mutation downstream through connector
-						if err := dcp.Connector().Forward(m); err != nil {
+						if err := dcp.Connector().Forward(wrappedUpr); err != nil {
 							dcp.handleGeneralError(err)
 							goto done
 						}
@@ -968,14 +973,58 @@ done:
 	return
 }
 
+func (dcp *DcpNozzle) composeWrappedUprEvent(m *mcc.UprEvent) *base.WrappedUprEvent {
+	wrappedEvent := &base.WrappedUprEvent{UprEvent: m}
+
+	if m.IsSystemEvent() || !m.IsCollectionType() {
+		// Collection not used
+		return wrappedEvent
+	}
+
+	wrappedEvent.CollectionUsed = true
+
+	topManifestUid := atomic.LoadUint64(&dcp.vbHighestManifestUidArray[m.VBucket])
+	manifest, err := dcp.specificManifestGetter(topManifestUid)
+	if err != nil {
+		panic(fmt.Sprintf("Error: %v", err))
+	}
+
+	scopeName, collectionName, err := manifest.GetScopeAndCollectionName(m.CollectionId)
+	if err != nil {
+		panic(fmt.Sprintf("GetScopeCollectionName Error: %v", err))
+	}
+
+	wrappedEvent.ScopeName = scopeName
+	wrappedEvent.CollectionName = collectionName
+
+	return wrappedEvent
+}
+
 // Creates additional items slice:
 // 1. Manifest UID
 // 2. Scope Name
 // 3. Collection Name
 func (dcp *DcpNozzle) getDataReceivedDerivedItems(m *mcc.UprEvent) (retVal []interface{}) {
+	if m.IsSystemEvent() || !m.IsCollectionType() {
+		return
+	}
+
 	topManifestUid := atomic.LoadUint64(&dcp.vbHighestManifestUidArray[m.VBucket])
 	retVal = append(retVal, topManifestUid)
 
+	// Corresponding manifest
+	manifest, err := dcp.specificManifestGetter(topManifestUid)
+	if err != nil {
+		panic(fmt.Sprintf("Error: %v", err))
+	}
+
+	scopeName, collectionName, err := manifest.GetScopeAndCollectionName(m.CollectionId)
+	if err != nil {
+		panic(fmt.Sprintf("GetScopeCollectionName Error: %v", err))
+	}
+
+	retVal = append(retVal, scopeName)
+	retVal = append(retVal, collectionName)
 	return
 }
 

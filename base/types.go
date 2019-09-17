@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/couchbase/gomemcached"
+	mcc "github.com/couchbase/gomemcached/client"
 	mrand "math/rand"
 	"reflect"
 	"sync"
@@ -94,11 +95,23 @@ type ErrorInfo struct {
 	ErrorMsg string
 }
 
+type WrappedUprEvent struct {
+	UprEvent       *mcc.UprEvent
+	CollectionUsed bool
+	ScopeName      string
+	CollectionName string
+}
+
 type WrappedMCRequest struct {
-	Seqno      uint64
-	Req        *gomemcached.MCRequest
-	Start_time time.Time
-	UniqueKey  string
+	Seqno                    uint64
+	Req                      *gomemcached.MCRequest
+	Start_time               time.Time
+	UniqueKey                string
+	CollectionUsed           bool
+	ScopeName                string
+	CollectionName           string
+	MappedTargetCollectionId uint64
+	MappedManifestId         uint64
 }
 
 func (req *WrappedMCRequest) ConstructUniqueKey() {

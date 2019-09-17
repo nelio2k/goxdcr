@@ -234,6 +234,7 @@ var ErrorExpDelTrio = fmt.Errorf("%v, %v, and %v must be specified together", Fi
 var ErrorNoSourceKV = errors.New("Invalid configuration. No source kv node is found.")
 var ErrorExecutionTimedOut = errors.New("Execution timed out")
 var ErrorPipelineStartTimedOutUI = errors.New("Pipeline did not start in a timely manner, possibly due to busy source or target. Will try again...")
+var ErrorNotFound = errors.New("Specified entity is not found")
 
 // Various non-error internal msgs
 var FilterForcePassThrough = errors.New("No data is to be filtered, should allow passthrough")
@@ -539,6 +540,8 @@ var RetryIntervalSetDerivedObj = 100 * time.Millisecond
 var MaxNumOfRetriesSetDerivedObj = 8
 
 var NumberOfWorkersForCheckpointing = 5
+
+const NumberOfVbs = 1024
 
 type FilterVersionType int
 

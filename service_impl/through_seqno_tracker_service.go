@@ -209,19 +209,19 @@ func (tsTracker *ThroughSeqnoTrackerSvc) ProcessEvent(event *common.Event) error
 		tsTracker.logger.Infof("NEIL vb %v sent seqno %v", vbno, seqno)
 	case common.DataFiltered:
 		uprEvent := event.Data.(*mcc.UprEvent)
-		seqno := uprEvent.Seqno
-		vbno := uprEvent.VBucket
+		//		seqno := uprEvent.Seqno
+		//		vbno := uprEvent.VBucket
 		tsTracker.markUprEventAsFiltered(uprEvent)
-		tsTracker.processGapSeqnos(vbno, seqno)
+		//		tsTracker.processGapSeqnos(vbno, seqno)
 	case common.DataUnableToFilter:
 		err := event.DerivedData[0].(error)
 		// If error is recoverable, do not mark it filtered in order to avoid data loss
 		if !base.FilterErrorIsRecoverable(err) {
 			uprEvent := event.Data.(*mcc.UprEvent)
-			seqno := uprEvent.Seqno
-			vbno := uprEvent.VBucket
+			//			seqno := uprEvent.Seqno
+			//			vbno := uprEvent.VBucket
 			tsTracker.markUprEventAsFiltered(uprEvent)
-			tsTracker.processGapSeqnos(vbno, seqno)
+			//			tsTracker.processGapSeqnos(vbno, seqno)
 		}
 	case common.DataFailedCRSource:
 		seqno := event.OtherInfos.(parts.DataFailedCRSourceEventAdditional).Seqno

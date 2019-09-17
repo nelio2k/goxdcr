@@ -36,16 +36,17 @@ import (
 
 //configuration settings for XmemNozzle
 const (
-	SETTING_RESP_TIMEOUT             = "resp_timeout"
-	XMEM_SETTING_DEMAND_ENCRYPTION   = "demandEncryption"
-	XMEM_SETTING_ENCRYPTION_TYPE     = "encryptionType"
-	XMEM_SETTING_CERTIFICATE         = metadata.XmemCertificate
-	XMEM_SETTING_INSECURESKIPVERIFY  = "insecureSkipVerify"
-	XMEM_SETTING_SAN_IN_CERITICATE   = "SANInCertificate"
-	XMEM_SETTING_REMOTE_MEM_SSL_PORT = "remote_ssl_port"
-	XMEM_SETTING_CLIENT_CERTIFICATE  = metadata.XmemClientCertificate
-	XMEM_SETTING_CLIENT_KEY          = metadata.XmemClientKey
-	XMEM_SETTING_MANIFEST_GETTER     = "xmemManifestGetter"
+	SETTING_RESP_TIMEOUT                  = "resp_timeout"
+	XMEM_SETTING_DEMAND_ENCRYPTION        = "demandEncryption"
+	XMEM_SETTING_ENCRYPTION_TYPE          = "encryptionType"
+	XMEM_SETTING_CERTIFICATE              = metadata.XmemCertificate
+	XMEM_SETTING_INSECURESKIPVERIFY       = "insecureSkipVerify"
+	XMEM_SETTING_SAN_IN_CERITICATE        = "SANInCertificate"
+	XMEM_SETTING_REMOTE_MEM_SSL_PORT      = "remote_ssl_port"
+	XMEM_SETTING_CLIENT_CERTIFICATE       = metadata.XmemClientCertificate
+	XMEM_SETTING_CLIENT_KEY               = metadata.XmemClientKey
+	XMEM_SETTING_MANIFEST_GETTER          = "xmemManifestGetter"
+	XMEM_SETTING_SPECIFIC_MANIFEST_GETTER = "xmemSpecificManifestGetter"
 
 	default_demandEncryption bool = false
 )
@@ -817,6 +818,7 @@ type XmemNozzle struct {
 
 	vbList []uint16
 
+	collectionsManifestMtx     sync.RWMutex
 	collectionsManifest        *metadata.CollectionsManifest
 	collectionsManifestVersion uint64 /* atomically updated */
 }
@@ -1020,18 +1022,14 @@ func (xmem *XmemNozzle) Receive(data interface{}) error {
 	}
 
 	request, ok := data.(*base.WrappedMCRequest)
-
 	if !ok {
 		xmem.Logger().Errorf("Got data of unexpected type. data=%v%v%v", base.UdTagBegin, data, base.UdTagEnd)
 		err = fmt.Errorf("Got data of unexpected type")
 		xmem.handleGeneralError(errors.New(fmt.Sprintf("%v", err)))
 		return err
-
 	}
 
-	//	if !strings.Contains(string(request.Req.Key), "Collections") {
-	//		xmem.Logger().Infof("Sending %v", string(request.Req.Key))
-	//	}
+	xmem.mapToTargetCollection(request)
 
 	err = xmem.accumuBatch(request)
 	if err != nil {
@@ -1039,6 +1037,26 @@ func (xmem *XmemNozzle) Receive(data interface{}) error {
 	}
 
 	return err
+}
+
+func (xmem *XmemNozzle) mapToTargetCollection(request *base.WrappedMCRequest) error {
+	if !request.CollectionUsed {
+		return nil
+	}
+
+	xmem.collectionsManifestMtx.RLock()
+	manifestId := xmem.collectionsManifest.Uid()
+	targetColId, err := xmem.collectionsManifest.GetCollectionId(request.ScopeName, request.CollectionName)
+	xmem.collectionsManifestMtx.RUnlock()
+
+	if err != nil {
+		return err
+	}
+
+	request.MappedManifestId = manifestId
+	request.MappedTargetCollectionId = targetColId
+
+	return nil
 }
 
 func (xmem *XmemNozzle) accumuBatch(request *base.WrappedMCRequest) error {
@@ -2592,6 +2610,7 @@ func (xmem *XmemNozzle) sendHELO(setMeta bool) (utilities.HELOFeatures, error) {
 	var features utilities.HELOFeatures
 	features.Xattribute = true
 	features.Xerror = true
+	features.Collections = true
 	if setMeta {
 		// For setMeta, negotiate compression, if it is set
 		features.CompressionType = xmem.compressionSetting

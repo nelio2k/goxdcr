@@ -76,7 +76,6 @@ func setupUprFeedMock(uprFeed *mcMock.UprFeedIface) {
 	allFeaturesActivated.Xattribute = true
 	allFeaturesActivated.CompressionType = base.CompressionTypeSnappy
 	allFeaturesActivated.EnableExpiry = true
-	allFeaturesActivated.CollectionsAlreadyEnabled = true
 	uprFeed.On("UprOpenWithXATTR", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	uprFeed.On("UprOpenWithFeatures", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil, allFeaturesActivated)
 	setupUprFeedGeneric(uprFeed)
@@ -162,6 +161,11 @@ func setupMocksInternal(xdcrTopology *service_def.XDCRCompTopologySvc,
 		return &defaultManifest
 	}
 	settings[DCP_Manifest_Getter] = service_def_real.CollectionsManifestPartsFunc(defaultManifestGetter)
+
+	specificManifestGetter := func(manifestUid uint64) (*metadata.CollectionsManifest, error) {
+		return &defaultManifest, nil
+	}
+	settings[DCP_Specific_Manifest_Getter] = service_def_real.CollectionsManifestReqFunc(specificManifestGetter)
 }
 
 func generateUprEvent(opcode mc.CommandCode, status mc.Status, vbno uint16, opaque uint16) *mcReal.UprEvent {

@@ -280,6 +280,16 @@ func (c *CollectionsManifestService) GetSpecificSourceManifest(spec *metadata.Re
 	return agent.GetSpecificSourceManifest(manifestVersion), nil
 }
 
+func (c *CollectionsManifestService) GetSpecificTargetManifest(spec *metadata.ReplicationSpecification, manifestVersion uint64) (*metadata.CollectionsManifest, error) {
+	c.agentsMtx.RLock()
+	agent, ok := c.agentsMap[spec.Id]
+	c.agentsMtx.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("Unable to find agent for spec %v\n", spec.Id)
+	}
+	return agent.GetSpecificTargetManifest(manifestVersion), nil
+}
+
 func (c *CollectionsManifestService) GetTargetManifestForNozzle(spec *metadata.ReplicationSpecification, vblist []uint16) *metadata.CollectionsManifest {
 	c.agentsMtx.RLock()
 	agent, ok := c.agentsMap[spec.Id]
@@ -613,6 +623,18 @@ func (a *CollectionsManifestAgent) GetSpecificSourceManifest(manifestVersion uin
 	defer a.srcMtx.RUnlock()
 
 	manifest, ok := a.sourceCache[manifestVersion]
+	if !ok {
+		manifest = nil
+	}
+
+	return manifest
+}
+
+func (a *CollectionsManifestAgent) GetSpecificTargetManifest(manifestVersion uint64) *metadata.CollectionsManifest {
+	a.tgtMtx.RLock()
+	defer a.tgtMtx.RUnlock()
+
+	manifest, ok := a.targetCache[manifestVersion]
 	if !ok {
 		manifest = nil
 	}

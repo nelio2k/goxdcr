@@ -68,6 +68,7 @@ type CollectionsManifestSvc interface {
 	GetSourceManifestForNozzle(spec *metadata.ReplicationSpecification, vblist []uint16) *metadata.CollectionsManifest
 	GetTargetManifestForNozzle(spec *metadata.ReplicationSpecification, vblist []uint16) *metadata.CollectionsManifest
 	GetSpecificSourceManifest(spec *metadata.ReplicationSpecification, manifestVersion uint64) (*metadata.CollectionsManifest, error)
+	GetSpecificTargetManifest(spec *metadata.ReplicationSpecification, manifestVersion uint64) (*metadata.CollectionsManifest, error)
 
 	// This service should allow multiple calls and each call should be append
 	SetMetadataChangeHandlerCallback(callBack base.MetadataChangeHandlerCallback)

@@ -13,6 +13,7 @@ package metadata_svc
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -21,6 +22,7 @@ import (
 	"github.com/couchbase/goxdcr/metadata"
 	"github.com/couchbase/goxdcr/service_def"
 	utilities "github.com/couchbase/goxdcr/utils"
+	"io/ioutil"
 	"net/http"
 	"reflect"
 	"sort"
@@ -83,6 +85,7 @@ type RemoteClusterAgent struct {
 	// Flag to state that metakv deletes have occured. Any concurrent refresh() taking place
 	// when delete occures should NOT write to metakv after this is set
 	deletedFromMetakv bool
+	// Last refreshed remote cluster compatibility version
 
 	// Wait group for making sure we exit synchronized
 	agentWaitGrp sync.WaitGroup
@@ -149,10 +152,11 @@ func (agent *RemoteClusterAgent) initializeNewRefreshContext() (*refreshContext,
 // This is used as a helper context during each refresh operation
 type refreshContext struct {
 	// For comparison and editing
-	refOrig            *metadata.RemoteClusterReference
-	refCache           *metadata.RemoteClusterReference
-	origRefNodesList   base.StringPairList
-	cachedRefNodesList base.StringPairList
+	refOrig             *metadata.RemoteClusterReference
+	refCache            *metadata.RemoteClusterReference
+	origRefNodesList    base.StringPairList
+	cachedRefNodesList  base.StringPairList
+	targetCompatibility string
 
 	// connection related
 	connStr       string
@@ -326,6 +330,13 @@ func (rctx *refreshContext) verifyNodeAndGetList(connStr string, updateSecurityS
 	}
 }
 
+func (agent *RemoteClusterAgent) checkAndUpdateCompatibility(nodeList []interface{}) {
+
+	version, _ := agent.utils.GetClusterCompatibilityFromNodeList(nodeList)
+	fmt.Printf("NEIL DEBUG version: %v\n", version)
+
+}
+
 func (agent *RemoteClusterAgent) Refresh() error {
 	rctx, err := agent.initializeNewRefreshContext()
 	if err != nil {
@@ -346,6 +357,8 @@ func (agent *RemoteClusterAgent) Refresh() error {
 				}
 			}
 		} else {
+			nodeListJson, _ := json.Marshal(nodeList)
+			ioutil.WriteFile("/tmp/nodeList.json", nodeListJson, 0644)
 			// rctx.hostname is in the cluster and is available - make it the activeHost
 			rctx.checkAndUpdateActiveHost()
 

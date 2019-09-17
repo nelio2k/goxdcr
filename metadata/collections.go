@@ -45,6 +45,33 @@ func (c *CollectionsManifest) String() string {
 	return strings.Join(output, " ")
 }
 
+func (c *CollectionsManifest) GetScopeAndCollectionName(collectionId uint64) (scopeName, collectionName string, err error) {
+	for _, scope := range c.Scopes() {
+		for _, collection := range scope.Collections {
+			if collection.Uid == collectionId {
+				scopeName = scope.Name
+				collectionName = collection.Name
+				return
+			}
+		}
+	}
+	err = base.ErrorNotFound
+	return
+}
+
+func (c *CollectionsManifest) GetCollectionId(scopeName, collectionName string) (uint64, error) {
+	for _, scope := range c.Scopes() {
+		if scopeName == scope.Name {
+			for _, collection := range scope.Collections {
+				if collection.Name == collectionName {
+					return collection.Uid, nil
+				}
+			}
+		}
+	}
+	return 0, base.ErrorNotFound
+}
+
 // TODO - meta obj
 type collectionsTempObj struct {
 	// data for unmarshalling and parsing

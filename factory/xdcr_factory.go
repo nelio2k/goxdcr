@@ -780,6 +780,11 @@ func (xdcrf *XDCRFactory) constructSettingsForXmemNozzle(pipeline common.Pipelin
 	}
 	xmemSettings[parts.XMEM_SETTING_MANIFEST_GETTER] = getterFunc
 
+	var getterFunc2 service_def.CollectionsManifestReqFunc = func(manifestVersion uint64) (*metadata.CollectionsManifest, error) {
+		return xdcrf.collectionsManifestSvc.GetSpecificTargetManifest(pipeline.Specification(), manifestVersion)
+	}
+	xmemSettings[parts.XMEM_SETTING_SPECIFIC_MANIFEST_GETTER] = getterFunc2
+
 	if targetClusterRef.IsFullEncryption() {
 		mem_ssl_port, ok := ssl_port_map[xmemConnStr]
 		if !ok {
