@@ -52,7 +52,8 @@ declare -A DefaultBucketReplProperties=(["replicationType"]="continuous" ["check
 # Bucket -> Scopes
 # -----------------
 declare -a scope1Arr=("S1" "S2")
-BUCKET_NAME_SCOPE_MAP=(["B1"]=${scope1Arr[@]} ["B2"]="S3")
+#BUCKET_NAME_SCOPE_MAP=(["B1"]=${scope1Arr[@]} ["B2"]="S3")
+BUCKET_NAME_SCOPE_MAP=(["B1"]=${scope1Arr[@]} ["B2"]=${scope1Arr[@]})
 
 # Scopes -> Collections
 # ----------------------
@@ -67,6 +68,7 @@ function runDataLoad {
 	runCbWorkloadGenBucket "C1" "B1" &
 	runCbWorkloadGenBucket "C2" "B2" &
 	runCbWorkloadGenCollection "C1" "B1" "S1" "col1"
+	runCbWorkloadGenCollection "C2" "B2" "S1" "col1"
 	waitForBgJobs
 }
 

@@ -1056,6 +1056,14 @@ func (xmem *XmemNozzle) mapToTargetCollection(request *base.WrappedMCRequest) er
 	request.MappedManifestId = manifestId
 	request.MappedTargetCollectionId = targetColId
 
+	leb128Cid, err := base.NewUleb128(targetColId)
+	if err != nil {
+		return err
+	}
+
+	request.Req.Key = append([]byte(leb128Cid), request.Req.Key...)
+	request.ConstructUniqueKey()
+
 	return nil
 }
 

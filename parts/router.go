@@ -188,11 +188,12 @@ func (router *Router) ComposeMCRequest(wrappedEvent *base.WrappedUprEvent) (*bas
 
 	wrapped_req.Seqno = event.Seqno
 	wrapped_req.Start_time = time.Now()
-	wrapped_req.ConstructUniqueKey()
 
 	wrapped_req.CollectionUsed = wrappedEvent.CollectionUsed
 	wrapped_req.ScopeName = wrappedEvent.ScopeName
 	wrapped_req.CollectionName = wrappedEvent.CollectionName
+
+	wrapped_req.ConstructUniqueKey()
 
 	return wrapped_req, nil
 }

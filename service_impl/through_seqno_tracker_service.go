@@ -206,7 +206,6 @@ func (tsTracker *ThroughSeqnoTrackerSvc) ProcessEvent(event *common.Event) error
 		vbno := event.OtherInfos.(parts.DataSentEventAdditional).VBucket
 		seqno := event.OtherInfos.(parts.DataSentEventAdditional).Seqno
 		tsTracker.addSentSeqno(vbno, seqno)
-		tsTracker.logger.Infof("NEIL vb %v sent seqno %v", vbno, seqno)
 	case common.DataFiltered:
 		uprEvent := event.Data.(*mcc.UprEvent)
 		//		seqno := uprEvent.Seqno
@@ -227,12 +226,12 @@ func (tsTracker *ThroughSeqnoTrackerSvc) ProcessEvent(event *common.Event) error
 		seqno := event.OtherInfos.(parts.DataFailedCRSourceEventAdditional).Seqno
 		vbno := event.OtherInfos.(parts.DataFailedCRSourceEventAdditional).VBucket
 		tsTracker.addFailedCRSeqno(vbno, seqno)
-		tsTracker.logger.Infof("NEIL vb %v failedCR seqno %v", vbno, seqno)
+		//		tsTracker.logger.Infof("NEIL vb %v failedCR seqno %v", vbno, seqno)
 	case common.DataReceived:
 		upr_event := event.Data.(*mcc.UprEvent)
 		seqno := upr_event.Seqno
 		vbno := upr_event.VBucket
-		tsTracker.logger.Infof("NEIL vb %v received seqno %v", vbno, seqno)
+		//		tsTracker.logger.Infof("NEIL vb %v received seqno %v", vbno, seqno)
 		// Sets last sequence number, and should the sequence number skip due to gap, this will take care of it
 		tsTracker.processGapSeqnos(vbno, seqno)
 	default:
@@ -250,7 +249,7 @@ func (tsTracker *ThroughSeqnoTrackerSvc) addSentSeqno(vbno uint16, sent_seqno ui
 
 func (tsTracker *ThroughSeqnoTrackerSvc) addFilteredSeqno(vbno uint16, filtered_seqno uint64) {
 	tsTracker.validateVbno(vbno, "addFilteredSeqno")
-	tsTracker.logger.Infof("NEIL vb %v adding %v as filtered", vbno, filtered_seqno)
+	//	tsTracker.logger.Infof("NEIL vb %v adding %v as filtered", vbno, filtered_seqno)
 	tsTracker.vb_filtered_seqno_list_map[vbno].AppendSeqno(filtered_seqno)
 }
 
@@ -277,16 +276,15 @@ func (tsTracker *ThroughSeqnoTrackerSvc) processGapSeqnos(vbno uint16, current_s
 	if last_seen_seqno < current_seqno-1 {
 		// If the current sequence number is not consecutive, then this means we have hit a gap. Store it in gap list.
 		tsTracker.vb_gap_seqno_list_map[vbno].appendSeqnos(last_seen_seqno+1, current_seqno-1, tsTracker.logger)
-		tsTracker.logger.Infof("NEIL vb %v received seqno %v creating gap [%v, %v]", vbno, current_seqno,
-			last_seen_seqno+1, current_seqno-1)
+		//		tsTracker.logger.Infof("NEIL vb %v received seqno %v creating gap [%v, %v]", vbno, current_seqno,
+		//			last_seen_seqno+1, current_seqno-1)
 	} else {
-		tsTracker.logger.Infof("NEIL vb %v last_seen_seqno was %v and processGap is %v, skip create gap",
-			vbno, last_seen_seqno, current_seqno)
+		//		tsTracker.logger.Infof("NEIL vb %v last_seen_seqno was %v and processGap is %v, skip create gap",
+		//			vbno, last_seen_seqno, current_seqno)
 	}
 }
 
 func (tsTracker *ThroughSeqnoTrackerSvc) truncateSeqnoLists(vbno uint16, through_seqno uint64) {
-	tsTracker.logger.Infof("NEIL vb %v truncating anything below throughSeqno %v\n", vbno, through_seqno)
 	tsTracker.vb_sent_seqno_list_map[vbno].TruncateSeqnos(through_seqno)
 	tsTracker.vb_filtered_seqno_list_map[vbno].TruncateSeqnos(through_seqno)
 	tsTracker.vb_failed_cr_seqno_list_map[vbno].TruncateSeqnos(through_seqno)

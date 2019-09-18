@@ -352,6 +352,8 @@ type DcpNozzle struct {
 	collectionsManifestVersion uint64 // atomic
 
 	specificManifestGetter service_def.CollectionsManifestReqFunc
+
+	cachedConnector common.Connector
 }
 
 func NewDcpNozzle(id string,
@@ -588,6 +590,7 @@ func (dcp *DcpNozzle) initialize(settings metadata.ReplicationSettingsMap) (err 
 		return errors.New("setting 'stats_interval' is missing")
 	}
 
+	dcp.cachedConnector = dcp.Connector()
 	return
 }
 
@@ -927,12 +930,9 @@ func (dcp *DcpNozzle) processData() (err error) {
 				}
 			} else if m.IsSystemEvent() {
 				// Let's just pretend we received it and processed it in one shot
-				start_time := time.Now()
 				dcp.incCounterReceived()
 				dcp.RaiseEvent(common.NewEvent(common.DataReceived, m, dcp, nil /*derivedItems*/, nil /*otherInfos*/))
-				dcp.incCounterSent()
-				dispatch_time := time.Since(start_time)
-				dcp.RaiseEvent(common.NewEvent(common.DataProcessed, m, dcp, dcp.getDataReceivedDerivedItems(m), dispatch_time.Seconds()*1000000 /*otherInfos*/))
+				dcp.RaiseEvent(common.NewEvent(common.DataFiltered, m, dcp.cachedConnector, nil, nil))
 			} else {
 				// Regular mutations coming in from DCP stream
 				if dcp.IsOpen() {
