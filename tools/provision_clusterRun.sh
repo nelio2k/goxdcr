@@ -39,8 +39,8 @@ cluster1BucketsArr=("B0" "B1")
 CLUSTER_NAME_BUCKET_MAP=(["C1"]=${cluster1BucketsArr[@]}  ["C2"]="B2")
 
 # Bucket properties
-declare -A BucketProperty=(["ramQuotaMB"]=100)
-declare -A Bucket1Properties=(["ramQuotaMB"]=100 ["CompressionMode"]="Active")
+declare -A BucketProperty=(["ramQuotaMB"]=100 ["conflictResolutionType"]="lww")
+declare -A Bucket1Properties=(["ramQuotaMB"]=100 ["CompressionMode"]="Active" ["conflictResolutionType"]="seqno")
 insertPropertyIntoBucketNamePropertyMap "B0" BucketProperty
 insertPropertyIntoBucketNamePropertyMap "B1" Bucket1Properties
 insertPropertyIntoBucketNamePropertyMap "B2" BucketProperty
@@ -65,8 +65,8 @@ SCOPE_NAME_COLLECTION_MAP=(["S1"]=${collection1Arr[@]} ["S2"]=${collection2Arr[@
 function runDataLoad {
 	# Run CBWorkloadgen in parallel
 	runCbWorkloadGenBucket "C1" "B0" &
-	runCbWorkloadGenBucket "C1" "B1" &
-	runCbWorkloadGenBucket "C2" "B2" &
+#	runCbWorkloadGenBucket "C1" "B1" &
+#	runCbWorkloadGenBucket "C2" "B2" &
 	runCbWorkloadGenCollection "C1" "B1" "S1" "col1"
 	runCbWorkloadGenCollection "C2" "B2" "S1" "col1"
 	waitForBgJobs

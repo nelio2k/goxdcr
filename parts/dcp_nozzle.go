@@ -1174,7 +1174,13 @@ func (dcp *DcpNozzle) startUprStreamInner(vbno uint16, vbts *base.VBTimestamp, v
 				dcp.Logger().Debugf(fmt.Sprintf("%v ignoring send request for seqno %v since it has already been handled", dcp.Id(), vbts.Seqno))
 			} else {
 				// version passed in == opaque, which will be passed back to us
-				err = dcp.uprFeed.UprRequestStream(vbno, version, flags, vbts.Vbuuid, vbts.Seqno, seqEnd, vbts.SnapshotStart, vbts.SnapshotEnd)
+				//				err = dcp.uprFeed.UprRequestStream(vbno, version, flags, vbts.Vbuuid, vbts.Seqno, seqEnd, vbts.SnapshotStart, vbts.SnapshotEnd)
+				// NEIL - the following was used to ensure it works
+				//					scope1Id := dcp.collectionsManifest.Scopes()["S1"].Uid
+				//	collectionsFilter := &mcc.CollectionsFilter{ScopeId: uint32(scope1Id)}
+				col1Id := dcp.collectionsManifest.Scopes()["S1"].Collections["col1"].Uid
+				collectionsFilter := &mcc.CollectionsFilter{CollectionsList: []uint32{uint32(col1Id)}}
+				err = dcp.uprFeed.UprRequestCollectionsStream(vbno, version, flags, vbts.Vbuuid, vbts.Seqno, seqEnd, vbts.SnapshotStart, vbts.SnapshotEnd, collectionsFilter)
 				if err == nil {
 					err = dcp.setStreamState(vbno, Dcp_Stream_Init)
 				}
