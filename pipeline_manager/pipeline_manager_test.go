@@ -645,8 +645,8 @@ func TestReplSettingsRevision(t *testing.T) {
 	assert.False(testRepairer.replSpecSettingsHelper.HasChanged())
 
 	// Say something changed underneath
-	testReplicationSpec.Settings.BatchSize += 1
-	testReplicationSpec.Settings.Revision = 2
+	testReplicationSpec.Settings().BatchSize += 1
+	testReplicationSpec.Settings().Revision = 2
 	replStatusMock2 := &replicationStatusMock.ReplicationStatusIface{}
 	setupReplStatusMock(replStatusMock2, testReplicationSpec)
 	testRepairer.rep_status = replStatusMock2
@@ -698,7 +698,7 @@ func TestUpdaterCompressionErrRevChanged(t *testing.T) {
 		pipelineMgr2, testRepairer2, testReplicationStatus2, testTopic2,
 		testReplicationSettings2, testReplicationSpec2, testRemoteClusterRef2, testPipeline2, uiLogSvc2, replStatusMock2, ckptMock2 := setupBoilerPlate()
 
-	testReplicationSpec2.Settings.UpdateSettingsFromMap(origSettings)
+	testReplicationSpec2.Settings().UpdateSettingsFromMap(origSettings)
 
 	setupGenericMocking(testLogger2, pipelineMock2, replSpecSvcMock2, xdcrTopologyMock2, remoteClusterMock2,
 		pipelineMgr2, testRepairer2, testReplicationStatus2, testTopic2,

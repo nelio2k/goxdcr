@@ -154,8 +154,8 @@ func invokeFactory() error {
 		return err
 	}
 
-	replSpec.Settings.SourceNozzlePerNode = NUM_SOURCE_CONN
-	replSpec.Settings.TargetNozzlePerNode = NUM_TARGET_CONN
+	replSpec.Settings().SourceNozzlePerNode = NUM_SOURCE_CONN
+	replSpec.Settings().TargetNozzlePerNode = NUM_TARGET_CONN
 	err = repl_spec_svc.AddReplicationSpec(replSpec)
 	if err != nil {
 		return err

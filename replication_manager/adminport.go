@@ -336,8 +336,8 @@ func (adminport *Adminport) doDeleteRemoteClusterRequest(request *http.Request) 
 	}
 	replIds := make([]string, 0)
 	for _, spec := range specs {
-		if spec.TargetClusterUUID == ref.Uuid() {
-			replIds = append(replIds, spec.Id)
+		if spec.TargetClusterUUID() == ref.Uuid() {
+			replIds = append(replIds, spec.Id())
 		}
 	}
 	if len(replIds) > 0 {
@@ -364,7 +364,7 @@ func (adminport *Adminport) doGetAllReplicationsRequest(request *http.Request) (
 	}
 
 	replIds := replication_mgr.pipelineMgr.AllReplications()
-	replSpecs := make(map[string]*metadata.ReplicationSpecification)
+	replSpecs := make(map[string]metadata.ReplicationSpecApi)
 	for _, replId := range replIds {
 		rep_status, _ := replication_mgr.pipelineMgr.ReplicationStatus(replId)
 		if rep_status != nil {
@@ -534,7 +534,7 @@ func (adminport *Adminport) doViewReplicationSettingsRequest(request *http.Reque
 	}
 
 	// marshal replication settings in replication spec and return it
-	return NewReplicationSettingsResponse(replSpec.Settings)
+	return NewReplicationSettingsResponse(replSpec.Settings())
 }
 
 func (adminport *Adminport) doChangeReplicationSettingsRequest(request *http.Request) (*ap.Response, error) {
@@ -592,7 +592,7 @@ func (adminport *Adminport) doChangeReplicationSettingsRequest(request *http.Req
 		return EncodeReplicationSpecErrorIntoResponse(err)
 	}
 	logger_ap.Info("Done with doChangeReplicationSettingsRequest")
-	return NewReplicationSettingsResponse(replSpec.Settings)
+	return NewReplicationSettingsResponse(replSpec.Settings())
 }
 
 // get statistics for all running replications

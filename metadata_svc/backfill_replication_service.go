@@ -279,7 +279,7 @@ func (b *BackfillReplicationService) updateCacheInternalNoLock(specId string, ne
 		if !newSpec.SameSpec(oldSpec) {
 			err = b.cacheSpec(b.getCache(), specId, newSpec)
 			if err == nil {
-				specId = newSpec.Id
+				specId = newSpec.Id()
 				updated = true
 			} else {
 				return oldSpec, updated, err
@@ -316,20 +316,22 @@ func (b *BackfillReplicationService) AddReplicationSpec(spec *metadata.BackfillR
 		return err
 	}
 
-	key := b.getKeyFromReplicationId(spec.Id)
+	key := b.getKeyFromReplicationId(spec.Id())
 	err = b.metadataSvc.Add(key, value)
 	if err != nil {
 		b.logger.Errorf("Add returned error: %v\n", err)
 		return err
 	}
 
-	return b.updateCache(spec.Id, spec)
+	return b.updateCache(spec.Id(), spec)
 }
 
 func (b *BackfillReplicationService) SetReplicationSpec(spec *metadata.BackfillReplicationSpec) error {
 	if spec == nil {
 		return base.ErrorInvalidInput
 	}
+	// TODO - check if it's only soft link then don't update metadata store
+
 	b.logger.Infof("Adding backfill spec %v to metadata store", spec)
 
 	value, err := json.Marshal(spec)
@@ -337,14 +339,14 @@ func (b *BackfillReplicationService) SetReplicationSpec(spec *metadata.BackfillR
 		return err
 	}
 
-	key := b.getKeyFromReplicationId(spec.Id)
+	key := b.getKeyFromReplicationId(spec.Id())
 	err = b.metadataSvc.Set(key, value, nil)
 	if err != nil {
 		b.logger.Errorf("Set returned error: %v\n", err)
 		return err
 	}
 
-	return b.updateCache(spec.Id, spec)
+	return b.updateCache(spec.Id(), spec)
 }
 
 func (b *BackfillReplicationService) SetMetadataChangeHandlerCallback(call_back base.MetadataChangeHandlerCallback) {

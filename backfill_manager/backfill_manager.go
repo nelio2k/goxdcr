@@ -116,6 +116,7 @@ func (b *BackfillMgr) Stop() {
 func (b *BackfillMgr) initMetadataChangeMonitor() {
 	// TODO - future metadata change monitors
 	//	mcm := base.NewMetadataChangeMonitor()
+	b.backfillReplSvc.SetMetadataChangeHandlerCallback(b.backfillReplSpecChangeHandlerCallback)
 }
 
 func (b *BackfillMgr) createNewBackfillReqHandler(replId string, startHandler bool, spec *metadata.ReplicationSpecification) error {
@@ -237,7 +238,7 @@ func (b *BackfillMgr) stopHandler(replId string) base.ErrorMap {
 // It is safer to backfill already backfilled-data than to have miss data at all
 func (b *BackfillMgr) refreshLatestManifest(replId string) error {
 	// CollectionsManifestService only cares about replication ID within the spec
-	idOnlySpec := &metadata.ReplicationSpecification{Id: replId}
+	idOnlySpec := &metadata.ReplicationSpecification{Id_: replId}
 	manifestPair, err := b.collectionsManifestSvc.GetLastPersistedManifests(idOnlySpec)
 	if err != nil {
 		return err
@@ -299,6 +300,20 @@ func (b *BackfillMgr) replicationSpecChangeHandlerCallback(changedSpecId string,
 
 		// delete backfill spec
 		b.backfillReplSvc.DelReplicationSpec(changedSpecId)
+	} else {
+		// Changed spec
+		backfillSpec, err := b.backfillReplSvc.ReplicationSpec(changedSpecId)
+		if err != nil {
+			return err
+		}
+		backfillSpec.ReplicationSpec = newSpecObj.(*metadata.ReplicationSpecification)
+		if backfillSpec.ReplicationSpec == nil {
+			panic("nil spec")
+		}
+		err = b.backfillReplSvc.SetReplicationSpec(backfillSpec)
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -377,7 +392,7 @@ func (b *BackfillMgr) handleTargetOnlyChange(replId string, oldTargetManifest, n
 
 	if sourceManifest.Uid() == 0 {
 		// Nothing has been persisted, backfill everything
-		dummySpec := &metadata.ReplicationSpecification{Id: replId}
+		dummySpec := &metadata.ReplicationSpecification{Id_: replId}
 		var err error
 		sourceManifest, _, err = b.collectionsManifestSvc.GetLatestManifests(dummySpec)
 		if err != nil {

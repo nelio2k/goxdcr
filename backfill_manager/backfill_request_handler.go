@@ -142,5 +142,5 @@ func (b *BackfillRequestHandler) handleBackfillRequestInternal(req *metadata.Bac
 }
 
 func (b *BackfillRequestHandler) GetSourceNucketName() string {
-	return b.spec.SourceBucketName
+	return b.spec.SourceBucketName()
 }

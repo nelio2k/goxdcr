@@ -440,7 +440,7 @@ func (stats_mgr *StatisticsManager) logStatsOnce() error {
 		//log parts summary
 		outNozzle_parts := stats_mgr.pipeline.Targets()
 		for _, part := range outNozzle_parts {
-			if stats_mgr.pipeline.Specification().Settings.RepType == metadata.ReplicationTypeXmem {
+			if stats_mgr.pipeline.Specification().Settings().RepType == metadata.ReplicationTypeXmem {
 				part.(*parts.XmemNozzle).PrintStatusSummary()
 			} else {
 				part.(*parts.CapiNozzle).PrintStatusSummary()
@@ -782,7 +782,7 @@ func (stats_mgr *StatisticsManager) Attach(pipeline common.Pipeline) error {
 // compose user agent string for HELO command
 func (stats_mgr *StatisticsManager) composeUserAgent() {
 	spec := stats_mgr.pipeline.Specification()
-	stats_mgr.user_agent = base.ComposeUserAgentWithBucketNames("Goxdcr StatsMgr", spec.SourceBucketName, spec.TargetBucketName)
+	stats_mgr.user_agent = base.ComposeUserAgentWithBucketNames("Goxdcr StatsMgr", spec.SourceBucketName(), spec.TargetBucketName())
 }
 
 func (stats_mgr *StatisticsManager) initOverviewRegistry() {
@@ -1489,17 +1489,17 @@ func UpdateStats(cluster_info_svc service_def.ClusterInfoSvc, xdcr_topology_svc 
 			continue
 		}
 
-		cur_kv_vb_map, _, err := pipeline_utils.GetSourceVBMap(cluster_info_svc, xdcr_topology_svc, spec.SourceBucketName, logger)
+		cur_kv_vb_map, _, err := pipeline_utils.GetSourceVBMap(cluster_info_svc, xdcr_topology_svc, spec.SourceBucketName(), logger)
 		if err != nil {
 			logger.Errorf("Error retrieving kv_vb_map for paused replication %v. err=%v", repl_id, err)
 			continue
 		}
 
 		// get the kv_mem_client map for the corresponding source bucket
-		kv_mem_clients := bucket_kv_mem_clients[spec.SourceBucketName]
+		kv_mem_clients := bucket_kv_mem_clients[spec.SourceBucketName()]
 		if kv_mem_clients == nil {
 			kv_mem_clients = make(map[string]mcc.ClientIface)
-			bucket_kv_mem_clients[spec.SourceBucketName] = kv_mem_clients
+			bucket_kv_mem_clients[spec.SourceBucketName()] = kv_mem_clients
 		}
 
 		if overview_stats == nil {
@@ -1524,23 +1524,23 @@ func UpdateStats(cluster_info_svc service_def.ClusterInfoSvc, xdcr_topology_svc 
 }
 
 // compute and set changes_left and docs_processed stats. set other stats to 0
-func constructStatsForReplication(repl_status *pipeline_pkg.ReplicationStatus, spec *metadata.ReplicationSpecification, cur_kv_vb_map map[string][]uint16,
+func constructStatsForReplication(repl_status *pipeline_pkg.ReplicationStatus, spec metadata.ReplicationSpecApi, cur_kv_vb_map map[string][]uint16,
 	checkpoints_svc service_def.CheckpointsService, kv_mem_clients map[string]mcc.ClientIface,
 	logger *log.CommonLogger, utils utilities.UtilsIface) error {
 	cur_vb_list := base.GetVbListFromKvVbMap(cur_kv_vb_map)
-	docs_processed, err := getDocsProcessedForReplication(spec.Id, cur_vb_list, checkpoints_svc, logger)
+	docs_processed, err := getDocsProcessedForReplication(spec.Id(), cur_vb_list, checkpoints_svc, logger)
 	if err != nil {
 		return err
 	}
 
-	total_changes, err := calculateTotalChanges(cur_kv_vb_map, kv_mem_clients, spec.SourceBucketName, UserAgentPausedReplication, nil, logger, utils)
+	total_changes, err := calculateTotalChanges(cur_kv_vb_map, kv_mem_clients, spec.SourceBucketName(), UserAgentPausedReplication, nil, logger, utils)
 	if err != nil {
 		return err
 	}
 
 	changes_left := total_changes - int64(docs_processed)
 
-	logger.Infof("Calculating stats for never run replication %v. kv_vb_map=%v, total_docs=%v, docs_processed=%v, changes_left=%v\n", spec.Id, cur_kv_vb_map, total_changes, docs_processed, changes_left)
+	logger.Infof("Calculating stats for never run replication %v. kv_vb_map=%v, total_docs=%v, docs_processed=%v, changes_left=%v\n", spec.Id(), cur_kv_vb_map, total_changes, docs_processed, changes_left)
 
 	overview_stats := new(expvar.Map).Init()
 	overview_stats.Add(DOCS_PROCESSED_METRIC, int64(docs_processed))
@@ -1618,7 +1618,7 @@ func updateStatsForReplication(repl_status *pipeline_pkg.ReplicationStatus, over
 
 	} else {
 		logger.Infof("%v Source topology changed. Re-compute docs_processed. old_vb_list=%v, cur_vb_list=%v\n", repl_status.RepId(), old_vb_list, cur_vb_list)
-		docs_processed_uint64, err = getDocsProcessedForReplication(spec.Id, cur_vb_list, checkpoints_svc, logger)
+		docs_processed_uint64, err = getDocsProcessedForReplication(spec.Id(), cur_vb_list, checkpoints_svc, logger)
 		if err != nil {
 			return err
 		}
@@ -1630,7 +1630,7 @@ func updateStatsForReplication(repl_status *pipeline_pkg.ReplicationStatus, over
 		repl_status.SetVbList(cur_vb_list)
 	}
 
-	total_changes, err := calculateTotalChanges(cur_kv_vb_map, kv_mem_clients, spec.SourceBucketName, UserAgentPausedReplication, nil, logger, utils)
+	total_changes, err := calculateTotalChanges(cur_kv_vb_map, kv_mem_clients, spec.SourceBucketName(), UserAgentPausedReplication, nil, logger, utils)
 	if err != nil {
 		return err
 	}
@@ -1641,7 +1641,7 @@ func updateStatsForReplication(repl_status *pipeline_pkg.ReplicationStatus, over
 
 	overview_stats.Set(CHANGES_LEFT_METRIC, changes_left_var)
 
-	logger.Infof("Updating status for paused replication %v. kv_vb_map=%v, total_docs=%v, docs_processed=%v, changes_left=%v\n", spec.Id, cur_kv_vb_map, total_changes, docs_processed, changes_left)
+	logger.Infof("Updating status for paused replication %v. kv_vb_map=%v, total_docs=%v, docs_processed=%v, changes_left=%v\n", spec.Id(), cur_kv_vb_map, total_changes, docs_processed, changes_left)
 	return nil
 }
 

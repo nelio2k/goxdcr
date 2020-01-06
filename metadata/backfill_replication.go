@@ -4,7 +4,7 @@ import ()
 
 type BackfillReplicationSpec struct {
 	//id of the replication
-	Id string `json:"id"`
+	Id_ string `json:"id"`
 
 	// Stored backfill request
 	BackfillTasks *BackfillPersistInfo `json:"BackfillTasks"`
@@ -17,9 +17,34 @@ type BackfillReplicationSpec struct {
 func NewBackfillReplicationSpec(id string,
 	tasks *BackfillPersistInfo) *BackfillReplicationSpec {
 	return &BackfillReplicationSpec{
-		Id:            id,
+		Id_:           id,
 		BackfillTasks: tasks,
 	}
+}
+
+func (s *BackfillReplicationSpec) Id() string {
+	return s.Id_
+}
+func (s *BackfillReplicationSpec) InternalId() string {
+	return s.ReplicationSpec.InternalId()
+}
+func (s *BackfillReplicationSpec) SourceBucketName() string {
+	return s.ReplicationSpec.SourceBucketName()
+}
+func (s *BackfillReplicationSpec) SourceBucketUUID() string {
+	return s.ReplicationSpec.SourceBucketUUID()
+}
+func (s *BackfillReplicationSpec) TargetClusterUUID() string {
+	return s.ReplicationSpec.TargetClusterUUID()
+}
+func (s *BackfillReplicationSpec) TargetBucketName() string {
+	return s.ReplicationSpec.TargetBucketName()
+}
+func (s *BackfillReplicationSpec) TargetBucketUUID() string {
+	return s.ReplicationSpec.TargetBucketUUID()
+}
+func (s *BackfillReplicationSpec) Settings() *ReplicationSettings {
+	return s.ReplicationSpec.Settings()
 }
 
 func (b *BackfillReplicationSpec) SameSpec(other *BackfillReplicationSpec) bool {
@@ -29,7 +54,7 @@ func (b *BackfillReplicationSpec) SameSpec(other *BackfillReplicationSpec) bool 
 		return true
 	}
 
-	return b.Id == other.Id && b.BackfillTasks.Same(other.BackfillTasks) &&
+	return b.Id() == other.Id() && b.BackfillTasks.Same(other.BackfillTasks) &&
 		b.ReplicationSpec.SameSpec(other.ReplicationSpec)
 }
 
@@ -38,7 +63,7 @@ func (b *BackfillReplicationSpec) Clone() *BackfillReplicationSpec {
 		return nil
 	}
 	spec := &BackfillReplicationSpec{
-		Id:            b.Id,
+		Id_:           b.Id(),
 		BackfillTasks: b.BackfillTasks.Clone(),
 	}
 	if b.ReplicationSpec != nil {
@@ -49,7 +74,7 @@ func (b *BackfillReplicationSpec) Clone() *BackfillReplicationSpec {
 
 func (b *BackfillReplicationSpec) Redact() *BackfillReplicationSpec {
 	if b != nil && b.ReplicationSpec != nil {
-		b.ReplicationSpec.Settings.Redact()
+		b.ReplicationSpec.Settings_.Redact()
 	}
 	return b
 }

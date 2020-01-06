@@ -617,7 +617,7 @@ func (service *MigrationSvc) migrateReplicationDoc(replicationDocData interface{
 	if len(fatalErrorList) > 0 {
 		return fatalErrorList, mildErrorList
 	}
-	_, errorMap := spec.Settings.UpdateSettingsFromMap(settingsMap)
+	_, errorMap := spec.Settings().UpdateSettingsFromMap(settingsMap)
 	fatalErrorList = addErrorMapToErrorList(errorMap, fatalErrorList)
 	if len(fatalErrorList) > 0 {
 		return fatalErrorList, mildErrorList
@@ -626,9 +626,9 @@ func (service *MigrationSvc) migrateReplicationDoc(replicationDocData interface{
 	service.logger.Infof("Replication spec constructed = %v\n", spec)
 
 	// delete replication spec if it already exists
-	_, err = service.repl_spec_svc.DelReplicationSpec(spec.Id)
+	_, err = service.repl_spec_svc.DelReplicationSpec(spec.Id())
 	if err == nil {
-		service.logger.Infof("Deleted existing replication spec with id=%v\n", spec.Id)
+		service.logger.Infof("Deleted existing replication spec with id=%v\n", spec.Id())
 	}
 
 	// TODO we should add non-empty additionalInfo here to differentiate the repl spec created by migration

@@ -71,10 +71,10 @@ func (rscl *ReplicationSpecChangeListener) replicationSpecChangeHandlerCallback(
 
 	rscl.Logger().Infof("specChangedCallback called on id = %v, oldSpec=%v, newSpec=%v\n", topic, oldSpec.CloneAndRedact(), newSpec.CloneAndRedact())
 	if oldSpec != nil {
-		rscl.Logger().Infof("old spec settings=%v\n", oldSpec.Settings.CloneAndRedact())
+		rscl.Logger().Infof("old spec settings=%v\n", oldSpec.Settings().CloneAndRedact())
 	}
 	if newSpec != nil {
-		rscl.Logger().Infof("new spec settings=%v\n", newSpec.Settings.CloneAndRedact())
+		rscl.Logger().Infof("new spec settings=%v\n", newSpec.Settings().CloneAndRedact())
 	}
 
 	if newSpec == nil {
@@ -86,19 +86,19 @@ func (rscl *ReplicationSpecChangeListener) replicationSpecChangeHandlerCallback(
 		return err
 	}
 
-	specActive := newSpec.Settings.Active
+	specActive := newSpec.Settings().Active
 	//if the replication doesn't exit, it is treated the same as it exits, but it is paused
 	specActive_old := false
 	var oldSettings *metadata.ReplicationSettings = nil
 	if oldSpec != nil {
-		oldSettings = oldSpec.Settings
+		oldSettings = oldSpec.Settings()
 		specActive_old = oldSettings.Active
 	}
 
 	if specActive_old && specActive {
 		// if some critical settings have been changed, stop, reconstruct, and restart pipeline
-		if needToReconstructPipeline(oldSettings, newSpec.Settings) {
-			if needToRestreamPipeline(oldSettings, newSpec.Settings) {
+		if needToReconstructPipeline(oldSettings, newSpec.Settings()) {
+			if needToRestreamPipeline(oldSettings, newSpec.Settings()) {
 				err := replication_mgr.pipelineMgr.ReInitStreams(topic)
 				if err != nil {
 					rscl.Logger().Errorf("Unable to queue re-initialize streams job for pipeline %v to restart: %v", topic, err)
@@ -109,7 +109,7 @@ func (rscl *ReplicationSpecChangeListener) replicationSpecChangeHandlerCallback(
 			return replication_mgr.pipelineMgr.UpdatePipeline(topic, nil)
 		} else {
 			// otherwise, perform live update to pipeline
-			err := rscl.liveUpdatePipeline(topic, oldSettings, newSpec.Settings, newSpec.InternalId)
+			err := rscl.liveUpdatePipeline(topic, oldSettings, newSpec.Settings(), newSpec.InternalId())
 			if err != nil {
 				rscl.Logger().Errorf("Failed to perform live update on pipeline %v, err=%v\n", topic, err)
 				return err
@@ -223,7 +223,7 @@ func (rscl *ReplicationSpecChangeListener) liveUpdatePipelineWithRetry(topic str
 			pipeline := rs.Pipeline()
 			if pipeline != nil {
 				// check if the pipeline is associated with the correct repl spec to which the new settings belongs
-				curSpecInternalId := rs.Spec().InternalId
+				curSpecInternalId := rs.Spec().InternalId()
 				if curSpecInternalId == specInternalId {
 					err = pipeline.UpdateSettings(newSettingsMap)
 					if err != nil {
@@ -339,11 +339,11 @@ func (rccl *RemoteClusterChangeListener) remoteClusterChangeHandlerCallback(remo
 			// take in the new changes. Mark these connection pools to be stale, so that they will be
 			// removed and re-created once the replications are started or resumed.
 			// Note that this needs to be done for paused replications as well.
-			base.ConnPoolMgr().SetStaleForPoolsWithNamePrefix(spec.Id)
+			base.ConnPoolMgr().SetStaleForPoolsWithNamePrefix(spec.Id())
 
-			if spec.Settings.Active {
-				rccl.Logger().Infof("Restarting pipelines %v since the referenced remote cluster %v has been changed\n", spec.Id, oldRemoteClusterRef.Name)
-				replication_mgr.pipelineMgr.UpdatePipeline(spec.Id, nil)
+			if spec.Settings().Active {
+				rccl.Logger().Infof("Restarting pipelines %v since the referenced remote cluster %v has been changed\n", spec.Id(), oldRemoteClusterRef.Name)
+				replication_mgr.pipelineMgr.UpdatePipeline(spec.Id(), nil)
 			}
 		}
 	}

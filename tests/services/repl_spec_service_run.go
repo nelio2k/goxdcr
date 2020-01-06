@@ -78,7 +78,7 @@ func startReplicationSpecService() error {
 		return err
 	}
 
-	specId := spec.Id
+	specId := spec.Id()
 
 	// cleanup to ensure that there is no residue replication spec, e.g., from previously failed test runs
 	_, err = service.DelReplicationSpec(specId)
@@ -107,13 +107,13 @@ func startReplicationSpecService() error {
 	if err != nil {
 		return err
 	}
-	if spec2.Id != specId || spec2.TargetClusterUUID != spec.TargetClusterUUID || spec2.Settings.BatchCount != spec.Settings.BatchCount {
-		fmt.Println("params of spec retrieved: id=", spec2.Id, "; target cluster=", spec2.TargetClusterUUID, ";  batch count=", spec2.Settings.BatchCount)
+	if spec2.Id != specId || spec2.TargetClusterUUID() != spec.TargetClusterUUID() || spec2.Settings().BatchCount != spec.Settings().BatchCount {
+		fmt.Println("params of spec retrieved: id=", spec2.Id, "; target cluster=", spec2.TargetClusterUUID(), ";  batch count=", spec2.Settings().BatchCount)
 		return errors.New("Read incorrect values of replication spec.")
 	}
 
 	// update spec
-	spec.Settings.BatchCount = newBatchCount
+	spec.Settings().BatchCount = newBatchCount
 
 	err = service.SetReplicationSpec(spec)
 	if err != nil {
@@ -125,7 +125,7 @@ func startReplicationSpecService() error {
 	if err != nil {
 		return err
 	}
-	if spec2.Settings.BatchCount != newBatchCount {
+	if spec2.Settings().BatchCount != newBatchCount {
 		return errors.New("Update to replication spec is lost")
 	}
 

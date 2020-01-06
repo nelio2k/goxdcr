@@ -274,11 +274,11 @@ func TestAddReplicationSpec(t *testing.T) {
 	}
 
 	assert.Nil(replSpecSvc.AddReplicationSpec(spec, ""))
-	checkRep, checkErr := replSpecSvc.ReplicationSpec(spec.Id)
+	checkRep, checkErr := replSpecSvc.ReplicationSpec(spec.Id())
 	assert.Nil(checkErr)
 	// We created with a 0 revision, metakv returns a 1
-	assert.NotEqual(checkRep.Revision, checkRep.Settings.Revision)
-	_, delErr := replSpecSvc.DelReplicationSpec(spec.Id)
+	assert.NotEqual(checkRep.Revision, checkRep.Settings().Revision)
+	_, delErr := replSpecSvc.DelReplicationSpec(spec.Id())
 	assert.Nil(delErr)
 	fmt.Println("============== Test case end: TestAddReplicationSpecAndVerifyFunc =================")
 }

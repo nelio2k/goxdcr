@@ -218,7 +218,7 @@ func NewGetRemoteClustersResponse(remoteClusters map[string]*metadata.RemoteClus
 	return EncodeObjectIntoResponseSensitive(remoteClusterArr)
 }
 
-func NewGetAllReplicationsResponse(replSpecs map[string]*metadata.ReplicationSpecification) (*ap.Response, error) {
+func NewGetAllReplicationsResponse(replSpecs map[string]metadata.ReplicationSpecApi) (*ap.Response, error) {
 	// UI requires that the specs are in sorted order to avoid flicking
 	specIds := make([]string, 0)
 	for specId, _ := range replSpecs {
@@ -237,24 +237,24 @@ func NewGetAllReplicationInfosResponse(replInfos []base.ReplicationInfo) (*ap.Re
 	return EncodeObjectIntoResponse(replInfos)
 }
 
-func getReplicationDocMap(replSpec *metadata.ReplicationSpecification) map[string]interface{} {
+func getReplicationDocMap(replSpec metadata.ReplicationSpecApi) map[string]interface{} {
 	replDocMap := make(map[string]interface{})
 	if replSpec != nil {
-		replDocMap[base.ReplicationDocId] = replSpec.Id
+		replDocMap[base.ReplicationDocId] = replSpec.Id()
 		replDocMap[base.ReplicationDocContinuous] = true
-		replDocMap[base.ReplicationDocSource] = replSpec.SourceBucketName
-		replDocMap[base.ReplicationDocTarget] = base.UrlDelimiter + base.RemoteClustersForReplicationDoc + base.UrlDelimiter + replSpec.TargetClusterUUID + base.UrlDelimiter + base.BucketsPath + base.UrlDelimiter + replSpec.TargetBucketName
+		replDocMap[base.ReplicationDocSource] = replSpec.SourceBucketName()
+		replDocMap[base.ReplicationDocTarget] = base.UrlDelimiter + base.RemoteClustersForReplicationDoc + base.UrlDelimiter + replSpec.TargetClusterUUID() + base.UrlDelimiter + base.BucketsPath + base.UrlDelimiter + replSpec.TargetBucketName()
 
 		// special transformation for replication type and active flag
-		replDocMap[base.ReplicationDocPauseRequestedOutput] = !replSpec.Settings.Active
-		if replSpec.Settings.RepType == metadata.ReplicationTypeXmem {
+		replDocMap[base.ReplicationDocPauseRequestedOutput] = !replSpec.Settings().Active
+		if replSpec.Settings().RepType == metadata.ReplicationTypeXmem {
 			replDocMap[base.ReplicationDocType] = base.ReplicationDocTypeXmem
 		} else {
 			replDocMap[base.ReplicationDocType] = base.ReplicationDocTypeCapi
 		}
 
 		// copy other replication settings into replication doc
-		for key, value := range replSpec.Settings.ToRESTMap(false /*defaultSettings*/) {
+		for key, value := range replSpec.Settings().ToRESTMap(false /*defaultSettings*/) {
 			if key != metadata.ReplicationTypeKey && key != metadata.ActiveKey {
 				replDocMap[key] = value
 			}
@@ -614,7 +614,7 @@ func DecodeChangeReplicationSettings(request *http.Request, replicationId string
 			logger_msgutil.Warnf("Error retrieving spec for %v. err=%v\n", replicationId, err)
 			return
 		}
-		isCapi = spec.Settings.IsCapi()
+		isCapi = spec.Settings().IsCapi()
 	}
 
 	settings, settingsErrorsMap := DecodeSettingsFromRequest(request, isDefaultSettings, true, isCapi)

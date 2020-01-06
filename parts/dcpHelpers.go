@@ -301,7 +301,7 @@ func (v *vbtsNegotiator) Cleanup() {
 func (v *vbtsNegotiator) Start(settings metadata.ReplicationSettingsMap) error {
 	topic, ok := settings[PipelineTopic].(string)
 	if !ok {
-		//		panic("vbtshelper cannot find pipelinetopic")
+		panic("vbtshelper cannot find pipelinetopic")
 		return nil
 	}
 
@@ -382,7 +382,8 @@ func (v *vbtsNegotiator) negotiate() error {
 
 	v.internalLock.RLock()
 	defer v.internalLock.RUnlock()
-	for _, vbtsWLock := range v.topicToVbTsMap {
+	for outtopic, vbtsWLock := range v.topicToVbTsMap {
+		v.dcp.Logger().Infof("NEIL DEBUG topic %v has %v received vbtss", outtopic, len(vbtsWLock.vbMap))
 		vbtsWLock.mutex.RLock()
 		for vbno, ts := range vbtsWLock.vbMap {
 			if finalTimestamp[vbno] == nil {
@@ -403,6 +404,7 @@ func (v *vbtsNegotiator) negotiate() error {
 
 			result, validComparison := ts.Compare(finalTimestamp[vbno])
 			if !validComparison {
+				v.dcp.Logger().Infof("NEIL DEBUG invalid comparison between %v and %v", ts, finalTimestamp[vbno])
 				invalidVbs[vbno] = true
 			} else {
 				if result < 0 {
@@ -429,6 +431,7 @@ func (v *vbtsNegotiator) negotiate() error {
 	for vbno, finalts := range finalTimestamp {
 		failoverlogMap := (FailoverLogMap)(v.failoverLogs)
 		if finalts.Vbuuid != 0 && !failoverlogMap.ContainsVbUuid(vbno, finalts.Vbuuid) {
+			v.dcp.Logger().Infof("NEIL DEBUG vbno: %v finalTsVBUuid: %v failoverMap: %v", vbno, finalts.Vbuuid, (*(failoverlogMap[vbno]))[0])
 			invalidVbs[vbno] = true
 		} else {
 			validVbs = append(validVbs, vbno)
@@ -442,7 +445,7 @@ func (v *vbtsNegotiator) negotiate() error {
 	}
 
 	// TODO - need to think more about next level and find the ancestor if not found
-	//	v.dcp.Logger().Infof("NEIL DEBUG negotiator final timestamp length %v", len(finalTimestamp))
+	v.dcp.Logger().Infof("NEIL DEBUG DCP %v negotiator final timestamp length %v", v.dcp.Id(), len(finalTimestamp))
 
 	// Ensure backfill is committed created before ongoing can start
 	if len(overallIncremental) > 0 {

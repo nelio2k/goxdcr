@@ -16,31 +16,42 @@ import (
 	"strings"
 )
 
+type ReplicationSpecApi interface {
+	Id() string
+	InternalId() string
+	SourceBucketName() string
+	SourceBucketUUID() string
+	TargetClusterUUID() string
+	TargetBucketName() string
+	TargetBucketUUID() string
+	Settings() *ReplicationSettings
+}
+
 /************************************
 /* struct ReplicationSpecification
 *************************************/
 type ReplicationSpecification struct {
 	//id of the replication
-	Id string `json:"id"`
+	Id_ string `json:"id"`
 
 	// internal id, used to detect the case when replication spec has been deleted and recreated
-	InternalId string `json:"internalId"`
+	InternalId_ string `json:"internalId"`
 
 	// Source Bucket Name
-	SourceBucketName string `json:"sourceBucketName"`
+	SourceBucketName_ string `json:"sourceBucketName"`
 
 	//Source Bucket UUID
-	SourceBucketUUID string `json:"sourceBucketUUID"`
+	SourceBucketUUID_ string `json:"sourceBucketUUID"`
 
 	//Target Cluster UUID
-	TargetClusterUUID string `json:"targetClusterUUID"`
+	TargetClusterUUID_ string `json:"targetClusterUUID"`
 
 	// Target Bucket Name
-	TargetBucketName string `json:"targetBucketName"`
+	TargetBucketName_ string `json:"targetBucketName"`
 
-	TargetBucketUUID string `json:"targetBucketUUID"`
+	TargetBucketUUID_ string `json:"targetBucketUUID"`
 
-	Settings *ReplicationSettings `json:"replicationSettings"`
+	Settings_ *ReplicationSettings `json:"replicationSettings"`
 
 	// revision number to be used by metadata service. not included in json
 	Revision interface{}
@@ -51,14 +62,14 @@ func NewReplicationSpecification(sourceBucketName string, sourceBucketUUID strin
 	if err != nil {
 		return nil, err
 	}
-	return &ReplicationSpecification{Id: ReplicationId(sourceBucketName, targetClusterUUID, targetBucketName),
-		InternalId:        randId,
-		SourceBucketName:  sourceBucketName,
-		SourceBucketUUID:  sourceBucketUUID,
-		TargetClusterUUID: targetClusterUUID,
-		TargetBucketName:  targetBucketName,
-		TargetBucketUUID:  targetBucketUUID,
-		Settings:          DefaultReplicationSettings()}, nil
+	return &ReplicationSpecification{Id_: ReplicationId(sourceBucketName, targetClusterUUID, targetBucketName),
+		InternalId_:        randId,
+		SourceBucketName_:  sourceBucketName,
+		SourceBucketUUID_:  sourceBucketUUID,
+		TargetClusterUUID_: targetClusterUUID,
+		TargetBucketName_:  targetBucketName,
+		TargetBucketUUID_:  targetBucketUUID,
+		Settings_:          DefaultReplicationSettings()}, nil
 }
 
 func (spec *ReplicationSpecification) String() string {
@@ -66,11 +77,36 @@ func (spec *ReplicationSpecification) String() string {
 		return ""
 	}
 	var specSettingsMap ReplicationSettingsMap
-	if spec.Settings != nil {
-		specSettingsMap = spec.Settings.CloneAndRedact().ToMap(false /*defaultSettings*/)
+	if spec.Settings() != nil {
+		specSettingsMap = spec.Settings().CloneAndRedact().ToMap(false /*defaultSettings_*/)
 	}
-	return fmt.Sprintf("Id: %v InternalId: %v SourceBucketName: %v SourceBucketUUID: %v TargetClusterUUID: %v TargetBucketName: %v TargetBucketUUID: %v Settings: %v",
-		spec.Id, spec.InternalId, spec.SourceBucketName, spec.SourceBucketUUID, spec.TargetClusterUUID, spec.TargetBucketName, spec.TargetBucketUUID, specSettingsMap)
+	return fmt.Sprintf("Id_: %v InternalId_: %v SourceBucketName_: %v SourceBucketUUID_: %v TargetClusterUUID_: %v TargetBucketName_: %v TargetBucketUUID_: %v Settings_: %v",
+		spec.Id(), spec.InternalId(), spec.SourceBucketName(), spec.SourceBucketUUID(), spec.TargetClusterUUID(), spec.TargetBucketName(), spec.TargetBucketUUID(), specSettingsMap)
+}
+
+func (s *ReplicationSpecification) Id() string {
+	return s.Id_
+}
+func (s *ReplicationSpecification) InternalId() string {
+	return s.InternalId_
+}
+func (s *ReplicationSpecification) SourceBucketName() string {
+	return s.SourceBucketName_
+}
+func (s *ReplicationSpecification) SourceBucketUUID() string {
+	return s.SourceBucketUUID_
+}
+func (s *ReplicationSpecification) TargetClusterUUID() string {
+	return s.TargetClusterUUID_
+}
+func (s *ReplicationSpecification) TargetBucketName() string {
+	return s.TargetBucketName_
+}
+func (s *ReplicationSpecification) TargetBucketUUID() string {
+	return s.TargetBucketUUID_
+}
+func (s *ReplicationSpecification) Settings() *ReplicationSettings {
+	return s.Settings_
 }
 
 // checks if the passed in spec is the same as the current spec
@@ -83,25 +119,25 @@ func (spec *ReplicationSpecification) SameSpec(spec2 *ReplicationSpecification) 
 		return false
 	}
 	// note that settings in spec are not compared. The assumption is that if settings are different, Revision will have to be different
-	return spec.Id == spec2.Id && spec.InternalId == spec2.InternalId &&
-		spec.SourceBucketName == spec2.SourceBucketName &&
-		spec.SourceBucketUUID == spec2.SourceBucketUUID &&
-		spec.TargetClusterUUID == spec2.TargetClusterUUID && spec.TargetBucketName == spec2.TargetBucketName &&
-		spec.TargetBucketUUID == spec2.TargetBucketUUID && reflect.DeepEqual(spec.Revision, spec2.Revision)
+	return spec.Id() == spec2.Id() && spec.InternalId() == spec2.InternalId() &&
+		spec.SourceBucketName() == spec2.SourceBucketName() &&
+		spec.SourceBucketUUID() == spec2.SourceBucketUUID() &&
+		spec.TargetClusterUUID() == spec2.TargetClusterUUID() && spec.TargetBucketName() == spec2.TargetBucketName() &&
+		spec.TargetBucketUUID() == spec2.TargetBucketUUID() && reflect.DeepEqual(spec.Revision, spec2.Revision)
 }
 
 func (spec *ReplicationSpecification) Clone() *ReplicationSpecification {
 	if spec == nil {
 		return nil
 	}
-	return &ReplicationSpecification{Id: spec.Id,
-		InternalId:        spec.InternalId,
-		SourceBucketName:  spec.SourceBucketName,
-		SourceBucketUUID:  spec.SourceBucketUUID,
-		TargetClusterUUID: spec.TargetClusterUUID,
-		TargetBucketName:  spec.TargetBucketName,
-		TargetBucketUUID:  spec.TargetBucketUUID,
-		Settings:          spec.Settings.Clone(),
+	return &ReplicationSpecification{Id_: spec.Id(),
+		InternalId_:        spec.InternalId(),
+		SourceBucketName_:  spec.SourceBucketName(),
+		SourceBucketUUID_:  spec.SourceBucketUUID(),
+		TargetClusterUUID_: spec.TargetClusterUUID(),
+		TargetBucketName_:  spec.TargetBucketName(),
+		TargetBucketUUID_:  spec.TargetBucketUUID(),
+		Settings_:          spec.Settings().Clone(),
 		// !!! shallow copy of revision.
 		// spec.Revision should only be passed along and should never be modified
 		Revision: spec.Revision}
@@ -109,8 +145,8 @@ func (spec *ReplicationSpecification) Clone() *ReplicationSpecification {
 
 func (spec *ReplicationSpecification) Redact() *ReplicationSpecification {
 	if spec != nil {
-		// Currently only the Settings has user identifiable data in filtered expression
-		spec.Settings.Redact()
+		// Currently only the Settings_ has user identifiable data in filtered expression
+		spec.Settings().Redact()
 	}
 	return spec
 }
@@ -139,8 +175,8 @@ func ReplicationId(sourceBucketName string, targetClusterUUID string, targetBuck
 	return strings.Join(parts, base.KeyPartsDelimiter)
 }
 
-func IsReplicationIdForSourceBucket(replicationId string, sourceBucketName string) (bool, error) {
-	replBucketName, err := GetSourceBucketNameFromReplicationId(replicationId)
+func IsReplicationIdForSourceBucket(replicationId_ string, sourceBucketName string) (bool, error) {
+	replBucketName, err := GetSourceBucketNameFromReplicationId(replicationId_)
 	if err != nil {
 		return false, err
 	} else {
@@ -148,8 +184,8 @@ func IsReplicationIdForSourceBucket(replicationId string, sourceBucketName strin
 	}
 }
 
-func IsReplicationIdForTargetBucket(replicationId string, targetBucketName string) (bool, error) {
-	replBucketName, err := GetTargetBucketNameFromReplicationId(replicationId)
+func IsReplicationIdForTargetBucket(replicationId_ string, targetBucketName string) (bool, error) {
+	replBucketName, err := GetTargetBucketNameFromReplicationId(replicationId_)
 	if err != nil {
 		return false, err
 	} else {
@@ -157,20 +193,20 @@ func IsReplicationIdForTargetBucket(replicationId string, targetBucketName strin
 	}
 }
 
-func GetSourceBucketNameFromReplicationId(replicationId string) (string, error) {
-	parts := strings.Split(replicationId, base.KeyPartsDelimiter)
+func GetSourceBucketNameFromReplicationId(replicationId_ string) (string, error) {
+	parts := strings.Split(replicationId_, base.KeyPartsDelimiter)
 	if len(parts) == 3 {
 		return parts[1], nil
 	} else {
-		return "", fmt.Errorf("Invalid replication id: %v", replicationId)
+		return "", fmt.Errorf("Invalid replication id: %v", replicationId_)
 	}
 }
 
-func GetTargetBucketNameFromReplicationId(replicationId string) (string, error) {
-	parts := strings.Split(replicationId, base.KeyPartsDelimiter)
+func GetTargetBucketNameFromReplicationId(replicationId_ string) (string, error) {
+	parts := strings.Split(replicationId_, base.KeyPartsDelimiter)
 	if len(parts) == 3 {
 		return parts[2], nil
 	} else {
-		return "", fmt.Errorf("Invalid replication id: %v", replicationId)
+		return "", fmt.Errorf("Invalid replication id: %v", replicationId_)
 	}
 }

@@ -1203,6 +1203,7 @@ func (dcp *DcpNozzle) UpdateSettings(settings metadata.ReplicationSettingsMap) e
 			panic("Need pipelineTopic")
 		}
 
+		dcp.Logger().Infof("DCP %v received topic %v timestamp %v", dcp.Id(), pipelineTopic, new_ts)
 		dcp.tsNegotiator.HandleVbtsFromCheckpointMgr(pipelineTopic, new_ts)
 	}
 

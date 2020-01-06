@@ -266,7 +266,7 @@ func (ckmgr *CheckpointManager) populateRemoteBucketInfo(pipeline common.Pipelin
 	if err != nil {
 		return err
 	}
-	remote_bucket, err := service_def.NewRemoteBucketInfo(ckmgr.target_cluster_ref.Name(), spec.TargetBucketName, ckmgr.target_cluster_ref, ckmgr.remote_cluster_svc, ckmgr.cluster_info_svc, ckmgr.logger, ckmgr.utils)
+	remote_bucket, err := service_def.NewRemoteBucketInfo(ckmgr.target_cluster_ref.Name(), spec.TargetBucketName(), ckmgr.target_cluster_ref, ckmgr.remote_cluster_svc, ckmgr.cluster_info_svc, ckmgr.logger, ckmgr.utils)
 	if err != nil {
 		return err
 	}
@@ -321,7 +321,7 @@ func (ckmgr *CheckpointManager) startRandomizedCheckpointingTicker() {
 }
 
 func (ckmgr *CheckpointManager) initialize() {
-	ckmgr.target_bucket_name = ckmgr.pipeline.Specification().TargetBucketName
+	ckmgr.target_bucket_name = ckmgr.pipeline.Specification().TargetBucketName()
 
 	listOfVbs := ckmgr.getMyVBs()
 	for _, vbno := range listOfVbs {
@@ -337,7 +337,7 @@ func (ckmgr *CheckpointManager) initialize() {
 // compose user agent string for HELO command
 func (ckmgr *CheckpointManager) composeUserAgent() {
 	spec := ckmgr.pipeline.Specification()
-	ckmgr.user_agent = base.ComposeUserAgentWithBucketNames("Goxdcr CkptMgr", spec.SourceBucketName, spec.TargetBucketName)
+	ckmgr.user_agent = base.ComposeUserAgentWithBucketNames("Goxdcr CkptMgr", spec.SourceBucketName(), spec.TargetBucketName())
 }
 
 func (ckmgr *CheckpointManager) initConnections() error {
@@ -668,7 +668,7 @@ func (ckmgr *CheckpointManager) SetVBTimestamps(topic string) error {
 
 	deleted_vbnos := make([]uint16, 0)
 	target_support_xattr_now := base.IsClusterCompatible(ckmgr.target_cluster_version, base.VersionForRBACAndXattrSupport)
-	specInternalId := ckmgr.pipeline.Specification().InternalId
+	specInternalId := ckmgr.pipeline.Specification().InternalId()
 
 	// Figure out if certain checkpoints need to be removed to force a complete resync due to external factors
 	for vbno, ckptDoc := range ckptDocs {
@@ -1535,7 +1535,7 @@ func (ckmgr *CheckpointManager) raiseSuccessCkptForVbEvent(ckpt_record metadata.
 
 func (ckmgr *CheckpointManager) persistCkptRecord(vbno uint16, ckpt_record *metadata.CheckpointRecord, xattr_seqno uint64) error {
 	ckmgr.logger.Debugf("Persist vb=%v ckpt_record=%v for %v\n", vbno, ckpt_record, ckmgr.pipeline.Topic())
-	return ckmgr.checkpoints_svc.UpsertCheckpoints(ckmgr.pipeline.Topic(), ckmgr.pipeline.Specification().InternalId, vbno, ckpt_record, xattr_seqno, ckmgr.target_cluster_version)
+	return ckmgr.checkpoints_svc.UpsertCheckpoints(ckmgr.pipeline.Topic(), ckmgr.pipeline.Specification().InternalId(), vbno, ckpt_record, xattr_seqno, ckmgr.target_cluster_version)
 }
 
 func (ckmgr *CheckpointManager) OnEvent(event *common.Event) {

@@ -91,7 +91,7 @@ func TestUpgradeCompressionType(t *testing.T) {
 	assert := assert.New(t)
 	fmt.Println("============== Test case start: TestUpgradeCompressionType =================")
 	settings := ReplicationSettings{}
-	settings.Settings = nil // to simulate upgrade
+	settings.Settings() = nil // to simulate upgrade
 
 	assert.Equal(0, settings.CompressionType)
 
@@ -107,7 +107,7 @@ func TestDefaultFilterExpDel(t *testing.T) {
 	assert.Equal(base.FilterExpDelNone, defaultSettings.Values[FilterExpDelKey])
 	getDefaultMode := defaultSettings.GetExpDelMode()
 	assert.Equal(base.FilterExpDelNone, getDefaultMode)
-	defaultSettings.Settings.Values[base.FilterExpDelKey] = base.FilterExpDelSkipDeletes
+	defaultSettings.Settings().Values[base.FilterExpDelKey] = base.FilterExpDelSkipDeletes
 	getMode := defaultSettings.GetExpDelMode()
 	assert.Equal(base.FilterExpDelSkipDeletes, getMode)
 	fmt.Println("============== Test case end: TestDefaultFilterExpDel =================")

@@ -695,7 +695,7 @@ func (service *ReplicationSpecService) AddReplicationSpec(spec *metadata.Replica
 
 	service.logger.Info("Adding it to metadata store...")
 
-	key := service.getKeyFromReplicationId(spec.Id)
+	key := service.getKeyFromReplicationId(spec.Id())
 	err = service.metadata_svc.AddWithCatalog(ReplicationSpecsCatalogKey, key, value)
 	if err != nil {
 		return err
@@ -706,7 +706,7 @@ func (service *ReplicationSpecService) AddReplicationSpec(spec *metadata.Replica
 		return err
 	}
 
-	err = service.updateCache(spec.Id, spec)
+	err = service.updateCache(spec.Id(), spec)
 	if err == nil {
 		service.writeUiLogWithAdditionalInfo(spec, "created", additionalInfo)
 	}
@@ -714,16 +714,16 @@ func (service *ReplicationSpecService) AddReplicationSpec(spec *metadata.Replica
 }
 
 func (service *ReplicationSpecService) loadLatestMetakvRevisionIntoSpec(spec *metadata.ReplicationSpecification) error {
-	key := service.getKeyFromReplicationId(spec.Id)
+	key := service.getKeyFromReplicationId(spec.Id())
 	_, rev, err := service.metadata_svc.Get(key)
 	if err != nil {
 		return err
 	}
 	spec.Revision = rev
-	if spec.Settings != nil {
+	if spec.Settings() != nil {
 		// Use the same revision value with ReplicationSettings since they are considered one entity from
 		// Replication Spec Service perspective
-		spec.Settings.Revision = rev
+		spec.Settings().Revision = rev
 	}
 	return nil
 }
@@ -737,7 +737,7 @@ func (service *ReplicationSpecService) setReplicationSpecInternal(spec *metadata
 	if err != nil {
 		return err
 	}
-	key := service.getKeyFromReplicationId(spec.Id)
+	key := service.getKeyFromReplicationId(spec.Id())
 
 	err = service.metadata_svc.Set(key, value, spec.Revision)
 	if err != nil {
@@ -749,9 +749,9 @@ func (service *ReplicationSpecService) setReplicationSpecInternal(spec *metadata
 		return err
 	}
 
-	err = service.updateCacheInternal(spec.Id, spec, lock)
+	err = service.updateCacheInternal(spec.Id(), spec, lock)
 	if err == nil {
-		service.logger.Infof("Replication spec %s has been updated, rev=%v\n", spec.Id, spec.Revision)
+		service.logger.Infof("Replication spec %s has been updated, rev=%v\n", spec.Id(), spec.Revision)
 		return nil
 	} else {
 		return err
@@ -849,7 +849,7 @@ func (service *ReplicationSpecService) AllActiveReplicationSpecsReadOnly() (map[
 	values_map := service.getCache().GetMap()
 	for key, val := range values_map {
 		spec := val.(*ReplicationSpecVal).spec.(*metadata.ReplicationSpecification)
-		if spec != nil && spec.Settings.Active {
+		if spec != nil && spec.Settings().Active {
 			specs[key] = spec
 		}
 	}
@@ -934,34 +934,34 @@ func (service *ReplicationSpecService) constructReplicationSpec(value []byte, re
 	}
 	spec.Revision = rev
 
-	spec.Settings.PostProcessAfterUnmarshalling()
+	spec.Settings().PostProcessAfterUnmarshalling()
 
 	service.handleSettingsUpgrade(spec, lock)
 
 	return spec, nil
 }
 
-// spec.Settings needs to have all setting values populated,
+// spec.Settings() needs to have all setting values populated,
 // otherwise, replication behavior may change unexpectedly after upgrade when there are changes to default setting values.
-// When new replication spec is created, spec.Settings always has all applicable setting values populated.
-// The only scenario where values may be missing from spec.Settings is when new setting keys are added after upgrade.
-// This method checks whether there are values missing from spec.Settings.
+// When new replication spec is created, spec.Settings() always has all applicable setting values populated.
+// The only scenario where values may be missing from spec.Settings() is when new setting keys are added after upgrade.
+// This method checks whether there are values missing from spec.Settings().
 // If there are, it populates these values using default values, and writes updated settings/spec to metakv.
 func (service *ReplicationSpecService) handleSettingsUpgrade(spec *metadata.ReplicationSpecification, lock bool) {
-	updatedKeys := spec.Settings.PopulateDefault()
+	updatedKeys := spec.Settings().PopulateDefault()
 	isEnterprise, _ := service.xdcr_comp_topology_svc.IsMyClusterEnterprise()
-	if !isEnterprise && spec.Settings.Values[metadata.CompressionTypeKey] == base.CompressionTypeAuto {
-		spec.Settings.Values[metadata.CompressionTypeKey] = base.CompressionTypeNone
+	if !isEnterprise && spec.Settings().Values[metadata.CompressionTypeKey] == base.CompressionTypeAuto {
+		spec.Settings().Values[metadata.CompressionTypeKey] = base.CompressionTypeNone
 		updatedKeys = append(updatedKeys, metadata.CompressionTypeKey)
-	} else if spec.Settings.Values[metadata.CompressionTypeKey] == base.CompressionTypeSnappy {
-		spec.Settings.Values[metadata.CompressionTypeKey] = base.CompressionTypeAuto
+	} else if spec.Settings().Values[metadata.CompressionTypeKey] == base.CompressionTypeSnappy {
+		spec.Settings().Values[metadata.CompressionTypeKey] = base.CompressionTypeAuto
 		updatedKeys = append(updatedKeys, metadata.CompressionTypeKey)
 	}
 	if len(updatedKeys) == 0 {
 		return
 	}
 
-	service.logger.Infof("Updating spec %v in metakv since its settings has been upgraded. upgraded settings keys = %v", spec.Id, updatedKeys)
+	service.logger.Infof("Updating spec %v in metakv since its settings has been upgraded. upgraded settings keys = %v", spec.Id(), updatedKeys)
 	err := service.setReplicationSpecInternal(spec, lock)
 	if err != nil {
 		// ignore this error since it is not fatal.
@@ -971,7 +971,7 @@ func (service *ReplicationSpecService) handleSettingsUpgrade(spec *metadata.Repl
 		//    the old default values will be used, which is not desirable but will not cause production downtime
 		// not to ignore this error would be more risky, since some critical ops, like responding to metakv updates,
 		// may get skipped
-		service.logger.Warnf("Error upgrading replication settings in spec %v in metakv. err = %v\n", spec.Id, err)
+		service.logger.Warnf("Error upgrading replication settings in spec %v in metakv. err = %v\n", spec.Id(), err)
 	}
 }
 
@@ -1011,7 +1011,7 @@ func (service *ReplicationSpecService) updateCacheInternalNoLock(specId string, 
 		if !newSpec.SameSpec(oldSpec) {
 			err = service.cacheSpec(service.getCache(), specId, newSpec)
 			if err == nil {
-				specId = newSpec.Id
+				specId = newSpec.Id()
 				updated = true
 			} else {
 				return oldSpec, updated, err
@@ -1041,8 +1041,8 @@ func (service *ReplicationSpecService) updateCacheInternal(specId string, newSpe
 
 	if updated && oldSpec != nil && newSpec == nil {
 		service.gcMtx.Lock()
-		delete(service.srcGcMap, oldSpec.Id)
-		delete(service.tgtGcMap, oldSpec.Id)
+		delete(service.srcGcMap, oldSpec.Id())
+		delete(service.tgtGcMap, oldSpec.Id())
 		service.gcMtx.Unlock()
 		service.remote_cluster_svc.UnRequestRemoteMonitoring(oldSpec)
 	}
@@ -1070,11 +1070,11 @@ func (service *ReplicationSpecService) updateCacheInternal(specId string, newSpe
 func (service *ReplicationSpecService) writeUiLog(spec *metadata.ReplicationSpecification, action, reason string) {
 	if service.uilog_svc != nil {
 		var uiLogMsg string
-		remoteClusterName := service.remote_cluster_svc.GetRemoteClusterNameFromClusterUuid(spec.TargetClusterUUID)
+		remoteClusterName := service.remote_cluster_svc.GetRemoteClusterNameFromClusterUuid(spec.TargetClusterUUID())
 		if reason != "" {
-			uiLogMsg = fmt.Sprintf("Replication from bucket \"%s\" to bucket \"%s\" on cluster \"%s\" %s, since %s", spec.SourceBucketName, spec.TargetBucketName, remoteClusterName, action, reason)
+			uiLogMsg = fmt.Sprintf("Replication from bucket \"%s\" to bucket \"%s\" on cluster \"%s\" %s, since %s", spec.SourceBucketName(), spec.TargetBucketName(), remoteClusterName, action, reason)
 		} else {
-			uiLogMsg = fmt.Sprintf("Replication from bucket \"%s\" to bucket \"%s\" on cluster \"%s\" %s.", spec.SourceBucketName, spec.TargetBucketName, remoteClusterName, action)
+			uiLogMsg = fmt.Sprintf("Replication from bucket \"%s\" to bucket \"%s\" on cluster \"%s\" %s.", spec.SourceBucketName(), spec.TargetBucketName(), remoteClusterName, action)
 		}
 		service.uilog_svc.Write(uiLogMsg)
 	}
@@ -1082,8 +1082,8 @@ func (service *ReplicationSpecService) writeUiLog(spec *metadata.ReplicationSpec
 
 func (service *ReplicationSpecService) writeUiLogWithAdditionalInfo(spec *metadata.ReplicationSpecification, action, additionalInfo string) {
 	if service.uilog_svc != nil {
-		remoteClusterName := service.remote_cluster_svc.GetRemoteClusterNameFromClusterUuid(spec.TargetClusterUUID)
-		uiLogMsg := fmt.Sprintf("Replication from bucket \"%s\" to bucket \"%s\" on cluster \"%s\" %s.", spec.SourceBucketName, spec.TargetBucketName, remoteClusterName, action)
+		remoteClusterName := service.remote_cluster_svc.GetRemoteClusterNameFromClusterUuid(spec.TargetClusterUUID())
+		uiLogMsg := fmt.Sprintf("Replication from bucket \"%s\" to bucket \"%s\" on cluster \"%s\" %s.", spec.SourceBucketName(), spec.TargetBucketName(), remoteClusterName, action)
 		if additionalInfo != "" {
 			uiLogMsg += fmt.Sprintf("\n%s", additionalInfo)
 		}
@@ -1137,26 +1137,26 @@ func (service *ReplicationSpecService) gcTargetBucket(spec *metadata.Replication
 		return false, base.ErrorInvalidInput
 	}
 
-	ref, err := service.remote_cluster_svc.RemoteClusterByUuid(spec.TargetClusterUUID, false /*refresh*/)
+	ref, err := service.remote_cluster_svc.RemoteClusterByUuid(spec.TargetClusterUUID(), false /*refresh*/)
 	if err != nil {
-		service.logger.Warnf("Unable to retrieve reference from spec %v due to %v", spec.Id, err.Error())
+		service.logger.Warnf("Unable to retrieve reference from spec %v due to %v", spec.Id(), err.Error())
 		return false, err
 	}
 
-	err = service.utils.VerifyTargetBucket(spec.TargetBucketName, spec.TargetBucketUUID, ref, service.logger)
+	err = service.utils.VerifyTargetBucket(spec.TargetBucketName(), spec.TargetBucketUUID(), ref, service.logger)
 	if err == nil {
 		service.gcMtx.Lock()
-		service.tgtGcMap[spec.Id] = 0
+		service.tgtGcMap[spec.Id()] = 0
 		service.gcMtx.Unlock()
 		return false, nil
 	}
 
-	service.logger.Warnf("Error verifying target bucket for %v. err=%v", spec.Id, err)
+	service.logger.Warnf("Error verifying target bucket for %v. err=%v", spec.Id(), err)
 
 	if err == service.utils.GetNonExistentBucketError() {
-		shouldDel := service.incrementGCCnt(service.tgtGcMap, spec.Id)
+		shouldDel := service.incrementGCCnt(service.tgtGcMap, spec.Id())
 		if shouldDel {
-			err = getBucketMissingError(spec.TargetBucketName)
+			err = getBucketMissingError(spec.TargetBucketName())
 			return shouldDel, err
 		} else {
 			return false, err
@@ -1176,7 +1176,7 @@ func (service *ReplicationSpecService) gcSourceBucket(spec *metadata.Replication
 
 	local_connStr, _ := service.xdcr_comp_topology_svc.MyConnectionStr()
 	if local_connStr == "" {
-		err := fmt.Errorf("XDCRTopologySvc.MyConnectionStr() returned empty string when validating spec %v", spec.Id)
+		err := fmt.Errorf("XDCRTopologySvc.MyConnectionStr() returned empty string when validating spec %v", spec.Id())
 		return false, err
 	}
 
@@ -1186,52 +1186,57 @@ func (service *ReplicationSpecService) gcSourceBucket(spec *metadata.Replication
 		return false, err
 	}
 
-	bucketInfo, err := service.utils.GetBucketInfo(local_connStr, spec.SourceBucketName, username, password, authMech, certificate, sanInCertificate, clientCertificate, clientKey, service.logger)
+	bucketInfo, err := service.utils.GetBucketInfo(local_connStr, spec.SourceBucketName(), username, password, authMech, certificate, sanInCertificate, clientCertificate, clientKey, service.logger)
 	if err == service.utils.GetNonExistentBucketError() {
-		shouldDel := service.incrementGCCnt(service.srcGcMap, spec.Id)
+		shouldDel := service.incrementGCCnt(service.srcGcMap, spec.Id())
 		if shouldDel {
-			err = getBucketMissingError(spec.SourceBucketName)
+			err = getBucketMissingError(spec.SourceBucketName())
 			return shouldDel, err
 		}
 	} else {
 		service.gcMtx.Lock()
-		service.srcGcMap[spec.Id] = 0
+		service.srcGcMap[spec.Id()] = 0
 		service.gcMtx.Unlock()
 	}
 	if err != nil {
-		service.logger.Warnf("Unable to retrieve bucket info for source bucket %v due to %v", spec.SourceBucketName, err.Error())
+		service.logger.Warnf("Unable to retrieve bucket info for source bucket %v due to %v", spec.SourceBucketName(), err.Error())
 		return false, err
 	}
 
-	if spec.SourceBucketUUID != "" {
-		extractedUuid, err := service.utils.GetBucketUuidFromBucketInfo(spec.SourceBucketName, bucketInfo, service.logger)
+	if spec.SourceBucketUUID() != "" {
+		extractedUuid, err := service.utils.GetBucketUuidFromBucketInfo(spec.SourceBucketName(), bucketInfo, service.logger)
 		if err != nil {
-			service.logger.Warnf("Unable to check source bucket %v UUID due to %v", spec.SourceBucketName, err.Error())
+			service.logger.Warnf("Unable to check source bucket %v UUID due to %v", spec.SourceBucketName(), err.Error())
 			return false, err
 		}
 
-		if extractedUuid != spec.SourceBucketUUID {
-			return true, getBucketChangedError(spec.SourceBucketName, spec.SourceBucketUUID, extractedUuid)
+		if extractedUuid != spec.SourceBucketUUID() {
+			return true, getBucketChangedError(spec.SourceBucketName(), spec.SourceBucketUUID(), extractedUuid)
 		}
 	}
 	return false, nil
 }
 
-func (service *ReplicationSpecService) ValidateAndGC(spec *metadata.ReplicationSpecification) {
+func (service *ReplicationSpecService) ValidateAndGC(specId string) {
+	spec, err := service.ReplicationSpec(specId)
+	if err != nil {
+		panic(fmt.Sprintf("Spec ID %v not found", specId))
+	}
+
 	needToRemove, detailErr := service.gcSourceBucket(spec)
 	if !needToRemove {
 		needToRemove, detailErr = service.gcTargetBucket(spec)
 	}
 
 	if detailErr != nil {
-		service.logger.Warnf("Error validating replication specification %v. error=%v\n", spec.Id, detailErr)
+		service.logger.Warnf("Error validating replication specification %v. error=%v\n", spec.Id(), detailErr)
 	}
 
 	if needToRemove {
-		service.logger.Errorf("Replication specification %v is no longer valid, garbage collect it. error=%v\n", spec.Id, detailErr)
-		_, err1 := service.DelReplicationSpecWithReason(spec.Id, detailErr.Error())
+		service.logger.Errorf("Replication specification %v is no longer valid, garbage collect it. error=%v\n", spec.Id(), detailErr)
+		_, err1 := service.DelReplicationSpecWithReason(spec.Id(), detailErr.Error())
 		if err1 != nil {
-			service.logger.Infof("Failed to garbage collect spec %v, err=%v\n", spec.Id, err1)
+			service.logger.Infof("Failed to garbage collect spec %v, err=%v\n", spec.Id(), err1)
 		}
 	}
 }

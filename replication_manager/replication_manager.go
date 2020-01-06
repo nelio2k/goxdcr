@@ -117,7 +117,8 @@ type replicationManager struct {
 
 	mem_stats_logger_finch chan bool
 
-	backfillMgr service_def.BackfillMgrIface
+	backfillMgr     service_def.BackfillMgrIface
+	backfillReplSvc service_def.BackfillReplSvc
 }
 
 //singleton
@@ -140,6 +141,7 @@ func StartReplicationManager(sourceKVHost string,
 	throughput_throttler_svc service_def.ThroughputThrottlerSvc,
 	utilitiesIn utilities.UtilsIface,
 	collectionsManifestSvc service_def.CollectionsManifestSvc,
+	backfillReplSvc service_def.BackfillReplSvc,
 	backfillMgr service_def.BackfillMgrIface) {
 
 	replication_mgr.once.Do(func() {
@@ -156,7 +158,7 @@ func StartReplicationManager(sourceKVHost string,
 		replication_mgr.init(repl_spec_svc, remote_cluster_svc, cluster_info_svc,
 			xdcr_topology_svc, replication_settings_svc, checkpoint_svc, capi_svc, audit_svc,
 			uilog_svc, global_setting_svc, bucket_settings_svc, internal_settings_svc,
-			throughput_throttler_svc, collectionsManifestSvc, backfillMgr)
+			throughput_throttler_svc, collectionsManifestSvc, backfillReplSvc, backfillMgr)
 
 		// start replication manager supervisor
 		// TODO should we make heart beat settings configurable?
@@ -356,12 +358,12 @@ func (rm *replicationManager) initReplications() {
 
 	if err == nil {
 		for _, spec := range specs {
-			if spec.Settings.Active {
-				logger_rm.Infof("Initializing active replication %v", spec.Id)
-				rm.pipelineMgr.UpdatePipeline(spec.Id, nil)
+			if spec.Settings().Active {
+				logger_rm.Infof("Initializing active replication %v", spec.Id())
+				rm.pipelineMgr.UpdatePipeline(spec.Id(), nil)
 			} else {
-				logger_rm.Infof("Initializing paused replication %v", spec.Id)
-				rm.pipelineMgr.InitiateRepStatus(spec.Id)
+				logger_rm.Infof("Initializing paused replication %v", spec.Id())
+				rm.pipelineMgr.InitiateRepStatus(spec.Id())
 			}
 		}
 	} else {
@@ -411,6 +413,7 @@ func (rm *replicationManager) init(
 	internal_settings_svc service_def.InternalSettingsSvc,
 	throughput_throttler_svc service_def.ThroughputThrottlerSvc,
 	collectionsManifestSvc service_def.CollectionsManifestSvc,
+	backfillReplSvc service_def.BackfillReplSvc,
 	backfillMgr service_def.BackfillMgrIface) {
 
 	rm.GenericSupervisor = *supervisor.NewGenericSupervisor(base.ReplicationManagerSupervisorId, log.DefaultLoggerContext, rm, nil, rm.utils)
@@ -428,13 +431,14 @@ func (rm *replicationManager) init(
 	rm.bucket_settings_svc = bucket_settings_svc
 	rm.internal_settings_svc = internal_settings_svc
 	rm.collectionsManifestSvc = collectionsManifestSvc
+	rm.backfillReplSvc = backfillReplSvc
 	rm.backfillMgr = backfillMgr
 
 	fac := factory.NewXDCRFactory(repl_spec_svc, remote_cluster_svc, cluster_info_svc, xdcr_topology_svc,
 		checkpoint_svc, capi_svc, uilog_svc, bucket_settings_svc, throughput_throttler_svc,
 		log.DefaultLoggerContext, log.DefaultLoggerContext, rm, rm.utils, collectionsManifestSvc, rm.backfillMgr)
 
-	pipelineMgr := pipeline_manager.NewPipelineManager(fac, repl_spec_svc, xdcr_topology_svc, remote_cluster_svc, cluster_info_svc, checkpoint_svc, uilog_svc, log.DefaultLoggerContext, rm.utils)
+	pipelineMgr := pipeline_manager.NewPipelineManager(fac, repl_spec_svc, xdcr_topology_svc, remote_cluster_svc, cluster_info_svc, checkpoint_svc, uilog_svc, log.DefaultLoggerContext, rm.utils, rm.backfillReplSvc)
 	rm.pipelineMgr = pipelineMgr
 	rm.backfillMgr.SetBackfillPipelineController(pipelineMgr)
 	err := rm.backfillMgr.Start()
@@ -505,14 +509,14 @@ func CreateReplication(justValidate bool, sourceBucket, targetCluster, targetBuc
 	}
 
 	if justValidate {
-		return spec.Id, nil, nil, warnings
+		return spec.Id(), nil, nil, warnings
 	}
 
 	go writeCreateReplicationEvent(spec, realUserId)
 
-	logger_rm.Infof("Replication specification %s is created\n", spec.Id)
+	logger_rm.Infof("Replication specification %s is created\n", spec.Id())
 
-	return spec.Id, nil, nil, warnings
+	return spec.Id(), nil, nil, warnings
 }
 
 //DeleteReplication stops the running replication of given replicationId and
@@ -608,12 +612,12 @@ func UpdateReplicationSettings(topic string, settings metadata.ReplicationSettin
 	}
 
 	// Save some old values that we may need
-	filterExpression := replSpec.Settings.Values[metadata.FilterExpressionKey].(string)
-	oldCompressionType := replSpec.Settings.Values[metadata.CompressionTypeKey].(int)
-	filterVersion := replSpec.Settings.Values[metadata.FilterVersionKey].(base.FilterVersionType)
+	filterExpression := replSpec.Settings().Values[metadata.FilterExpressionKey].(string)
+	oldCompressionType := replSpec.Settings().Values[metadata.CompressionTypeKey].(int)
+	filterVersion := replSpec.Settings().Values[metadata.FilterVersionKey].(base.FilterVersionType)
 
 	// update replication spec with input settings
-	changedSettingsMap, errorMap := replSpec.Settings.UpdateSettingsFromMap(settings)
+	changedSettingsMap, errorMap := replSpec.Settings().UpdateSettingsFromMap(settings)
 
 	// Only Re-evaluate Compression pre-requisites if it is turned on and actually switched algorithms to catch any cluster-wide compression changes
 	compressionType, CompressionOk := changedSettingsMap[metadata.CompressionTypeKey]
@@ -639,7 +643,7 @@ func UpdateReplicationSettings(topic string, settings metadata.ReplicationSettin
 	if !filterSettingsChanged(changedSettingsMap, filterExpression) && len(filterExpression) > 0 && filterVersion < base.FilterVersionAdvanced {
 		settings[metadata.FilterVersionKey] = base.FilterVersionAdvanced
 
-		_, errorMap = replSpec.Settings.UpdateSettingsFromMap(settings)
+		_, errorMap = replSpec.Settings().UpdateSettingsFromMap(settings)
 		if len(errorMap) != 0 {
 			return errorMap, fmt.Errorf("Internal XDCR Error related to internal filter management: %v", errorMap)
 		}
@@ -744,7 +748,7 @@ func (rm *replicationManager) createAndPersistReplicationSpec(justValidate bool,
 	if len(errorMap) != 0 {
 		return nil, errorMap, nil, nil
 	}
-	spec.Settings = replSettings
+	spec.Settings_ = replSettings
 
 	if justValidate {
 		return spec, nil, nil, warnings
@@ -753,10 +757,10 @@ func (rm *replicationManager) createAndPersistReplicationSpec(justValidate bool,
 	//persist it
 	err = replication_mgr.repl_spec_svc.AddReplicationSpec(spec, base.FlattenStringArray(warnings))
 	if err == nil {
-		logger_rm.Infof("Success adding replication specification %s\n", spec.Id)
+		logger_rm.Infof("Success adding replication specification %s\n", spec.Id())
 		return spec, nil, nil, warnings
 	} else {
-		logger_rm.Errorf("Error adding replication specification %s. err=%v\n", spec.Id, err)
+		logger_rm.Errorf("Error adding replication specification %s. err=%v\n", spec.Id(), err)
 		return nil, nil, err, nil
 	}
 }
@@ -1040,7 +1044,7 @@ func writeCreateReplicationEvent(spec *metadata.ReplicationSpecification, realUs
 	if err == nil {
 		createReplicationEvent := &service_def.CreateReplicationEvent{
 			GenericReplicationEvent: *genericReplicationEvent,
-			FilterExpression:        spec.Settings.FilterExpression}
+			FilterExpression:        spec.Settings().FilterExpression}
 
 		err = AuditService().Write(service_def.CreateReplicationEventId, createReplicationEvent)
 	}
@@ -1089,12 +1093,12 @@ func constructGenericReplicationFields(realUserId *service_def.RealUserId) (*ser
 }
 
 func constructReplicationSpecificFieldsFromSpec(spec *metadata.ReplicationSpecification) (*service_def.ReplicationSpecificFields, error) {
-	remoteClusterName := RemoteClusterService().GetRemoteClusterNameFromClusterUuid(spec.TargetClusterUUID)
+	remoteClusterName := RemoteClusterService().GetRemoteClusterNameFromClusterUuid(spec.TargetClusterUUID())
 
 	return &service_def.ReplicationSpecificFields{
-		SourceBucketName:  spec.SourceBucketName,
+		SourceBucketName:  spec.SourceBucketName(),
 		RemoteClusterName: remoteClusterName,
-		TargetBucketName:  spec.TargetBucketName}, nil
+		TargetBucketName:  spec.TargetBucketName()}, nil
 }
 
 func constructGenericReplicationEvent(spec *metadata.ReplicationSpecification, realUserId *service_def.RealUserId) (*service_def.GenericReplicationEvent, error) {

@@ -603,7 +603,7 @@ func (rm *ResourceManager) collectReplStats(specs map[string]*metadata.Replicati
 	for _, spec := range specs {
 		replStats, err := rm.getStatsFromReplication(spec)
 		if err != nil {
-			rm.logger.Warnf("Could not retrieve runtime stats for %v. err=%v\n", spec.Id, err)
+			rm.logger.Warnf("Could not retrieve runtime stats for %v. err=%v\n", spec.Id(), err)
 		} else {
 			specReplStatsMap[spec] = replStats
 		}
@@ -620,14 +620,14 @@ func (rm *ResourceManager) computeState(specReplStatsMap map[*metadata.Replicati
 	state.idleCpu = rm.getIdleCpu()
 
 	for spec, replStats := range specReplStatsMap {
-		isReplHighPriority := rm.IsReplHighPriority(spec.Id, spec.Settings.GetPriority())
+		isReplHighPriority := rm.IsReplHighPriority(spec.Id(), spec.Settings().GetPriority())
 		if isReplHighPriority {
 			state.highPriorityReplExist = true
 		} else {
 			state.lowPriorityReplExist = true
 		}
 
-		state.replStatsMap[spec.Id] = replStats
+		state.replStatsMap[spec.Id()] = replStats
 
 		if replStats.changesLeft <= int64(base.ChangesLeftThresholdForOngoingReplication) {
 			rm.setReplOngoing(spec)
@@ -639,7 +639,7 @@ func (rm *ResourceManager) computeState(specReplStatsMap map[*metadata.Replicati
 		var ok bool
 
 		if previousState != nil {
-			previousReplStats, ok = previousState.replStatsMap[spec.Id]
+			previousReplStats, ok = previousState.replStatsMap[spec.Id()]
 			if ok {
 				statsChanged = (replStats.timestamp != previousReplStats.timestamp)
 			}
@@ -671,7 +671,7 @@ func (rm *ResourceManager) computeState(specReplStatsMap map[*metadata.Replicati
 
 			// for high priority replications, compute throughputNeededByHighRepl
 			// This is the throughput desired to clear the changesLeft in whatever time specified
-			throughputNeededByHighRepl := replStats.changesLeft * 1000 / int64(spec.Settings.GetDesiredLatencyMs())
+			throughputNeededByHighRepl := replStats.changesLeft * 1000 / int64(spec.Settings().GetDesiredLatencyMs())
 			state.throughputNeededByHighRepl += throughputNeededByHighRepl
 
 			// If we cannot clear the changesLeft within specified time, this is considered backlog
@@ -927,7 +927,7 @@ func (rm *ResourceManager) setDcpPriorities(specs map[string]*metadata.Replicati
 			rm.logger.Warnf("Skipping setting dcp priority for %v because of error retrieving replication spec", replId)
 			continue
 		}
-		if rm.isReplHighPriority(spec.Id, spec.Settings.GetPriority(), false /*lock*/) {
+		if rm.isReplHighPriority(spec.Id(), spec.Settings().GetPriority(), false /*lock*/) {
 			targetPriority = mcc.PriorityHigh
 		} else {
 			targetPriority = mcc.PriorityLow
@@ -990,26 +990,26 @@ func (rm *ResourceManager) isReplOngoing(replId string, lock bool) bool {
 }
 
 func (rm *ResourceManager) setReplOngoing(spec *metadata.ReplicationSpecification) error {
-	if rm.isReplOngoing(spec.Id, true) {
+	if rm.isReplOngoing(spec.Id(), true) {
 		// replication is already ongoing. no op
 		return nil
 	}
 
-	if spec.Settings.GetPriority() == base.PriorityTypeMedium {
+	if spec.Settings().GetPriority() == base.PriorityTypeMedium {
 		// change "isHighReplication" flag on Medium replication
 		settings := make(map[string]interface{})
 		settings[parts.IsHighReplicationKey] = true
 
-		err := rm.applySettingsToPipeline(spec.Id, settings)
+		err := rm.applySettingsToPipeline(spec.Id(), settings)
 		if err != nil {
 			// do not add repl to ongoingReplMap
 			// we will get another chance to repeat this op in the next interval
-			rm.logger.Warnf("Skipping changing needToThrottle setting for %v due to err=%v.", spec.Id, err)
+			rm.logger.Warnf("Skipping changing needToThrottle setting for %v due to err=%v.", spec.Id(), err)
 			return err
 		}
 	}
 
-	rm.addReplToOngoingReplMap(spec.Id)
+	rm.addReplToOngoingReplMap(spec.Id())
 	return nil
 }
 
@@ -1049,14 +1049,14 @@ func (rm *ResourceManager) setDcpPriority(replId string, priority mcc.PriorityTy
 }
 
 func (rm *ResourceManager) getStatsFromReplication(spec *metadata.ReplicationSpecification) (*ReplStats, error) {
-	rs, err := rm.pipelineMgr.ReplicationStatus(spec.Id)
+	rs, err := rm.pipelineMgr.ReplicationStatus(spec.Id())
 	if err != nil {
 		return nil, err
 	}
 	statsMap := rs.GetOverviewStats()
 	if statsMap == nil {
 		// this is possible when replication is starting up
-		return nil, fmt.Errorf("Cannot find overview stats for %v", spec.Id)
+		return nil, fmt.Errorf("Cannot find overview stats for %v", spec.Id())
 	}
 
 	changesLeft, err := base.ParseStats(statsMap, base.ChangesLeftStats)

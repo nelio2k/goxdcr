@@ -365,7 +365,7 @@ func (pipelineSupervisor *PipelineSupervisor) checkPipelineHealth() error {
 // compose user agent string for HELO command
 func (pipelineSupervisor *PipelineSupervisor) composeUserAgent() {
 	spec := pipelineSupervisor.pipeline.Specification()
-	pipelineSupervisor.user_agent = base.ComposeUserAgentWithBucketNames("Goxdcr PipelineSupervisor", spec.SourceBucketName, spec.TargetBucketName)
+	pipelineSupervisor.user_agent = base.ComposeUserAgentWithBucketNames("Goxdcr PipelineSupervisor", spec.SourceBucketName(), spec.TargetBucketName())
 }
 
 func (pipelineSupervisor *PipelineSupervisor) getDcpStats() (map[string]map[string]string, error) {
@@ -375,7 +375,7 @@ func (pipelineSupervisor *PipelineSupervisor) getDcpStats() (map[string]map[stri
 
 	dcp_stats := make(map[string]map[string]string)
 
-	bucketName := pipelineSupervisor.pipeline.Specification().SourceBucketName
+	bucketName := pipelineSupervisor.pipeline.Specification().SourceBucketName()
 	nodes, err := pipelineSupervisor.xdcr_topology_svc.MyKVNodes()
 	if err != nil {
 		pipelineSupervisor.Logger().Errorf("Error retrieving kv nodes for pipeline %v. Skipping dcp stats check. err=%v", pipelineSupervisor.pipeline.Topic(), err)

@@ -21,6 +21,7 @@ import (
 	"github.com/couchbase/goxdcr/service_def"
 	utilities "github.com/couchbase/goxdcr/utils"
 	"reflect"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -49,6 +50,7 @@ type PipelineManager struct {
 	logger             *log.CommonLogger
 	serializer         *PipelineOpSerializer
 	utils              utilities.UtilsIface
+	backfillReplSvc    service_def.BackfillReplSvc
 }
 
 type Pipeline_mgr_iface interface {
@@ -73,7 +75,7 @@ type Pipeline_mgr_iface interface {
 	CleanupPipeline(topic string) error
 	RemoveReplicationStatus(topic string) error
 	RemoveReplicationCheckpoints(topic string) error
-	AllReplicationSpecsForTargetCluster(targetClusterUuid string) map[string]*metadata.ReplicationSpecification
+	AllReplicationSpecsForTargetCluster(targetClusterUuid string) map[string]metadata.ReplicationSpecApi
 	GetOrCreateReplicationStatus(topic string, cur_err error) (*pipeline.ReplicationStatus, error)
 	GetLastUpdateResult(topic string) bool // whether or not the last update was successful
 	GetRemoteClusterSvc() service_def.RemoteClusterSvc
@@ -89,7 +91,7 @@ var pipeline_mgr *PipelineManager
 
 func NewPipelineManager(factory common.PipelineFactory, repl_spec_svc service_def.ReplicationSpecSvc, xdcr_topology_svc service_def.XDCRCompTopologySvc,
 	remote_cluster_svc service_def.RemoteClusterSvc, cluster_info_svc service_def.ClusterInfoSvc, checkpoint_svc service_def.CheckpointsService,
-	uilog_svc service_def.UILogSvc, logger_context *log.LoggerContext, utilsIn utilities.UtilsIface) *PipelineManager {
+	uilog_svc service_def.UILogSvc, logger_context *log.LoggerContext, utilsIn utilities.UtilsIface, backfillReplSvc service_def.BackfillReplSvc) *PipelineManager {
 
 	pipelineMgrRetVar := &PipelineManager{
 		pipeline_factory:   factory,
@@ -242,11 +244,11 @@ func (pipelineMgr *PipelineManager) AllReplicationsForBucket(bucket string) []st
 	return repIds
 }
 
-func (pipelineMgr *PipelineManager) AllReplicationSpecsForTargetCluster(targetClusterUuid string) map[string]*metadata.ReplicationSpecification {
-	ret := make(map[string]*metadata.ReplicationSpecification)
+func (pipelineMgr *PipelineManager) AllReplicationSpecsForTargetCluster(targetClusterUuid string) map[string]metadata.ReplicationSpecApi {
+	ret := make(map[string]metadata.ReplicationSpecApi)
 	for topic, rep_status := range pipelineMgr.ReplicationStatusMap() {
 		spec := rep_status.Spec()
-		if spec.TargetClusterUUID == targetClusterUuid {
+		if spec.TargetClusterUUID() == targetClusterUuid {
 			ret[topic] = spec
 		}
 	}
@@ -257,7 +259,7 @@ func (pipelineMgr *PipelineManager) AllReplicationSpecsForTargetCluster(targetCl
 func (pipelineMgr *PipelineManager) AllReplicationsForTargetCluster(targetClusterUuid string) []string {
 	ret := make([]string, 0)
 	for topic, rep_status := range pipelineMgr.ReplicationStatusMap() {
-		if rep_status.Spec().TargetClusterUUID == targetClusterUuid {
+		if rep_status.Spec().TargetClusterUUID() == targetClusterUuid {
 			ret = append(ret, topic)
 		}
 	}
@@ -284,8 +286,8 @@ func (pipelineMgr *PipelineManager) CheckPipelines() {
 		//validate replication spec
 		spec := rep_status.Spec()
 		if spec != nil {
-			pipelineMgr.logger.Infof("checking pipeline spec=%v, source bucket uuid=%v", spec, spec.SourceBucketUUID)
-			pipelineMgr.repl_spec_svc.ValidateAndGC(spec)
+			pipelineMgr.logger.Infof("checking pipeline spec=%v, source bucket uuid=%v", spec, spec.SourceBucketUUID())
+			pipelineMgr.repl_spec_svc.ValidateAndGC(spec.Id())
 		}
 	}
 	LogStatusSummary()
@@ -379,15 +381,15 @@ func (pipelineMgr *PipelineManager) validatePipeline(topic string) error {
 
 	// refresh remote cluster reference when retrieving it, hence making sure that all fields,
 	// especially the security settings like sanInCertificate, are up to date
-	targetClusterRef, err := pipelineMgr.remote_cluster_svc.RemoteClusterByUuid(spec.TargetClusterUUID, true)
+	targetClusterRef, err := pipelineMgr.remote_cluster_svc.RemoteClusterByUuid(spec.TargetClusterUUID(), true)
 	if err != nil {
-		pipelineMgr.logger.Errorf("Error getting remote cluster with uuid=%v for pipeline %v, err=%v\n", spec.TargetClusterUUID, topic, err)
+		pipelineMgr.logger.Errorf("Error getting remote cluster with uuid=%v for pipeline %v, err=%v\n", spec.TargetClusterUUID(), topic, err)
 		return err
 	}
 
 	err = pipelineMgr.remote_cluster_svc.ValidateRemoteCluster(targetClusterRef)
 	if err != nil {
-		pipelineMgr.logger.Errorf("Error validating remote cluster with uuid %v for pipeline %v. err=%v\n", spec.TargetClusterUUID, topic, err)
+		pipelineMgr.logger.Errorf("Error validating remote cluster with uuid %v for pipeline %v. err=%v\n", spec.TargetClusterUUID(), topic, err)
 		return err
 	}
 
@@ -457,11 +459,11 @@ func (pipelineMgr *PipelineManager) StopPipeline(rep_status pipeline.Replication
 	// or deleted and recreated, which is signaled by change in spec internal id
 	// perform clean up
 	spec, _ := pipelineMgr.repl_spec_svc.ReplicationSpec(replId)
-	if spec == nil || (rep_status.GetSpecInternalId() != "" && rep_status.GetSpecInternalId() != spec.InternalId) {
+	if spec == nil || (rep_status.GetSpecInternalId() != "" && rep_status.GetSpecInternalId() != spec.InternalId()) {
 		if spec == nil {
 			pipelineMgr.logger.Infof("%v Cleaning up replication status since repl spec has been deleted.\n", replId)
 		} else {
-			pipelineMgr.logger.Infof("%v Cleaning up replication status since repl spec has been deleted and recreated. oldSpecInternalId=%v, newSpecInternalId=%v\n", replId, rep_status.GetSpecInternalId(), spec.InternalId)
+			pipelineMgr.logger.Infof("%v Cleaning up replication status since repl spec has been deleted and recreated. oldSpecInternalId=%v, newSpecInternalId=%v\n", replId, rep_status.GetSpecInternalId(), spec.InternalId())
 		}
 
 		pipelineMgr.checkpoint_svc.DelCheckpointsDocs(replId)
@@ -587,7 +589,13 @@ func (pipelineMgr *PipelineManager) GetOrCreateReplicationStatus(topic string, c
 		return repStatus, nil
 	} else {
 		var retErr error
+		//		if !IsBackfillTopic(topic) {
 		repStatus = pipeline.NewReplicationStatus(topic, pipelineMgr.repl_spec_svc.ReplicationSpec, pipelineMgr.logger)
+		//		} else {
+		//			repStatus = pipeline.NewReplicationStatus(topic, pipelineMgr.repl_spec_svc.ReplicationSpec, pipelineMgr.logger)
+		// TODO - fix the replicationSpec interface
+		//			repStatus = pipeline.NewReplicationStatus(topic, pipelineMgr.backfillReplSvc.ReplicationSpec, pipelineMgr.logger)
+		//		}
 		pipelineMgr.repl_spec_svc.SetDerivedObj(topic, repStatus)
 		pipelineMgr.logger.Infof("ReplicationStatus is created and set with %v\n", topic)
 		if repStatus.Updater() != nil {
@@ -631,6 +639,16 @@ func (pipelineMgr *PipelineManager) Update(topic string, cur_err error) error {
 		}
 	}
 	return nil
+}
+
+const BackfillSuffix = "_backfill"
+
+func GetBackfillTopic(topic string) string {
+	return fmt.Sprintf("%v%v", topic, BackfillSuffix)
+}
+
+func IsBackfillTopic(topic string) bool {
+	return strings.HasSuffix(topic, BackfillSuffix)
 }
 
 /* Implements BackfillPipelineMgr */
@@ -705,7 +723,7 @@ func (h *replSettingsRevContext) GetCurrentSettingsRevision() interface{} {
 	if h.rep_status != nil {
 		spec := h.rep_status.Spec()
 		if spec != nil {
-			return spec.Settings.Revision
+			return spec.Settings().Revision
 		}
 	}
 	return nil
@@ -1118,21 +1136,21 @@ func (r *PipelineUpdater) raiseXattrWarningIfNeeded(p common.Pipeline) {
 		r.logger.Warnf("Skipping xattr warning check since cannot find replication spec for pipeline %v\n", r.pipeline_name)
 		return
 	}
-	if spec.Settings.IsCapi() {
+	if spec.Settings().IsCapi() {
 		return
 	}
-	targetClusterRef, err := r.pipelineMgr.GetRemoteClusterSvc().RemoteClusterByUuid(spec.TargetClusterUUID, false)
+	targetClusterRef, err := r.pipelineMgr.GetRemoteClusterSvc().RemoteClusterByUuid(spec.TargetClusterUUID(), false)
 	if err != nil {
-		r.logger.Warnf("Skipping xattr warning check since received error getting remote cluster with uuid=%v for pipeline %v, err=%v\n", spec.TargetClusterUUID, spec.Id, err)
+		r.logger.Warnf("Skipping xattr warning check since received error getting remote cluster with uuid=%v for pipeline %v, err=%v\n", spec.TargetClusterUUID(), spec.Id(), err)
 		return
 	}
 	hasXattrSupport, err := r.pipelineMgr.GetClusterInfoSvc().IsClusterCompatible(targetClusterRef, base.VersionForRBACAndXattrSupport)
 	if err != nil {
-		r.logger.Warnf("Skipping xattr warning check since received error checking target cluster version. target cluster=%v, pipeline=%v, err=%v\n", spec.TargetClusterUUID, spec.Id, err)
+		r.logger.Warnf("Skipping xattr warning check since received error checking target cluster version. target cluster=%v, pipeline=%v, err=%v\n", spec.TargetClusterUUID(), spec.Id(), err)
 		return
 	}
 	if !hasXattrSupport {
-		errMsg := fmt.Sprintf("Replication from source bucket '%v' to target bucket '%v' on cluster '%v' has been started. Note - Target cluster is older than 5.0.0, hence some of the new feature enhancements such as \"Extended Attributes (XATTR)\" are not supported, which might result in loss of XATTR data. If this is not acceptable, please pause the replication, upgrade cluster '%v' to 5.0.0, and restart replication.", spec.SourceBucketName, spec.TargetBucketName, targetClusterRef.Name(), targetClusterRef.Name())
+		errMsg := fmt.Sprintf("Replication from source bucket '%v' to target bucket '%v' on cluster '%v' has been started. Note - Target cluster is older than 5.0.0, hence some of the new feature enhancements such as \"Extended Attributes (XATTR)\" are not supported, which might result in loss of XATTR data. If this is not acceptable, please pause the replication, upgrade cluster '%v' to 5.0.0, and restart replication.", spec.SourceBucketName(), spec.TargetBucketName(), targetClusterRef.Name(), targetClusterRef.Name())
 		r.logger.Warn(errMsg)
 
 		sourceVbList := pipeline_utils.GetSourceVBListPerPipeline(p)
@@ -1158,13 +1176,13 @@ func (r *PipelineUpdater) raiseCompressionWarningIfNeeded() {
 		switch r.disabledCompressionReason {
 		case DCIncompatible:
 			errMsg = fmt.Sprintf("Replication from source bucket '%v' to target bucket '%v' has been started without compression enabled due to errors that occurred during clusters handshaking. This may result in more data bandwidth usage. Please ensure that both the source and target clusters are at or above version %v.%v, and restart the replication.",
-				spec.SourceBucketName, spec.TargetBucketName, base.VersionForCompressionSupport[0], base.VersionForCompressionSupport[1])
+				spec.SourceBucketName(), spec.TargetBucketName(), base.VersionForCompressionSupport[0], base.VersionForCompressionSupport[1])
 		case DCDecompress:
 			errMsg = fmt.Sprintf("Replication from source bucket '%v' to target bucket '%v' has been started without compression enabled due to errors that occurred while attempting to decompress data for filtering. This may result in more data bandwidth usage. Please check the XDCR error logs for more information.",
-				spec.SourceBucketName, spec.TargetBucketName)
+				spec.SourceBucketName(), spec.TargetBucketName())
 		default:
 			errMsg = fmt.Sprintf("Replication from source bucket '%v' to target bucket '%v' has been started without compression enabled due to unknown errors. This may result in more data bandwidth usage.",
-				spec.SourceBucketName, spec.TargetBucketName)
+				spec.SourceBucketName(), spec.TargetBucketName())
 		}
 		r.logger.Warn(errMsg)
 		r.pipelineMgr.GetLogSvc().Write(errMsg)
@@ -1173,7 +1191,7 @@ func (r *PipelineUpdater) raiseCompressionWarningIfNeeded() {
 
 func (r *PipelineUpdater) checkReplicationActiveness() (err error) {
 	spec, err := r.pipelineMgr.GetReplSpecSvc().ReplicationSpec(r.pipeline_name)
-	if err != nil || spec == nil || !spec.Settings.Active {
+	if err != nil || spec == nil || !spec.Settings().Active {
 		err = ReplicationSpecNotActive
 	}
 	return
@@ -1300,5 +1318,5 @@ func (r *PipelineUpdater) clearErrors() {
 }
 
 func getRequestPoolSize(rep_status *pipeline.ReplicationStatus, numOfTargetNozzles int) int {
-	return rep_status.Spec().Settings.BatchCount * 52 * numOfTargetNozzles
+	return rep_status.Spec().Settings().BatchCount * 52 * numOfTargetNozzles
 }

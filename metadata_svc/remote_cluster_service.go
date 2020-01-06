@@ -1781,10 +1781,10 @@ func (service *RemoteClusterService) updateMetaSvc(metaSvc service_def.MetadataS
 
 func (service *RemoteClusterService) getAgentByReplSpec(spec *metadata.ReplicationSpecification) (*RemoteClusterAgent, error) {
 	service.agentMutex.RLock()
-	agent := service.agentCacheUuidMap[spec.TargetClusterUUID]
+	agent := service.agentCacheUuidMap[spec.TargetClusterUUID()]
 	defer service.agentMutex.RUnlock()
 	if agent == nil {
-		return nil, getUnknownCluster("uuid", spec.TargetClusterUUID)
+		return nil, getUnknownCluster("uuid", spec.TargetClusterUUID())
 	}
 	return agent, nil
 }
@@ -1798,7 +1798,7 @@ func (service *RemoteClusterService) RequestRemoteMonitoring(spec *metadata.Repl
 	if err != nil {
 		return err
 	}
-	return agent.RegisterBucketRequest(spec.TargetBucketName)
+	return agent.RegisterBucketRequest(spec.TargetBucketName())
 }
 
 func (service *RemoteClusterService) UnRequestRemoteMonitoring(spec *metadata.ReplicationSpecification) error {
@@ -1810,7 +1810,7 @@ func (service *RemoteClusterService) UnRequestRemoteMonitoring(spec *metadata.Re
 	if err != nil {
 		return err
 	}
-	return agent.UnRegisterBucketRefresh(spec.TargetBucketName)
+	return agent.UnRegisterBucketRefresh(spec.TargetBucketName())
 }
 
 func (service *RemoteClusterService) GetManifestByUuid(uuid, bucketName string, forceRefresh bool) (*metadata.CollectionsManifest, error) {

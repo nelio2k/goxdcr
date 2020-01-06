@@ -71,7 +71,7 @@ func (errArray PipelineErrorArray) String() string {
 
 type ReplicationStatusIface interface {
 	SetPipeline(pipeline common.Pipeline)
-	Spec() *metadata.ReplicationSpecification
+	Spec() metadata.ReplicationSpecApi
 	RepId() string
 	AddError(err error)
 	AddErrorsFromMap(errMap base.ErrorMap)
@@ -151,7 +151,7 @@ func (rs *ReplicationStatus) SetPipeline(pipeline common.Pipeline) {
 	if pipeline != nil {
 		rs.vb_list = pipeline_utils.GetSourceVBListPerPipeline(pipeline)
 		base.SortUint16List(rs.vb_list)
-		rs.specInternalId = pipeline.Specification().InternalId
+		rs.specInternalId = pipeline.Specification().InternalId()
 	}
 
 	rs.Publish(false)
@@ -181,7 +181,7 @@ func (rs *ReplicationStatus) ClearTemporaryCustomSettings() {
 	}
 }
 
-func (rs *ReplicationStatus) Spec() *metadata.ReplicationSpecification {
+func (rs *ReplicationStatus) Spec() metadata.ReplicationSpecApi {
 	spec, err := rs.spec_getter(rs.specId)
 	if err != nil {
 		rs.logger.Errorf("Invalid replication status %v, failed to retrieve spec. err=%v", rs.specId, err)
@@ -273,7 +273,7 @@ func (rs *ReplicationStatus) RuntimeStatus(lock bool) ReplicationState {
 	spec := rs.Spec()
 	if rs.pipeline_ != nil && rs.pipeline_.State() == common.Pipeline_Running {
 		return Replicating
-	} else if spec != nil && !spec.Settings.Active {
+	} else if spec != nil && !spec.Settings().Active {
 		return Paused
 	} else {
 		return Pending
@@ -431,7 +431,7 @@ func (rs *ReplicationStatus) SettingsMap() map[string]interface{} {
 func (rs *ReplicationStatus) getSpecSettingsMap() map[string]interface{} {
 	spec := rs.Spec()
 	if spec != nil {
-		return spec.Settings.ToMap(false /*isDefaultSettings*/)
+		return spec.Settings().ToMap(false /*isDefaultSettings*/)
 	} else {
 		return make(map[string]interface{})
 	}

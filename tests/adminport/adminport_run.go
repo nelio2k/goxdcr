@@ -411,7 +411,7 @@ func testGetAllReplicationInfos(replicationId string) error {
 func testPauseReplication(replicationId, escapedReplId string) error {
 	fmt.Println("Start testPauseReplication")
 
-	url := common.GetAdminportUrlPrefix(options.sourceKVHost, options.sourceKVAdminPort) + rm.SettingsReplicationsPath
+	url := common.GetAdminportUrlPrefix(options.sourceKVHost, options.sourceKVAdminPort) + rm.Settings()ReplicationsPath
 
 	settings := make(map[string]interface{})
 	settings[rm.PauseRequested] = true
@@ -432,7 +432,7 @@ func testPauseReplication(replicationId, escapedReplId string) error {
 func testResumeReplication(replicationId, escapedReplId string) error {
 	fmt.Println("Start testResumeReplication")
 
-	url := common.GetAdminportUrlPrefix(options.sourceKVHost, options.sourceKVAdminPort) + rm.SettingsReplicationsPath
+	url := common.GetAdminportUrlPrefix(options.sourceKVHost, options.sourceKVAdminPort) + rm.Settings()ReplicationsPath
 
 	settings := make(map[string]interface{})
 	settings[rm.PauseRequested] = false
@@ -484,7 +484,7 @@ func testReplicationSettingsWithJustValidate(escapedReplId string) error {
 	testName := "testReplicationSettingsWithJustValidate"
 
 	// change replication settings
-	url := common.GetAdminportUrlPrefix(options.sourceKVHost, options.sourceKVAdminPort) + rm.SettingsReplicationsPath
+	url := common.GetAdminportUrlPrefix(options.sourceKVHost, options.sourceKVAdminPort) + rm.Settings()ReplicationsPath
 
 	params := make(map[string]interface{})
 	params[rm.BatchSize] = BatchSizePerRepl
@@ -518,7 +518,7 @@ func testReplicationSettings(escapedReplId string) error {
 	testName := "testReplicationSettings"
 
 	// change replication settings
-	url := common.GetAdminportUrlPrefix(options.sourceKVHost, options.sourceKVAdminPort) + rm.SettingsReplicationsPath
+	url := common.GetAdminportUrlPrefix(options.sourceKVHost, options.sourceKVAdminPort) + rm.Settings()ReplicationsPath
 
 	params := make(map[string]interface{})
 	params[rm.BatchSize] = BatchSizePerRepl
@@ -608,7 +608,7 @@ func decodeSettingsMapFromResponse(response *http.Response) (map[string]interfac
 }
 
 func getDefaultSettings(testName string) (map[string]interface{}, error) {
-	url := common.GetAdminportUrlPrefix(options.sourceKVHost, options.sourceKVAdminPort) + rm.SettingsReplicationsPath
+	url := common.GetAdminportUrlPrefix(options.sourceKVHost, options.sourceKVAdminPort) + rm.Settings()ReplicationsPath
 	response, err := common.SendRequestAndValidateResponse(testName, base.MethodGet, url, nil, options.username, options.password)
 	if err != nil {
 		return nil, err
@@ -618,7 +618,7 @@ func getDefaultSettings(testName string) (map[string]interface{}, error) {
 }
 
 func getReplicationSettings(testName, escapedReplId string) (map[string]interface{}, error) {
-	url := common.GetAdminportUrlPrefix(options.sourceKVHost, options.sourceKVAdminPort) + rm.SettingsReplicationsPath
+	url := common.GetAdminportUrlPrefix(options.sourceKVHost, options.sourceKVAdminPort) + rm.Settings()ReplicationsPath
 	response, err := common.SendRequestWithEscapedIdAndValidateResponse(testName, base.MethodGet, url, escapedReplId, nil, options.username, options.password)
 	fmt.Printf("url=%v, res=%v, err=%v\n", url, response, err)
 

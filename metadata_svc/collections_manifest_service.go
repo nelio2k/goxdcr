@@ -113,24 +113,24 @@ func (c *CollectionsManifestService) handleNewReplSpec(spec *metadata.Replicatio
 		c.logger.Infof("Handling existing spec: %v\n", spec)
 	}
 	c.srcBucketGetterMtx.Lock()
-	getter, ok := c.srcBucketGetters[spec.SourceBucketName]
+	getter, ok := c.srcBucketGetters[spec.SourceBucketName()]
 	if !ok {
 		// NOTE - if the source bucket is deleted and recreated, the manifest UID will go backwards
 		// i.e. a brand new source bucket will have a manifest UID of 0 with default scope and collection
 		// whereas previous instance of the source bucket has uid of > 0
 		// Replication spec service should gc the spec if this is the case, but there is a window
 		// when the manifest service may pull a manifest from a reincarnated bucket
-		getter = NewBucketManifestGetter(spec.SourceBucketName, c, 1*time.Second)
-		c.srcBucketGetters[spec.SourceBucketName] = getter
+		getter = NewBucketManifestGetter(spec.SourceBucketName(), c, 1*time.Second)
+		c.srcBucketGetters[spec.SourceBucketName()] = getter
 	}
-	c.srcBucketGettersRefCnt[spec.SourceBucketName]++
+	c.srcBucketGettersRefCnt[spec.SourceBucketName()]++
 	c.srcBucketGetterMtx.Unlock()
 
 	c.agentsMtx.Lock()
-	agent := NewCollectionsManifestAgent(spec.Id,
+	agent := NewCollectionsManifestAgent(spec.Id(),
 		c.remoteClusterSvc, c.checkpointsSvc, c.logger, c.utilities, spec,
 		c, getter.GetManifest, c.metakvSvc, c.metadataChangeCb)
-	c.agentsMap[spec.Id] = agent
+	c.agentsMap[spec.Id()] = agent
 	c.agentsMtx.Unlock()
 	return agent.Start()
 }
@@ -138,8 +138,8 @@ func (c *CollectionsManifestService) handleNewReplSpec(spec *metadata.Replicatio
 func (c *CollectionsManifestService) handleDelReplSpec(oldSpec *metadata.ReplicationSpecification) {
 	c.logger.Infof("Handling deleted spec: %v\n", oldSpec)
 	c.agentsMtx.Lock()
-	agent, ok := c.agentsMap[oldSpec.Id]
-	delete(c.agentsMap, oldSpec.Id)
+	agent, ok := c.agentsMap[oldSpec.Id()]
+	delete(c.agentsMap, oldSpec.Id())
 	c.agentsMtx.Unlock()
 
 	if ok {
@@ -147,15 +147,15 @@ func (c *CollectionsManifestService) handleDelReplSpec(oldSpec *metadata.Replica
 	}
 
 	c.srcBucketGetterMtx.Lock()
-	cnt, ok := c.srcBucketGettersRefCnt[oldSpec.SourceBucketName]
+	cnt, ok := c.srcBucketGettersRefCnt[oldSpec.SourceBucketName()]
 	if ok {
 		if cnt > 0 {
-			c.srcBucketGettersRefCnt[oldSpec.SourceBucketName]--
-			cnt = c.srcBucketGettersRefCnt[oldSpec.SourceBucketName]
+			c.srcBucketGettersRefCnt[oldSpec.SourceBucketName()]--
+			cnt = c.srcBucketGettersRefCnt[oldSpec.SourceBucketName()]
 		}
 		if cnt == 0 {
-			delete(c.srcBucketGetters, oldSpec.SourceBucketName)
-			delete(c.srcBucketGettersRefCnt, oldSpec.SourceBucketName)
+			delete(c.srcBucketGetters, oldSpec.SourceBucketName())
+			delete(c.srcBucketGettersRefCnt, oldSpec.SourceBucketName())
 		}
 	}
 	c.srcBucketGetterMtx.Unlock()
@@ -198,7 +198,7 @@ func (c *CollectionsManifestService) getAgent(spec *metadata.ReplicationSpecific
 		return nil, base.ErrorInvalidInput
 	}
 	c.agentsMtx.RLock()
-	agent, ok := c.agentsMap[spec.Id]
+	agent, ok := c.agentsMap[spec.Id()]
 	c.agentsMtx.RUnlock()
 	if !ok {
 		return nil, base.ErrorInvalidInput
@@ -273,10 +273,10 @@ func (c *CollectionsManifestService) metadataChangeCb(specId string, oldManifest
 
 func (c *CollectionsManifestService) GetSourceManifestForNozzle(spec *metadata.ReplicationSpecification, vblist []uint16) *metadata.CollectionsManifest {
 	c.agentsMtx.RLock()
-	agent, ok := c.agentsMap[spec.Id]
+	agent, ok := c.agentsMap[spec.Id()]
 	c.agentsMtx.RUnlock()
 	if !ok {
-		c.logger.Warnf("Unable to get agent for spec %v\n", spec.Id)
+		c.logger.Warnf("Unable to get agent for spec %v\n", spec.Id())
 		return &defaultManifest
 	}
 	return agent.GetAndRecordSourceManifest(vblist)
@@ -284,31 +284,31 @@ func (c *CollectionsManifestService) GetSourceManifestForNozzle(spec *metadata.R
 
 func (c *CollectionsManifestService) GetSpecificSourceManifest(spec *metadata.ReplicationSpecification, manifestVersion uint64) (*metadata.CollectionsManifest, error) {
 	c.agentsMtx.RLock()
-	agent, ok := c.agentsMap[spec.Id]
+	agent, ok := c.agentsMap[spec.Id()]
 	c.agentsMtx.RUnlock()
 	if !ok {
-		return nil, fmt.Errorf("Unable to find agent for spec %v\n", spec.Id)
+		return nil, fmt.Errorf("Unable to find agent for spec %v\n", spec.Id())
 	}
 	return agent.GetSpecificSourceManifest(manifestVersion), nil
 }
 
 func (c *CollectionsManifestService) GetSpecificTargetManifest(spec *metadata.ReplicationSpecification, manifestVersion uint64) (*metadata.CollectionsManifest, error) {
 	c.agentsMtx.RLock()
-	agent, ok := c.agentsMap[spec.Id]
+	agent, ok := c.agentsMap[spec.Id()]
 	c.agentsMtx.RUnlock()
 	if !ok {
-		return nil, fmt.Errorf("Unable to find agent for spec %v\n", spec.Id)
+		return nil, fmt.Errorf("Unable to find agent for spec %v\n", spec.Id())
 	}
 	return agent.GetSpecificTargetManifest(manifestVersion), nil
 }
 
 func (c *CollectionsManifestService) GetTargetManifestForNozzle(spec *metadata.ReplicationSpecification, vblist []uint16) *metadata.CollectionsManifest {
 	c.agentsMtx.RLock()
-	agent, ok := c.agentsMap[spec.Id]
+	agent, ok := c.agentsMap[spec.Id()]
 	c.agentsMtx.RUnlock()
 	if !ok {
 		defaultManifest := metadata.NewDefaultCollectionsManifest()
-		c.logger.Warnf("Unable to get agent for spec %v\n", spec.Id)
+		c.logger.Warnf("Unable to get agent for spec %v\n", spec.Id())
 		return &defaultManifest
 	}
 	return agent.GetAndRecordTargetManifest(vblist)
@@ -424,7 +424,7 @@ func (a *CollectionsManifestAgent) runPeriodicRefresh() {
 			if newSrc != nil && newSrc.Uid() > 0 || newTgt != nil && newTgt.Uid() > 0 {
 				oldPair := metadata.NewCollectionsManifestPair(oldSrc, oldTgt)
 				newPair := metadata.NewCollectionsManifestPair(newSrc, newTgt)
-				err := a.metadataChangeCb(a.replicationSpec.Id, oldPair, newPair)
+				err := a.metadataChangeCb(a.replicationSpec.Id(), oldPair, newPair)
 				if err != nil {
 					a.logger.Errorf("Error with callback: %v\n", err.Error())
 				}
@@ -702,7 +702,7 @@ func (a *CollectionsManifestAgent) refreshSource() (oldManifest, newManifest *me
 		manifest = a.srcManifestGetter()
 		if manifest == nil {
 			// Give a empty manifest for good measure
-			return fmt.Errorf("Unable to retrieve manifest from source bucket %v\n", a.replicationSpec.SourceBucketName)
+			return fmt.Errorf("Unable to retrieve manifest from source bucket %v\n", a.replicationSpec.SourceBucketName())
 		} else {
 			return nil
 		}
@@ -764,8 +764,8 @@ func (a *CollectionsManifestAgent) refreshTarget(force bool) (oldManifest, newMa
 	var err error
 	var ok bool
 	getRetry := func() error {
-		clusterUuid := a.replicationSpec.TargetClusterUUID
-		bucketName := a.replicationSpec.TargetBucketName
+		clusterUuid := a.replicationSpec.TargetClusterUUID()
+		bucketName := a.replicationSpec.TargetBucketName()
 		manifest, err = a.remoteClusterSvc.GetManifestByUuid(clusterUuid, bucketName, force)
 		if err != nil {
 			a.logger.Errorf("RemoteClusterService GetManifest on %v for bucket %v returned %v\n", clusterUuid, bucketName, err)
@@ -801,10 +801,10 @@ func (a *CollectionsManifestAgent) refreshTarget(force bool) (oldManifest, newMa
 }
 
 func (a *CollectionsManifestAgent) getAllManifestsUids() (srcManifestUids, tgtManifestUids []uint64, err error) {
-	ckptDocs, err := a.checkpointsSvc.CheckpointsDocs(a.replicationSpec.Id)
+	ckptDocs, err := a.checkpointsSvc.CheckpointsDocs(a.replicationSpec.Id())
 	if err != nil {
 		a.logger.Warnf("Unable to retrieve checkpoint docs for %v, operating persistence using last cached manifest from %v",
-			a.replicationSpec.Id, a.ckptDocsCacheTime)
+			a.replicationSpec.Id(), a.ckptDocsCacheTime)
 	} else {
 		a.ckptDocsCacheTime = time.Now()
 		a.ckptDocsCache = ckptDocs
@@ -934,7 +934,7 @@ func (a *CollectionsManifestAgent) pruneManifests(srcList, tgtList []uint64) err
 
 	if len(srcErr) > 0 || len(tgtErr) > 0 {
 		err = fmt.Errorf("Pruning %v, unable to find srcMmanifests %v and targetManifests %v",
-			a.replicationSpec.Id, srcErr, tgtErr)
+			a.replicationSpec.Id(), srcErr, tgtErr)
 		a.logger.Warnf(err.Error())
 	}
 	return err

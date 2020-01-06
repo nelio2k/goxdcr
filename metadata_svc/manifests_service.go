@@ -70,7 +70,7 @@ func (m *ManifestsService) getInternal(key string) (*metadata.ManifestsDoc, erro
 }
 
 func (m *ManifestsService) UpsertSourceManifests(replSpec *metadata.ReplicationSpecification, src *metadata.ManifestsList) error {
-	key := getManifestDocKey(replSpec.Id, true /*source*/)
+	key := getManifestDocKey(replSpec.Id(), true /*source*/)
 
 	manifestsDoc := &metadata.ManifestsDoc{}
 	manifestsDoc.CollectionsManifests = *src
@@ -79,7 +79,7 @@ func (m *ManifestsService) UpsertSourceManifests(replSpec *metadata.ReplicationS
 }
 
 func (m *ManifestsService) GetSourceManifests(replSpec *metadata.ReplicationSpecification) (*metadata.ManifestsList, error) {
-	key := getManifestDocKey(replSpec.Id, true /*source*/)
+	key := getManifestDocKey(replSpec.Id(), true /*source*/)
 	manifestsDoc, err := m.getInternal(key)
 	if err == service_def.MetadataNotFoundErr {
 		return nil, service_def.MetadataNotFoundErr
@@ -92,7 +92,7 @@ func (m *ManifestsService) GetSourceManifests(replSpec *metadata.ReplicationSpec
 }
 
 func (m *ManifestsService) UpsertTargetManifests(replSpec *metadata.ReplicationSpecification, tgt *metadata.ManifestsList) error {
-	key := getManifestDocKey(replSpec.Id, false /*source*/)
+	key := getManifestDocKey(replSpec.Id(), false /*source*/)
 
 	manifestsDoc := &metadata.ManifestsDoc{}
 	manifestsDoc.CollectionsManifests = *tgt
@@ -101,7 +101,7 @@ func (m *ManifestsService) UpsertTargetManifests(replSpec *metadata.ReplicationS
 }
 
 func (m *ManifestsService) GetTargetManifests(replSpec *metadata.ReplicationSpecification) (*metadata.ManifestsList, error) {
-	key := getManifestDocKey(replSpec.Id, false /*source*/)
+	key := getManifestDocKey(replSpec.Id(), false /*source*/)
 	manifestsDoc, err := m.getInternal(key)
 	if err == service_def.MetadataNotFoundErr {
 		return nil, nil
