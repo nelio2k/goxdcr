@@ -80,9 +80,12 @@ func setupPipelineBoilerPlate(replSpecSvc *ReplicationSpecService,
 	pipelineMock := &common.PipelineFactory{}
 	utilsNew := utilities.NewUtilities()
 	checkPointsSvc := &service_def.CheckpointsService{}
+	clusterInfoSvc := &service_def.ClusterInfoSvc{}
+
+	clusterInfoSvc.On("IsClusterCompatible", mock.Anything, mock.Anything).Return(true, nil)
 
 	pipelineMgr := pipeline_manager.NewPipelineManager(pipelineMock, replSpecSvc, xdcrTopologyMock,
-		remoteClusterMock, nil /*cluster_info_svc*/, checkPointsSvc,
+		remoteClusterMock, clusterInfoSvc, checkPointsSvc,
 		uiLogSvcMock, log.DefaultLoggerContext, utilsNew)
 
 	testPipeline := &common.Pipeline{}
@@ -119,6 +122,8 @@ func setupMocks(srcResolutionType string,
 	remoteClusterMock.On("RemoteClusterByUuid", "", false).Return(mockRemoteClusterRef, nil)
 	remoteClusterMock.On("RemoteClusterByUuid", "", true).Return(mockRemoteClusterRef, nil)
 	remoteClusterMock.On("ValidateRemoteCluster", mockRemoteClusterRef).Return(nil)
+	remoteClusterMock.On("RequestRemoteMonitoring", mock.Anything).Return(nil)
+	remoteClusterMock.On("UnRequestRemoteMonitoring", mock.Anything).Return(nil)
 
 	// Compression features for utils mock
 	var fullFeatures utilities.HELOFeatures

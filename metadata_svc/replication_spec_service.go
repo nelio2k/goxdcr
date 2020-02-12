@@ -1041,6 +1041,11 @@ func (service *ReplicationSpecService) updateCacheInternal(specId string, newSpe
 		delete(service.srcGcMap, oldSpec.Id)
 		delete(service.tgtGcMap, oldSpec.Id)
 		service.gcMtx.Unlock()
+		service.remote_cluster_svc.UnRequestRemoteMonitoring(oldSpec)
+	}
+
+	if updated && oldSpec == nil && newSpec != nil {
+		service.remote_cluster_svc.RequestRemoteMonitoring(newSpec)
 	}
 
 	if updated && service.metadata_change_callback != nil {

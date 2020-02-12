@@ -208,6 +208,10 @@ const (
 	// Internal keys to wrap around incoming document's key or xattributes for advanced filtering
 	FilteringInternalKey   = "FilteringInternalKeyKey"
 	FilteringInternalXattr = "FilteringInternalXattrKey"
+
+	// How often to pull manifests
+	ManifestRefreshSrcIntervalKey = "ManifestRefreshSrcInterval"
+	ManifestRefreshTgtIntervalKey = "ManifestRefreshTgtInterval"
 )
 
 var TopologyChangeCheckIntervalConfig = &SettingsConfig{10, &Range{1, 100}}
@@ -296,6 +300,8 @@ var MaxCountCpuNotMaxedConfig = &SettingsConfig{3, &Range{1, 1000}}
 var MaxCountThroughputDropConfig = &SettingsConfig{3, &Range{1, 1000}}
 var FilteringInternalKeyConfig = &SettingsConfig{base.InternalKeyKey, nil}
 var FilteringInternalXattrConfig = &SettingsConfig{base.InternalKeyXattr, nil}
+var ManifestRefreshSrcIntervalConfig = &SettingsConfig{base.ManifestRefreshSrcInterval, &Range{1, 10000}}
+var ManifestRefreshTgtIntervalConfig = &SettingsConfig{base.ManifestRefreshTgtInterval, &Range{1, 10000}}
 
 var XDCRInternalSettingsConfigMap = map[string]*SettingsConfig{
 	TopologyChangeCheckIntervalKey:                TopologyChangeCheckIntervalConfig,
@@ -384,6 +390,8 @@ var XDCRInternalSettingsConfigMap = map[string]*SettingsConfig{
 	MaxCountThroughputDropKey:                     MaxCountThroughputDropConfig,
 	FilteringInternalKey:                          FilteringInternalKeyConfig,
 	FilteringInternalXattr:                        FilteringInternalXattrConfig,
+	ManifestRefreshSrcIntervalKey:                 ManifestRefreshSrcIntervalConfig,
+	ManifestRefreshTgtIntervalKey:                 ManifestRefreshTgtIntervalConfig,
 }
 
 func InitConstants(xmemMaxIdleCountLowerBound int, xmemMaxIdleCountUpperBound int) {
