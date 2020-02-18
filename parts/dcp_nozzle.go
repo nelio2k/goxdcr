@@ -38,6 +38,7 @@ const (
 	EVENT_DCP_DATACH_LEN    = "dcp_datach_length"
 	DCP_Stats_Interval      = "stats_interval"
 	DCP_Priority            = "dcpPriority"
+	DCP_Manifest_Getter     = "dcpManifestGetter"
 )
 
 type DcpStreamState int
@@ -337,6 +338,14 @@ type DcpNozzle struct {
 
 	dcpPrioritySetting mcc.PriorityType
 	lockSetting        sync.RWMutex
+
+	specificManifestGetter service_def.CollectionsManifestReqFunc
+
+	// Non-StreamID based vb stream will keep track of the top received manifest ID from DCP
+	// This is to ensure that the mutations coming in from DCP can be matched with the correct
+	// manifest ID
+	// DCP will only bump the manifest (via a system event) if all older manifest has been sent
+	vbHighestManifestUidArray [base.NumberOfVbs]uint64
 }
 
 func NewDcpNozzle(id string,
@@ -425,6 +434,10 @@ func (dcp *DcpNozzle) initializeMemcachedClient(settings metadata.ReplicationSet
 		return err
 	}
 
+	if dcp.specificManifestGetter != nil {
+		dcpMcReqFeatures.Collections = true
+	}
+
 	dcpMcReqFeatures.CompressionType = dcp.memcachedCompressionSetting
 
 	dcp.client, respondedFeatures, err = dcp.utils.GetMemcachedConnectionWFeatures(addr, dcp.sourceBucketName, dcp.user_agent, base.KeepAlivePeriod, dcpMcReqFeatures, dcp.Logger())
@@ -434,6 +447,11 @@ func (dcp *DcpNozzle) initializeMemcachedClient(settings metadata.ReplicationSet
 			dcp.Id(), dcp.memcachedCompressionSetting, respondedFeatures.CompressionType)
 		// Let dcp.Stop() take care of client.Close()
 		return base.ErrorCompressionNotSupported
+	}
+
+	if err == nil && dcpMcReqFeatures.Collections && !respondedFeatures.Collections {
+		dcp.Logger().Errorf("Collections not supported")
+		return base.ErrorNotSupported
 	}
 
 	return err
@@ -552,6 +570,11 @@ func (dcp *DcpNozzle) initialize(settings metadata.ReplicationSettingsMap) (err 
 		return errors.New("setting 'stats_interval' is missing")
 	}
 
+	var exists bool
+	dcp.specificManifestGetter, exists = settings[DCP_Manifest_Getter].(service_def.CollectionsManifestReqFunc)
+	if !exists {
+		dcp.Logger().Warnf("Collections Manifest is not supported due to the use of CAPI nozzle")
+	}
 	return
 }
 
@@ -889,6 +912,12 @@ func (dcp *DcpNozzle) processData() (err error) {
 					dcp.Logger().Infof("%v: %v", dcp.Id(), err_streamend)
 					dcp.handleVBError(vbno, err_streamend)
 				}
+			} else if m.IsSystemEvent() {
+				// Let's just pretend we received it and processed it in one shot
+				dcp.handleSystemEvent(m)
+				// TODO - Not really filtered because we're supposed to process system event later
+				//	dcp.RaiseEvent(common.NewEvent(common.DataFiltered, m, dcp.cachedConnector, nil, nil))
+				dcp.RaiseEvent(common.NewEvent(common.SystemEventReceived, m, dcp, nil /*derivedItems*/, nil /*otherInfos*/))
 			} else {
 				// Regular mutations coming in from DCP stream
 				if dcp.IsOpen() {
@@ -928,6 +957,21 @@ done:
 	return
 }
 
+func (dcp *DcpNozzle) handleSystemEvent(event *mcc.UprEvent) {
+	if !event.IsSystemEvent() {
+		dcp.Logger().Warnf("Event %v%v%v is not a system event", base.UdTagBegin, event, base.UdTagEnd)
+		return
+	}
+
+	manifestId, err := event.GetManifestId()
+	if err != nil {
+		dcp.Logger().Infof("Event %v%v%v unable to get manifest ID err: %v", base.UdTagBegin, event, base.UdTagEnd, err)
+		return
+	}
+
+	vbno := event.VBucket
+	atomic.StoreUint64(&dcp.vbHighestManifestUidArray[vbno], manifestId)
+}
 func (dcp *DcpNozzle) handleXattr(upr_event *mcc.UprEvent) {
 	event_has_xattr := base.HasXattr(upr_event.DataType)
 	if event_has_xattr {

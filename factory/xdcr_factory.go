@@ -291,6 +291,7 @@ func (xdcrf *XDCRFactory) registerAsyncListenersOnSources(pipeline common.Pipeli
 			// Stats manager will handle the data received and processed events
 			dcp_part.RegisterComponentEventListener(common.DataReceived, data_received_event_listener)
 			dcp_part.RegisterComponentEventListener(common.DataProcessed, data_processed_event_listener)
+			dcp_part.RegisterComponentEventListener(common.SystemEventReceived, data_processed_event_listener)
 
 			dcp_part.RegisterComponentEventListener(common.DataFiltered, data_filtered_event_listener)
 			dcp_part.RegisterComponentEventListener(common.DataUnableToFilter, data_filtered_event_listener)
@@ -824,8 +825,12 @@ func (xdcrf *XDCRFactory) constructSettingsForDcpNozzle(pipeline common.Pipeline
 	if repSettings.IsCapi() {
 		// For CAPI nozzle, do not allow DCP to have compression
 		dcpNozzleSettings[parts.SETTING_COMPRESSION_TYPE] = (base.CompressionType)(base.CompressionTypeNone)
+		// CAPI nozzle also does not have collections support
 	} else {
 		dcpNozzleSettings[parts.SETTING_COMPRESSION_TYPE] = base.GetCompressionType(getSettingFromSettingsMap(settings, metadata.CompressionTypeKey, repSettings.CompressionType).(int))
+		dcpNozzleSettings[parts.DCP_Manifest_Getter] = func(manifestUid uint64) (*metadata.CollectionsManifest, error) {
+			return xdcrf.collectionsManifestSvc.GetSpecificSourceManifest(spec, manifestUid)
+		}
 	}
 
 	// dcp priority settings could have been set through replStatus.customSettings.

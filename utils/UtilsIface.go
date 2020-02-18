@@ -21,6 +21,7 @@ type HELOFeatures struct {
 	Xattribute      bool
 	CompressionType base.CompressionType
 	Xerror          bool
+	Collections     bool
 }
 
 type UtilsIface interface {

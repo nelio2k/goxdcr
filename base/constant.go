@@ -541,6 +541,8 @@ var MaxNumOfRetriesSetDerivedObj = 8
 
 var NumberOfWorkersForCheckpointing = 5
 
+const NumberOfVbs = 1024
+
 type FilterVersionType int
 
 const (
