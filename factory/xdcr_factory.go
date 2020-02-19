@@ -291,7 +291,7 @@ func (xdcrf *XDCRFactory) registerAsyncListenersOnSources(pipeline common.Pipeli
 			// Stats manager will handle the data received and processed events
 			dcp_part.RegisterComponentEventListener(common.DataReceived, data_received_event_listener)
 			dcp_part.RegisterComponentEventListener(common.DataProcessed, data_processed_event_listener)
-			dcp_part.RegisterComponentEventListener(common.SystemEventReceived, data_processed_event_listener)
+			dcp_part.RegisterComponentEventListener(common.SystemEventReceived, data_received_event_listener)
 
 			dcp_part.RegisterComponentEventListener(common.DataFiltered, data_filtered_event_listener)
 			dcp_part.RegisterComponentEventListener(common.DataUnableToFilter, data_filtered_event_listener)
@@ -300,6 +300,7 @@ func (xdcrf *XDCRFactory) registerAsyncListenersOnSources(pipeline common.Pipeli
 			conn.RegisterComponentEventListener(common.DataFiltered, data_filtered_event_listener)
 			conn.RegisterComponentEventListener(common.DataUnableToFilter, data_filtered_event_listener)
 			conn.RegisterComponentEventListener(common.DataThroughputThrottled, data_throughput_throttled_event_listener)
+			conn.RegisterComponentEventListener(common.DataNotReplicated, data_filtered_event_listener)
 		}
 	}
 }
@@ -558,9 +559,10 @@ func (xdcrf *XDCRFactory) constructRouter(id string, spec *metadata.ReplicationS
 	// when initializing router, isHighReplication is set to true only if replication priority is High
 	// for replications with Medium priority and ongoing flag set, isHighReplication will be updated to true
 	// through a UpdateSettings() call to the router in the pipeline startup sequence before parts are started
-	router, err := parts.NewRouter(routerId, spec.Id, spec.Settings.FilterExpression, downStreamParts, vbNozzleMap, sourceCRMode,
+	router, err := parts.NewRouter(routerId, spec, downStreamParts, vbNozzleMap, sourceCRMode,
 		logger_ctx, pipeline_manager.NewMCRequestObj, xdcrf.utils, xdcrf.throughput_throttler_svc,
-		spec.Settings.GetPriority() == base.PriorityTypeHigh, spec.Settings.GetExpDelMode())
+		spec.Settings.GetPriority() == base.PriorityTypeHigh, spec.Settings.GetExpDelMode(),
+		xdcrf.collectionsManifestSvc)
 	if err != nil {
 		xdcrf.logger.Errorf("Error (%v) constructing router %v", err.Error(), routerId)
 	} else {
@@ -785,6 +787,12 @@ func (xdcrf *XDCRFactory) constructSettingsForXmemNozzle(pipeline common.Pipelin
 
 		xdcrf.logger.Infof("xmemSettings=%v\n", xmemSettings.CloneAndRedact())
 	}
+
+	forceCollectionDisable, ok := settings[parts.ForceCollectionDisableKey]
+	if ok {
+		xmemSettings[parts.ForceCollectionDisableKey] = forceCollectionDisable
+	}
+
 	return xmemSettings, nil
 
 }
@@ -826,10 +834,16 @@ func (xdcrf *XDCRFactory) constructSettingsForDcpNozzle(pipeline common.Pipeline
 		// For CAPI nozzle, do not allow DCP to have compression
 		dcpNozzleSettings[parts.SETTING_COMPRESSION_TYPE] = (base.CompressionType)(base.CompressionTypeNone)
 		// CAPI nozzle also does not have collections support
+		dcpNozzleSettings[parts.ForceCollectionDisableKey] = true
 	} else {
 		dcpNozzleSettings[parts.SETTING_COMPRESSION_TYPE] = base.GetCompressionType(getSettingFromSettingsMap(settings, metadata.CompressionTypeKey, repSettings.CompressionType).(int))
-		dcpNozzleSettings[parts.DCP_Manifest_Getter] = func(manifestUid uint64) (*metadata.CollectionsManifest, error) {
+		getterFunc := func(manifestUid uint64) (*metadata.CollectionsManifest, error) {
 			return xdcrf.collectionsManifestSvc.GetSpecificSourceManifest(spec, manifestUid)
+		}
+		dcpNozzleSettings[parts.DCP_Manifest_Getter] = service_def.CollectionsManifestReqFunc(getterFunc)
+		forceCollectionDisable, ok := settings[parts.ForceCollectionDisableKey]
+		if ok {
+			dcpNozzleSettings[parts.ForceCollectionDisableKey] = forceCollectionDisable
 		}
 	}
 
@@ -853,6 +867,11 @@ func (xdcrf *XDCRFactory) constructSettingsForRouter(pipeline common.Pipeline, s
 	filterExpDelMode, ok := settings[parts.FilterExpDelKey]
 	if ok {
 		routerSettings[parts.FilterExpDelKey] = filterExpDelMode
+	}
+
+	forceCollectionDisable, ok := settings[parts.ForceCollectionDisableKey]
+	if ok {
+		routerSettings[parts.ForceCollectionDisableKey] = forceCollectionDisable
 	}
 
 	return routerSettings, nil

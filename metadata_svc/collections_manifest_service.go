@@ -18,6 +18,7 @@ import (
 	"github.com/couchbase/goxdcr/parts"
 	"github.com/couchbase/goxdcr/service_def"
 	"github.com/couchbase/goxdcr/utils"
+	"math"
 	"reflect"
 	"strings"
 	"sync"
@@ -276,7 +277,7 @@ func (c *CollectionsManifestService) GetSpecificSourceManifest(spec *metadata.Re
 	if !ok {
 		return nil, fmt.Errorf("Unable to find agent for spec %v\n", spec.Id)
 	}
-	return agent.GetSpecificSourceManifest(manifestVersion), nil
+	return agent.GetSpecificSourceManifest(manifestVersion)
 }
 
 //  When replication starts, it needs to request specific manifest by version, such as resuming from checkpoint
@@ -287,7 +288,7 @@ func (c *CollectionsManifestService) GetSpecificTargetManifest(spec *metadata.Re
 	if !ok {
 		return nil, fmt.Errorf("Unable to find agent for spec %v\n", spec.Id)
 	}
-	return agent.GetSpecificTargetManifest(manifestVersion), nil
+	return agent.GetSpecificTargetManifest(manifestVersion)
 }
 
 type AgentSrcManifestGetter func() *metadata.CollectionsManifest
@@ -696,39 +697,47 @@ func (a *CollectionsManifestAgent) GetSourceManifest() (*metadata.CollectionsMan
 }
 
 // Returns nil if not found in cache
-func (a *CollectionsManifestAgent) GetSpecificSourceManifest(manifestVersion uint64) *metadata.CollectionsManifest {
+func (a *CollectionsManifestAgent) GetSpecificSourceManifest(manifestVersion uint64) (*metadata.CollectionsManifest, error) {
 	if a.isStopped() {
-		return nil
+		return nil, parts.PartStoppedError
 	}
 
 	a.srcMtx.RLock()
 
+	var err error
 	manifest, ok := a.sourceCache[manifestVersion]
 	if !ok {
-		a.srcMtx.RUnlock()
-		a.refreshSource()
-		a.srcMtx.RLock()
-		manifest, _ = a.sourceCache[manifestVersion]
+		manifest, ok = a.sourceCache[manifestVersion]
+		if !ok {
+			manifest = nil
+			err = fmt.Errorf("Unable to find source manifest for version %v", manifestVersion)
+		}
 	}
 
 	a.srcMtx.RUnlock()
-	return manifest
+	return manifest, err
 }
 
-func (a *CollectionsManifestAgent) GetSpecificTargetManifest(manifestVersion uint64) *metadata.CollectionsManifest {
+// MAX_UINT64 for manifestversion means the latest one
+func (a *CollectionsManifestAgent) GetSpecificTargetManifest(manifestVersion uint64) (*metadata.CollectionsManifest, error) {
 	if a.isStopped() {
-		return nil
+		return nil, parts.PartStoppedError
 	}
 
 	a.tgtMtx.RLock()
 	defer a.tgtMtx.RUnlock()
 
+	var err error
+	if manifestVersion == math.MaxUint64 {
+		manifestVersion = a.lastTargetPull
+	}
 	manifest, ok := a.targetCache[manifestVersion]
 	if !ok {
 		manifest = nil
+		err = fmt.Errorf("Unable to find target manifest for version %v", manifestVersion)
 	}
 
-	return manifest
+	return manifest, err
 }
 
 // Returns nil pair if not updated

@@ -11,10 +11,12 @@ package connector
 
 import (
 	"errors"
+	"github.com/couchbase/goxdcr/base"
 	common "github.com/couchbase/goxdcr/common"
 	component "github.com/couchbase/goxdcr/component"
 	"github.com/couchbase/goxdcr/log"
 	"sync"
+	"sync/atomic"
 )
 
 // Router routes data to downstream parts
@@ -27,6 +29,8 @@ var ErrorInvalidRoutingResult = errors.New("Invalid results from routing algorit
 // @Return - a map of partId to data to the routed to that part
 type Routing_Callback_Func func(data interface{}) (map[string]interface{}, error)
 
+type CollectionsRerouteFunc func(data interface{}, partId string) error
+
 /**
  * This is an inner router struct that XDCR router (parts/router) will inherit
  */
@@ -35,18 +39,57 @@ type Router struct {
 	downStreamParts  map[string]common.Part // partId -> Part
 	routing_callback *Routing_Callback_Func
 
+	startable uint32
+	startFunc func() error
+	stopFunc  func() error
+
 	stateLock sync.RWMutex
+
+	collectionsRerouteCb CollectionsRerouteFunc
 }
 
 func NewRouter(id string, downStreamParts map[string]common.Part,
 	routing_callback *Routing_Callback_Func,
-	logger_context *log.LoggerContext, logger_module string) *Router {
+	logger_context *log.LoggerContext, logger_module string,
+	startable bool, startFunc, stopFunc func() error, collectionsRerouteCb CollectionsRerouteFunc) *Router {
 	router := &Router{
-		AbstractComponent: component.NewAbstractComponentWithLogger(id, log.NewLogger(logger_module, logger_context)),
-		downStreamParts:   downStreamParts,
-		routing_callback:  routing_callback,
+		AbstractComponent:    component.NewAbstractComponentWithLogger(id, log.NewLogger(logger_module, logger_context)),
+		downStreamParts:      downStreamParts,
+		routing_callback:     routing_callback,
+		startFunc:            startFunc,
+		stopFunc:             stopFunc,
+		collectionsRerouteCb: collectionsRerouteCb,
+	}
+	if startable {
+		atomic.StoreUint32(&router.startable, 1)
 	}
 	return router
+}
+
+func (router *Router) SetStartable(startable bool) {
+	if startable {
+		atomic.StoreUint32(&router.startable, 1)
+	} else {
+		atomic.StoreUint32(&router.startable, 0)
+	}
+}
+
+func (router *Router) IsStartable() bool {
+	return atomic.LoadUint32(&router.startable) != 0
+}
+
+func (router *Router) Start() error {
+	if !router.IsStartable() {
+		return base.ErrorInvalidOperation
+	}
+	return router.startFunc()
+}
+
+func (router *Router) Stop() error {
+	if !router.IsStartable() {
+		return base.ErrorInvalidOperation
+	}
+	return router.stopFunc()
 }
 
 func (router *Router) Forward(data interface{}) error {
@@ -64,12 +107,42 @@ func (router *Router) Forward(data interface{}) error {
 			if part != nil {
 				err = part.Receive(partData)
 				if err != nil {
+					// TODO - MB-38023 - KV may lag even though manifest says collection exists
+					// May be moved into XMEM
 					break
 				}
 			} else {
 				return ErrorInvalidRoutingResult
 			}
 		}
+	} else if err == base.ErrorIgnoreRequest {
+		err = nil
+	}
+	return err
+}
+
+func (router *Router) RetryCollectionsForward(wrappedMCRequest interface{}, downstreamPartId string) error {
+	router.stateLock.RLock()
+	defer router.stateLock.RUnlock()
+
+	if len(router.downStreamParts) == 0 || router.collectionsRerouteCb == nil {
+		return ErrorInvalidRouterConfig
+	}
+
+	err := router.collectionsRerouteCb(wrappedMCRequest, downstreamPartId)
+	if err == nil {
+		part := router.downStreamParts[downstreamPartId]
+		if part != nil {
+			err = part.Receive(wrappedMCRequest)
+			if err != nil {
+				// TODO - MB-38023 - KV may lag even though manifest says collection exists
+				// May be moved into XMEM
+			}
+		} else {
+			return ErrorInvalidRoutingResult
+		}
+	} else if err == base.ErrorIgnoreRequest {
+		err = nil
 	}
 	return err
 }

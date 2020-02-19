@@ -212,6 +212,9 @@ const (
 	// How often to pull manifests
 	ManifestRefreshSrcIntervalKey = "ManifestRefreshSrcInterval"
 	ManifestRefreshTgtIntervalKey = "ManifestRefreshTgtInterval"
+
+	// How many times to retry before declaring collections mapping broken
+	MaxCollectionsRoutingRetryKey = "MaxCollectionsRoutingRetry"
 )
 
 var TopologyChangeCheckIntervalConfig = &SettingsConfig{10, &Range{1, 100}}
@@ -302,6 +305,7 @@ var FilteringInternalKeyConfig = &SettingsConfig{base.InternalKeyKey, nil}
 var FilteringInternalXattrConfig = &SettingsConfig{base.InternalKeyXattr, nil}
 var ManifestRefreshSrcIntervalConfig = &SettingsConfig{base.ManifestRefreshSrcInterval, &Range{1, 10000}}
 var ManifestRefreshTgtIntervalConfig = &SettingsConfig{base.ManifestRefreshTgtInterval, &Range{1, 10000}}
+var MaxCollectionsRoutingRetryConfig = &SettingsConfig{base.MaxCollectionsRoutingRetry, &Range{1, 100}}
 
 var XDCRInternalSettingsConfigMap = map[string]*SettingsConfig{
 	TopologyChangeCheckIntervalKey:                TopologyChangeCheckIntervalConfig,
@@ -392,6 +396,7 @@ var XDCRInternalSettingsConfigMap = map[string]*SettingsConfig{
 	FilteringInternalXattr:                        FilteringInternalXattrConfig,
 	ManifestRefreshSrcIntervalKey:                 ManifestRefreshSrcIntervalConfig,
 	ManifestRefreshTgtIntervalKey:                 ManifestRefreshTgtIntervalConfig,
+	MaxCollectionsRoutingRetryKey:                 MaxCollectionsRoutingRetryConfig,
 }
 
 func InitConstants(xmemMaxIdleCountLowerBound int, xmemMaxIdleCountUpperBound int) {

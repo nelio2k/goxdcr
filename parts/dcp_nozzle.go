@@ -346,6 +346,8 @@ type DcpNozzle struct {
 	// manifest ID
 	// DCP will only bump the manifest (via a system event) if all older manifest has been sent
 	vbHighestManifestUidArray [base.NumberOfVbs]uint64
+
+	collectionEnabled uint32
 }
 
 func NewDcpNozzle(id string,
@@ -434,8 +436,10 @@ func (dcp *DcpNozzle) initializeMemcachedClient(settings metadata.ReplicationSet
 		return err
 	}
 
-	if dcp.specificManifestGetter != nil {
+	_, disableCollection := settings[ForceCollectionDisableKey]
+	if !disableCollection {
 		dcpMcReqFeatures.Collections = true
+		atomic.StoreUint32(&dcp.collectionEnabled, 1)
 	}
 
 	dcpMcReqFeatures.CompressionType = dcp.memcachedCompressionSetting
@@ -570,10 +574,11 @@ func (dcp *DcpNozzle) initialize(settings metadata.ReplicationSettingsMap) (err 
 		return errors.New("setting 'stats_interval' is missing")
 	}
 
-	var exists bool
-	dcp.specificManifestGetter, exists = settings[DCP_Manifest_Getter].(service_def.CollectionsManifestReqFunc)
+	getterRaw, exists := settings[DCP_Manifest_Getter]
 	if !exists {
 		dcp.Logger().Warnf("Collections Manifest is not supported due to the use of CAPI nozzle")
+	} else {
+		dcp.specificManifestGetter = getterRaw.(service_def.CollectionsManifestReqFunc)
 	}
 	return
 }
@@ -913,10 +918,7 @@ func (dcp *DcpNozzle) processData() (err error) {
 					dcp.handleVBError(vbno, err_streamend)
 				}
 			} else if m.IsSystemEvent() {
-				// Let's just pretend we received it and processed it in one shot
 				dcp.handleSystemEvent(m)
-				// TODO - Not really filtered because we're supposed to process system event later
-				//	dcp.RaiseEvent(common.NewEvent(common.DataFiltered, m, dcp.cachedConnector, nil, nil))
 				dcp.RaiseEvent(common.NewEvent(common.SystemEventReceived, m, dcp, nil /*derivedItems*/, nil /*otherInfos*/))
 			} else {
 				// Regular mutations coming in from DCP stream
@@ -935,8 +937,12 @@ func (dcp *DcpNozzle) processData() (err error) {
 						if !dcp.is_capi {
 							dcp.handleXattr(m)
 						}
+						wrappedUpr, err := dcp.composeWrappedUprEvent(m)
+						if err != nil {
+							return err
+						}
 						// forward mutation downstream through connector
-						if err := dcp.Connector().Forward(m); err != nil {
+						if err := dcp.Connector().Forward(wrappedUpr); err != nil {
 							dcp.handleGeneralError(err)
 							goto done
 						}
@@ -972,6 +978,59 @@ func (dcp *DcpNozzle) handleSystemEvent(event *mcc.UprEvent) {
 	vbno := event.VBucket
 	atomic.StoreUint64(&dcp.vbHighestManifestUidArray[vbno], manifestId)
 }
+
+// TODO - MB-37984
+func (dcp *DcpNozzle) composeWrappedUprEvent(m *mcc.UprEvent) (*base.WrappedUprEvent, error) {
+	wrappedEvent := &base.WrappedUprEvent{UprEvent: m}
+
+	if m.IsSystemEvent() || !m.IsCollectionType() {
+		// Collection not used
+		return wrappedEvent, nil
+	}
+
+	if dcp.specificManifestGetter == nil {
+		// This is very odd error
+		dcp.Logger().Errorf("Collection seems to be not enabled but DCP is sending down collection information for vb %v seqno %v", m.VBucket, m.Seqno)
+		return nil, base.ErrorSourceCollectionsNotSupported
+	}
+
+	colInfo := &base.CollectionNamespace{}
+	var err error
+
+	getCollectionNamespace := func() error {
+		// VB events comes in sequence order, so the latest manifest must have the info for this collection data
+		// TODO - MB-38021 - when checkpoints are loaded, the vbHighestManifestUidArray will need to be updated too
+		// This is why VBUCKET errors are not successfully handled right now
+		topManifestUid := atomic.LoadUint64(&dcp.vbHighestManifestUidArray[m.VBucket])
+		manifest, err := dcp.specificManifestGetter(topManifestUid)
+		if err != nil {
+			dcp.Logger().Errorf("Asking for manifest %v got error: %v\n", topManifestUid, err)
+			return err
+		}
+		if manifest.Uid() < topManifestUid {
+			dcp.Logger().Errorf("Asking for manifest %v got %v\n", topManifestUid, manifest.Uid())
+			return base.ErrorInvalidType
+		}
+
+		colInfo.ScopeName, colInfo.CollectionName, err = manifest.GetScopeAndCollectionName(m.CollectionId)
+		if err != nil {
+			err = fmt.Errorf("%v: vb %v topManifestID: %v manifest: %v asking for collectionId: %v", err, m.VBucket, topManifestUid, manifest, m.CollectionId)
+			return err
+		}
+		dcp.Logger().Infof("For doc %v topManifest is %v srcColId: %v namespace is %v:%v", string(m.Key), topManifestUid, m.CollectionId, colInfo.ScopeName, colInfo.CollectionName)
+
+		return nil
+	}
+	err = dcp.utils.ExponentialBackoffExecutor("DcpComposeWrappedUprEvent", base.BucketInfoOpWaitTime, base.BucketInfoOpMaxRetry*2, base.BucketInfoOpRetryFactor, getCollectionNamespace)
+	if err != nil {
+		err = fmt.Errorf("Unable to send wrapped event: %v due to err: %v\n", m, err)
+		return nil, err
+	}
+
+	wrappedEvent.ColNamespace = colInfo
+	return wrappedEvent, nil
+}
+
 func (dcp *DcpNozzle) handleXattr(upr_event *mcc.UprEvent) {
 	event_has_xattr := base.HasXattr(upr_event.DataType)
 	if event_has_xattr {
@@ -1101,7 +1160,7 @@ func (dcp *DcpNozzle) startUprStreams_internal(streams_to_start []uint16) error 
 func (dcp *DcpNozzle) startUprStreamInner(vbno uint16, vbts *base.VBTimestamp, version uint16) (err error) {
 	flags := uint32(0)
 	seqEnd := uint64(0xFFFFFFFFFFFFFFFF)
-	dcp.Logger().Debugf("%v starting vb stream for vb=%v, version=%v\n", dcp.Id(), vbno, version)
+	dcp.Logger().Debugf("%v starting vb stream for vb=%v, version=%v collectionEnabled=%v\n", dcp.Id(), vbno, version, atomic.LoadUint32(&dcp.collectionEnabled))
 
 	dcp.lock_uprFeed.RLock()
 	defer dcp.lock_uprFeed.RUnlock()
@@ -1118,7 +1177,11 @@ func (dcp *DcpNozzle) startUprStreamInner(vbno uint16, vbts *base.VBTimestamp, v
 				dcp.Logger().Debugf(fmt.Sprintf("%v ignoring send request for seqno %v since it has already been handled", dcp.Id(), vbts.Seqno))
 			} else {
 				// version passed in == opaque, which will be passed back to us
-				err = dcp.uprFeed.UprRequestStream(vbno, version, flags, vbts.Vbuuid, vbts.Seqno, seqEnd, vbts.SnapshotStart, vbts.SnapshotEnd)
+				if atomic.LoadUint32(&dcp.collectionEnabled) == 0 {
+					err = dcp.uprFeed.UprRequestStream(vbno, version, flags, vbts.Vbuuid, vbts.Seqno, seqEnd, vbts.SnapshotStart, vbts.SnapshotEnd)
+				} else {
+					err = dcp.uprFeed.UprRequestCollectionsStream(vbno, version, flags, vbts.Vbuuid, vbts.Seqno, seqEnd, vbts.SnapshotStart, vbts.SnapshotEnd, nil)
+				}
 				if err == nil {
 					err = dcp.setStreamState(vbno, Dcp_Stream_Init)
 				}
