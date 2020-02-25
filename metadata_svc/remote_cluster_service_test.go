@@ -21,7 +21,7 @@ import (
 	"time"
 )
 
-var uuidField string = "dummyUUID"
+var uuidField string = "5220aac3bdc2f7ac663ac288bb85ae27"
 var uuidField2 string = "dummyUUID2"
 var hostname string = "dummyHostName1:9999"
 var hostname2 string = "dummyHostName2:9999"
@@ -106,7 +106,7 @@ var testUtils = realUtils.NewUtilities()
 func setupUtilsMockGeneric(utilitiesMock *utilsMock.UtilsIface, simulatedNetworkDelay time.Duration) {
 	setupUtilsMockSpecific(utilitiesMock, simulatedNetworkDelay,
 		nil /*GetNodeListWithMinInfo*/, "" /*extHost*/, 0 /*extPort*/, nil, /*extErr*/
-		true /*getExternal*/, false /*getExternalPort*/, false /*accurateData*/)
+		true /*getExternal*/, false /*getExternalPort*/, false /*accurateData*/, clusterMadHatter)
 }
 
 // This is used so when unit tests load actual JSON data, they can use the hostnames in the actual data to
@@ -150,10 +150,17 @@ func populateNodeListForTest(nodeList []interface{}) {
 	}
 }
 
+type clusterVersion int
+
+const (
+	clusterMadHatter   clusterVersion = iota
+	clusterCheshireCat clusterVersion = iota
+)
+
 func setupUtilsMockSpecific(utilitiesMock *utilsMock.UtilsIface, simulatedNetworkDelay time.Duration,
 	getNodeListWithMinInfoErr error,
 	extHost string, extPort int, extErr error,
-	getExternalData bool, getExternalPort bool, accurateData bool) {
+	getExternalData bool, getExternalPort bool, accurateData bool, version clusterVersion) {
 	var emptyList []interface{}
 	localhostEntry := make(map[string]interface{})
 	hostnameList := append(emptyList, localhostEntry)
@@ -165,6 +172,7 @@ func setupUtilsMockSpecific(utilitiesMock *utilsMock.UtilsIface, simulatedNetwor
 	nodeList, _ := getNodeListWithMinInfoMock(getExternalData, getExternalPort)
 	populateNodeListForTest(nodeList)
 	utilitiesMock.On("GetNodeListWithMinInfo", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Run(func(args mock.Arguments) { time.Sleep(oneDelay) }).Return(nodeList, getNodeListWithMinInfoErr)
+	utilitiesMock.On("GetNodeListFromInfoMap", mock.Anything, mock.Anything).Run(func(args mock.Arguments) { time.Sleep(oneDelay) }).Return(nodeList, getNodeListWithMinInfoErr)
 	utilitiesMock.On("GetExternalMgtHostAndPort", mock.Anything, mock.Anything).Return(extHost, extPort, extErr)
 
 	if accurateData {
@@ -176,17 +184,26 @@ func setupUtilsMockSpecific(utilitiesMock *utilsMock.UtilsIface, simulatedNetwor
 	utilitiesMock.On("GetHostName", mock.Anything).Return(localhost)
 	utilitiesMock.On("GetPortNumber", mock.Anything).Return(uint16(9999), nil)
 	utilitiesMock.On("GetClusterUUIDAndNodeListWithMinInfo", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(uuidField, hostnameList, nil)
-	utilitiesMock.On("GetClusterInfo", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Run(func(args mock.Arguments) { time.Sleep(oneDelay) }).Return(localhostEntry, nil)
 	utilitiesMock.On("GetClusterUUIDAndNodeListWithMinInfoFromDefaultPoolInfo", mock.Anything, mock.Anything).Return(uuidField, nodeList, nil)
 
-	clusterInfo := make(map[string]interface{})
-	dummyPools := make([]interface{}, 5, 5)
-	clusterInfo[base.IsEnterprise] = true
-	clusterInfo[base.Pools] = dummyPools
-	clusterInfo[base.RemoteClusterUuid] = uuidField
-	utilitiesMock.On("GetClusterInfoWStatusCode", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything,
+	var clusterInfo map[string]interface{}
+	var poolsInfo map[string]interface{}
+
+	switch version {
+	case clusterMadHatter:
+		clusterInfo, _ = getPoolsDefaultPre70()
+		poolsInfo, _ = getPoolsPre70()
+	case clusterCheshireCat:
+		clusterInfo, _ = getPoolsDefault70()
+		poolsInfo, _ = getPools70()
+	default:
+		panic("Not implemented")
+	}
+	utilitiesMock.On("GetClusterInfoWStatusCode", mock.Anything, base.PoolsPath, mock.Anything, mock.Anything, mock.Anything, mock.Anything,
 		mock.Anything, mock.Anything, mock.Anything, mock.Anything,
-		mock.Anything).Run(func(args mock.Arguments) { time.Sleep(simulatedNetworkDelay) }).Return(clusterInfo, nil, http.StatusOK)
+		mock.Anything).Run(func(args mock.Arguments) { time.Sleep(simulatedNetworkDelay) }).Return(poolsInfo, nil, http.StatusOK)
+	utilitiesMock.On("GetClusterInfo", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything,
+		mock.Anything).Run(func(args mock.Arguments) { time.Sleep(oneDelay) }).Return(clusterInfo, getNodeListWithMinInfoErr)
 }
 
 func setupUtilsMockPre1Good3Bad(utilitiesMock *utilsMock.UtilsIface) {
@@ -196,6 +213,7 @@ func setupUtilsMockPre1Good3Bad(utilitiesMock *utilsMock.UtilsIface) {
 
 	nodeList, _ := getNodeListWithMinInfoMock(true /*external*/, false /*given port*/)
 	utilitiesMock.On("GetNodeListWithMinInfo", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nodeList, nil)
+	utilitiesMock.On("GetNodeListFromInfoMap", mock.Anything, mock.Anything).Return(nodeList, nil)
 	utilitiesMock.On("GetExternalMgtHostAndPort", mock.Anything, mock.Anything).Return("", -1, base.ErrorResourceDoesNotExist)
 
 	utilitiesMock.On("GetRemoteNodeAddressesListFromNodeList", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(dummyHostNameList2, nil)
@@ -214,6 +232,7 @@ func setupUtilsOneNode(utilitiesMock *utilsMock.UtilsIface) {
 	nodeList, _ := getNodeListWithMinInfoMock(true /*external*/, false /*given port*/)
 	nodeList = nodeList[:0]
 	utilitiesMock.On("GetNodeListWithMinInfo", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nodeList, nil)
+	utilitiesMock.On("GetNodeListFromInfoMap", mock.Anything, mock.Anything).Return(nodeList, nil)
 	utilitiesMock.On("GetRemoteNodeAddressesListFromNodeList", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(singleList, nil)
 	utilitiesMock.On("GetHostName", mock.Anything).Return(localhost)
 	utilitiesMock.On("GetPortNumber", mock.Anything).Return(uint16(9999), nil)
@@ -234,6 +253,7 @@ func setupUtilsMock1Good3Bad(utilitiesMock *utilsMock.UtilsIface) base.StringPai
 	nodeList, _ := getNodeListWithMinInfoMock(true /*external*/, false /*given port*/)
 	nodeList = nodeList[:0]
 	utilitiesMock.On("GetNodeListWithMinInfo", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nodeList, nil)
+	utilitiesMock.On("GetNodeListFromInfoMap", mock.Anything, mock.Anything).Return(nodeList, nil)
 	utilitiesMock.On("GetHostName", mock.Anything).Return(localhost)
 	utilitiesMock.On("GetPortNumber", mock.Anything).Return(uint16(9999), nil)
 	utilitiesMock.On("GetClusterUUIDAndNodeListWithMinInfo", hostname, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(uuidField2, hostnameList, nil)
@@ -271,6 +291,7 @@ func setupUtilsMockListNode2Bad(utilitiesMock *utilsMock.UtilsIface) base.String
 	splitNames2 := base.StringPairList{base.StringPair{hostname, ""}, base.StringPair{hostname2, ""}}
 	nodeList, _ := getNodeListWithMinInfoMock(true /*external*/, false /*given port*/)
 	utilitiesMock.On("GetNodeListWithMinInfo", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nodeList, nil)
+	utilitiesMock.On("GetNodeListFromInfoMap", mock.Anything, mock.Anything).Return(nodeList, nil)
 	utilitiesMock.On("GetHostName", mock.Anything).Return(localhost)
 	utilitiesMock.On("GetPortNumber", mock.Anything).Return(uint16(9999), nil)
 	utilitiesMock.On("GetClusterUUIDAndNodeListWithMinInfo", hostname3, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(uuidField, hostnameList, nil)
@@ -300,6 +321,7 @@ func setupUtilsMockFirstNodeBad(utilitiesMock *utilsMock.UtilsIface) {
 	// the bad ones
 	splitNames2 := base.StringPairList{base.StringPair{hostname, ""}, base.StringPair{hostname2, ""}, base.StringPair{hostname3, ""}}
 	utilitiesMock.On("GetNodeListWithMinInfo", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(emptyList, nil)
+	utilitiesMock.On("GetNodeListFromInfoMap", mock.Anything, mock.Anything).Return(emptyList, nil)
 	utilitiesMock.On("GetHostName", mock.Anything).Return(localhost)
 	utilitiesMock.On("GetPortNumber", mock.Anything).Return(uint16(9999), nil)
 	utilitiesMock.On("GetClusterUUIDAndNodeListWithMinInfo", hostname, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(uuidField2, hostnameList, nil)
@@ -349,6 +371,7 @@ func TestAddDelRemoteClusterRef(t *testing.T) {
 	assert.NotEqual(agent.addressPreference, Uninitialized)
 	agent.Refresh()
 	assert.Equal(hostname, agent.reference.HostName())
+	assert.NotNil(agent.currentCapability)
 
 	assert.Equal(1, remoteClusterSvc.getNumberOfAgents())
 	assert.NotNil(remoteClusterSvc.AddRemoteCluster(ref, true))
@@ -945,7 +968,8 @@ func TestPositiveRefreshWDelay(t *testing.T) {
 	var deleteErr error
 	waitGrp.Add(2)
 	go runFuncGetTimeElapsed(func() { _, refreshErr = remoteClusterSvc.RemoteClusterByRefName(idAndName, true) }, &waitGrp, &refreshTimeTaken)
-	time.Sleep(200 * time.Nanosecond)
+	// Give it some time for goroutine to fire
+	time.Sleep(50 * time.Millisecond)
 	go runFuncGetTimeElapsed(func() { _, deleteErr = remoteClusterSvc.DelRemoteCluster(idAndName) }, &waitGrp, &deleteTimeTaken)
 	waitGrp.Wait()
 
@@ -1048,6 +1072,28 @@ func getNodeListWithMinInfoMock(external bool, portGiven bool) ([]interface{}, e
 	}
 }
 
+func getPoolsDefaultPre70() (map[string]interface{}, error) {
+	return getClusterInfoMockInt()
+}
+
+func getPoolsDefault70() (map[string]interface{}, error) {
+	fileName := fmt.Sprintf("%v%v", testIntDataDir, "pools_default_7.0.json")
+	retMap, _, err := readJsonHelper(fileName)
+	return retMap, err
+}
+
+func getPoolsPre70() (map[string]interface{}, error) {
+	fileName := fmt.Sprintf("%v%v", testIntDataDir, "pools.json")
+	retMap, _, err := readJsonHelper(fileName)
+	return retMap, err
+}
+
+func getPools70() (map[string]interface{}, error) {
+	fileName := fmt.Sprintf("%v%v", testIntDataDir, "pools_7.0.json")
+	retMap, _, err := readJsonHelper(fileName)
+	return retMap, err
+}
+
 func TestAddressPreference(t *testing.T) {
 	fmt.Println("============== Test case start: TestAddressPreference =================")
 	assert := assert.New(t)
@@ -1118,7 +1164,8 @@ func TestAddressPreferenceInitFail(t *testing.T) {
 		setupUtilsMockSpecific(utilitiesMock, 0*time.Second, /*networkDelay*/
 			base.ErrorUnauthorized,             /*GetNodeListWithMinInfo*/
 			"" /*extHost*/, 0 /*extPort*/, nil, /*extErr*/
-			true /*getExternal*/, false /*getExternalPort*/, false /*accurateData*/)
+			true /*getExternal*/, false /*getExternalPort*/, false, /*accurateData*/
+			clusterMadHatter)
 	}
 
 	setupMocksRCS(uiLogSvcMock, metadataSvcMock, xdcrTopologyMock, clusterInfoSvcMock,
@@ -1160,7 +1207,8 @@ func TestAddressPreferenceChange(t *testing.T) {
 	utilsMockFunc := func() {
 		setupUtilsMockSpecific(utilitiesMock, 0*time.Second, /*networkDelay*/
 			nil /*GetNodeListWithMinInfo*/, "" /*extHost*/, 0 /*extPort*/, nil, /*extErr*/
-			true /*getExternal*/, false /*getExternalPort*/, true /*accurateData*/)
+			true /*getExternal*/, false /*getExternalPort*/, true, /*accurateData*/
+			clusterMadHatter)
 	}
 
 	idAndName := "test"
@@ -1178,7 +1226,8 @@ func TestAddressPreferenceChange(t *testing.T) {
 	_, _, _, _, utilitiesMock, _ = setupBoilerPlateRCS()
 	setupUtilsMockSpecific(utilitiesMock, 0*time.Second, /*networkDelay*/
 		nil /*GetNodeListWithMinInfo*/, ref.HostName_ /*extHost*/, -1 /*extPort*/, base.ErrorNoPortNumber, /*extErr*/
-		true /*externalHost*/, false /*getExternalPort*/, true /*accurateData*/)
+		true /*externalHost*/, false /*getExternalPort*/, true, /*accurateData*/
+		clusterMadHatter)
 	remoteClusterSvc.updateUtilities(utilitiesMock)
 
 	// First bootstrap agent with a reference that refers to the external hostname
@@ -1196,7 +1245,8 @@ func TestAddressPreferenceChange(t *testing.T) {
 	_, _, _, _, utilitiesMock, _ = setupBoilerPlateRCS()
 	setupUtilsMockSpecific(utilitiesMock, 0*time.Second, /*networkDelay*/
 		nil /*GetNodeListWithMinInfo*/, "" /*extHost*/, -1 /*extPort*/, base.ErrorResourceDoesNotExist, /*extErr*/
-		false /*externalHost*/, false /*getExternalPort*/, true /*accurateData*/)
+		false /*externalHost*/, false /*getExternalPort*/, true, /*accurateData*/
+		clusterMadHatter)
 	remoteClusterSvc.updateUtilities(utilitiesMock)
 
 	for i := 0; i <= base.RemoteClusterAlternateAddrChangeCnt-1; i++ {
@@ -1234,7 +1284,8 @@ func TestAddressPreferenceChangeFlipFlop(t *testing.T) {
 	utilsMockFunc := func() {
 		setupUtilsMockSpecific(utilitiesMock, 0*time.Second, /*networkDelay*/
 			nil /*GetNodeListWithMinInfo*/, "" /*extHost*/, 0 /*extPort*/, nil, /*extErr*/
-			true /*getExternal*/, false /*getExternalPort*/, true /*accurateData*/)
+			true /*getExternal*/, false /*getExternalPort*/, true, /*accurateData*/
+			clusterMadHatter)
 	}
 
 	idAndName := "test"
@@ -1253,7 +1304,8 @@ func TestAddressPreferenceChangeFlipFlop(t *testing.T) {
 	_, _, _, _, utilitiesMockExt, _ := setupBoilerPlateRCS()
 	setupUtilsMockSpecific(utilitiesMockExt, 0*time.Second, /*networkDelay*/
 		nil /*GetNodeListWithMinInfo*/, ref.HostName_ /*extHost*/, -1 /*extPort*/, base.ErrorNoPortNumber, /*extErr*/
-		true /*externalHost*/, false /*getExternalPort*/, true /*accurateData*/)
+		true /*externalHost*/, false /*getExternalPort*/, true, /*accurateData*/
+		clusterMadHatter)
 	remoteClusterSvc.updateUtilities(utilitiesMockExt)
 
 	// First bootstrap agent with a reference that refers to the external hostname
@@ -1271,7 +1323,8 @@ func TestAddressPreferenceChangeFlipFlop(t *testing.T) {
 	_, _, _, _, utilitiesMock, _ = setupBoilerPlateRCS()
 	setupUtilsMockSpecific(utilitiesMock, 0*time.Second, /*networkDelay*/
 		nil /*GetNodeListWithMinInfo*/, "" /*extHost*/, -1 /*extPort*/, base.ErrorResourceDoesNotExist, /*extErr*/
-		false /*externalHost*/, false /*getExternalPort*/, true /*accurateData*/)
+		false /*externalHost*/, false /*getExternalPort*/, true, /*accurateData*/
+		clusterMadHatter)
 	remoteClusterSvc.updateUtilities(utilitiesMock)
 
 	for i := 0; i <= base.RemoteClusterAlternateAddrChangeCnt-2; i++ {
@@ -1288,4 +1341,90 @@ func TestAddressPreferenceChangeFlipFlop(t *testing.T) {
 	assert.Equal(0, agent.pendingAddressPrefCnt)
 
 	fmt.Println("============== Test case start: TestAddressPreferenceChangeFlipFlop =================")
+}
+
+func TestCapabilityStruct(t *testing.T) {
+	fmt.Println("============== Test case start: TestCapabilityStruct =================")
+	assert := assert.New(t)
+
+	var capability metadata.Capability
+	pre70poolsDefault, err := getPoolsDefaultPre70()
+	assert.Nil(err)
+	err = capability.LoadFromDefaultPoolInfo(pre70poolsDefault, nil /* logger*/)
+	assert.Nil(err)
+	assert.False(capability.Collection)
+
+	cloneTest := capability.Clone()
+	assert.False(cloneTest.Collection)
+
+	on70poolsDefault, err := getPoolsDefault70()
+	assert.Nil(err)
+	err = capability.LoadFromDefaultPoolInfo(on70poolsDefault, nil /* logger*/)
+	assert.Nil(err)
+	assert.True(capability.Collection)
+
+	cloneTest = capability.Clone()
+	assert.True(cloneTest.Collection)
+
+	fmt.Println("============== Test case end: TestCapabilityStruct =================")
+}
+
+func TestCapabilityChange(t *testing.T) {
+	fmt.Println("============== Test case start: TestCapabilityChange =================")
+	assert := assert.New(t)
+
+	uiLogSvcMock, metadataSvcMock, xdcrTopologyMock, clusterInfoSvcMock,
+		utilitiesMock, remoteClusterSvc := setupBoilerPlateRCS()
+
+	utilsMockFunc := func() {
+		setupUtilsMockSpecific(utilitiesMock, 0*time.Second, /*networkDelay*/
+			nil /*GetNodeListWithMinInfo*/, "" /*extHost*/, 0 /*extPort*/, nil, /*extErr*/
+			true /*getExternal*/, false /*getExternalPort*/, true, /*accurateData*/
+			clusterMadHatter)
+	}
+
+	idAndName := "test"
+
+	ref := createRemoteClusterReference(idAndName)
+
+	setupMocksRCS(uiLogSvcMock, metadataSvcMock, xdcrTopologyMock, clusterInfoSvcMock,
+		remoteClusterSvc, ref, utilsMockFunc)
+
+	err := remoteClusterSvc.AddRemoteCluster(ref, true /*skipConnectivity*/)
+	assert.Nil(err)
+	capability, err := remoteClusterSvc.GetCapability(ref)
+	assert.Nil(err)
+	// Madhatter does not have collections support
+	assert.False(capability.Collection)
+	refListChanged, err := remoteClusterSvc.GetRefListForRestartAndClearState()
+	assert.Nil(err)
+	assert.Equal(0, len(refListChanged))
+
+	agent, _, _ := remoteClusterSvc.getOrStartNewAgent(ref, false /*userInitiated*/, false /*updateFromRef*/)
+	assert.NotNil(agent)
+	agent.unitTestBypassMetaKV = true
+
+	// Now pretend target cluster upgraded to Cheshire Cat
+	_, _, _, _, utilitiesMockNew, _ := setupBoilerPlateRCS()
+	setupUtilsMockSpecific(utilitiesMockNew, 0*time.Second, /*networkDelay*/
+		nil /*GetNodeListWithMinInfo*/, "" /*extHost*/, 0 /*extPort*/, nil, /*extErr*/
+		true /*getExternal*/, false /*getExternalPort*/, true, /*accurateData*/
+		clusterCheshireCat)
+
+	// Force a manual refresh to pick up the cheshire cat version
+	remoteClusterSvc.updateUtilities(utilitiesMockNew)
+	agent, alreadyExists, err := remoteClusterSvc.getOrStartNewAgent(ref, false /*userInitiated*/, false /*updateFromRef*/)
+	assert.True(alreadyExists)
+	assert.Nil(err)
+	assert.NotNil(agent)
+	assert.Nil(agent.Refresh())
+
+	capability, err = remoteClusterSvc.GetCapability(ref)
+	assert.Nil(err)
+	// CheshireCat does have collections support
+	assert.True(capability.Collection)
+	refListChanged, err = remoteClusterSvc.GetRefListForRestartAndClearState()
+	assert.Nil(err)
+	assert.Equal(1, len(refListChanged))
+	fmt.Println("============== Test case start: TestCapabilityChange =================")
 }
