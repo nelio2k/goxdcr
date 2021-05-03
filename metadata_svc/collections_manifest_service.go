@@ -84,7 +84,7 @@ func NewCollectionsManifestService(remoteClusterSvc service_def.RemoteClusterSvc
 // 2. Any perviously persisted manifests
 func (c *CollectionsManifestService) start() error {
 	c.logger = log.NewLogger("CollectionsManifestSvc", c.loggerCtx)
-	c.logger.Infof("CollectionsManifestSvc starting...")
+	c.logger.Infof("NEIL DEBUG CollectionsManifestSvc starting...")
 
 	replSpecs, err := c.replicationSpecSvc.AllReplicationSpecs()
 	if err != nil {
