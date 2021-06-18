@@ -69,7 +69,7 @@ function getReplRestID {
 
 for bucket in ${cluster1BucketsArr[@]}; do
 	for bucket2 in ${cluster2BucketsArr[@]}; do
-		local restID=$(getReplRestID "$bucket" "$bucket2")
+		restID=$(getReplRestID "$bucket" "$bucket2")
 		insertBucketReplIntoExportMap "C1" "$bucket" "ship" "$bucket2" "$restID"
 		insertPropertyIntoBucketReplPropertyMap "C1" "$bucket" "ship" "$bucket2" DefaultBucketReplProperties
 	done
