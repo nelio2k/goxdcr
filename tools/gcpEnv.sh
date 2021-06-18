@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/home/neil.huang/bash-5.0/bash
 set -u
 
 . ./clusterRunProvision.shlib
@@ -63,7 +63,7 @@ function getReplRestID {
 
 	local restFriendlyReplID=$(echo $restID | sed 's|/|%2F|g')
 
-	echo "$restFriendlyReplID"
+	echo "\"$restFriendlyReplID\""
 }
 
 remClusterId=$(getRemoteClusterUuid)

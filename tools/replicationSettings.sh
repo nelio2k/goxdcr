@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/home/neil.huang/bash-5.0/bash
 set -u
 
 # Copyright 2019-Present Couchbase, Inc.
