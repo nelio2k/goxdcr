@@ -42,12 +42,10 @@ DEFAULT_PW="Couchbase1"
 CLUSTER_NAME_PORT_MAP=(["C1"]=8091)
 CLUSTER_NAME_XDCR_PORT_MAP=(["C1"]=9998)
 
-cluster1BucketsArr=("source_A" "source_B" "source_C" "source_D" "source_E" "source_F" "source_G" "source_H" "source_I" "source_J" "source_K" "source_L" "source_M" "source_N" "source_O" "source_P")
-CLUSTER_NAME_BUCKET_MAP=(["C1"]=${cluster1BucketsArr[@]})
+#CLUSTER_NAME_BUCKET_MAP=(["C1"]=${cluster1BucketsArr[@]})
 
 declare -A DefaultBucketReplProperties=(["replicationType"]="continuous" ["checkpointInterval"]=60 ["statsInterval"]=500)
 
-cluster2BucketsArr=("dest_A" "dest_B" "dest_C" "dest_D" "dest_E" "dest_F" "dest_G" "dest_H" "dest_I" "dest_J" "dest_K" "dest_L" "dest_M" "dest_N" "dest_O" "dest_P")
 
 function getRemoteClusterUuid {
 	uuid=$(curl -sX GET -u Administrator:Couchbase1 http://127.0.0.1:8091/pools/default/remoteClusters | jq '.[0]' | jq '.uuid' | sed 's/"//g')
@@ -66,13 +64,18 @@ function getReplRestID {
 	echo "\"$restFriendlyReplID\""
 }
 
+function getListOfRepls {
+  curl -sX GET -u Administrator:Couchbase1 http://127.0.0.1:9998/pools/default/replications | jq | grep \"id\" | cut -d: -f2 | sed 's/,//g' | sed 's/"//g' | cut -d/ -f2,3
+}
+
 remClusterId=$(getRemoteClusterUuid)
-for bucket in ${cluster1BucketsArr[@]}; do
-	for bucket2 in ${cluster2BucketsArr[@]}; do
+for oneRepl in $(getListOfRepls)
+do
+    bucket=$(echo "$oneRepl" | cut -d/ -f1)
+    bucket2=$(echo "$oneRepl" | cut -d/ -f2)
 		restID=$(getReplRestID "$bucket" "$bucket2" "$remClusterId")
 		insertBucketReplIntoExportMap "C1" "$bucket" "ship" "$bucket2" "$restID"
 		insertPropertyIntoBucketReplPropertyMap "C1" "$bucket" "ship" "$bucket2" DefaultBucketReplProperties
-	done
 done
 
 exportProvisionedConfig
