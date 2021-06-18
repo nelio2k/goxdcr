@@ -57,8 +57,7 @@ function getRemoteClusterUuid {
 function getReplRestID {
 	local sourceBucket=$1
 	local targetBucket=$2
-	local remClusterId
-	remClusterId=$(getRemoteClusterUuid)
+	local remClusterId=$3
 
 	local restID="$remClusterId/$sourceBucket/$targetBucket"
 
@@ -67,9 +66,10 @@ function getReplRestID {
 	echo "$restFriendlyReplID"
 }
 
+remClusterId=$(getRemoteClusterUuid)
 for bucket in ${cluster1BucketsArr[@]}; do
 	for bucket2 in ${cluster2BucketsArr[@]}; do
-		restID=$(getReplRestID "$bucket" "$bucket2")
+		restID=$(getReplRestID "$bucket" "$bucket2" "$remClusterId")
 		insertBucketReplIntoExportMap "C1" "$bucket" "ship" "$bucket2" "$restID"
 		insertPropertyIntoBucketReplPropertyMap "C1" "$bucket" "ship" "$bucket2" DefaultBucketReplProperties
 	done
