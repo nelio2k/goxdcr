@@ -1,24 +1,24 @@
 #!/usr/bin/env bash
 set -u
 
-. ./importExporter.shlib
+. ./clusterRunProvision.shlib
 if (($? != 0)); then
 	exit $?
 fi
 
-function insertPropertyIntoBucketReplPropertyMap {
-	local sourceCluster=$1
-	local sourceBucket=$2
-	local targetCluster=$3
-	local targetBucket=$4
-	local -n incomingMap=$5
-
-	BUCKET_REPL_PROPERTIES_MAP=()
-	for key in ${!incomingMap[@]}; do
-		BUCKET_REPL_PROPERTIES_MAP["${sourceCluster},${sourceBucket},${targetCluster},${targetBucket},${key}"]=${incomingMap[$key]}
-	done
-	export BUCKET_REPL_PROPERTIES_MAP
-}
+#function insertPropertyIntoBucketReplPropertyMap {
+#	local sourceCluster=$1
+#	local sourceBucket=$2
+#	local targetCluster=$3
+#	local targetBucket=$4
+#	local -n incomingMap=$5
+#
+#	BUCKET_REPL_PROPERTIES_MAP=()
+#	for key in ${!incomingMap[@]}; do
+#		BUCKET_REPL_PROPERTIES_MAP["${sourceCluster},${sourceBucket},${targetCluster},${targetBucket},${key}"]=${incomingMap[$key]}
+#	done
+#	export BUCKET_REPL_PROPERTIES_MAP
+#}
 
 declare -A BUCKET_REPL_PROPERTIES_MAP
 declare -A CLUSTER_NAME_PORT_MAP
