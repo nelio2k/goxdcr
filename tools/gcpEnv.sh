@@ -20,6 +20,12 @@ function insertPropertyIntoBucketReplPropertyMap {
 	export BUCKET_REPL_PROPERTIES_MAP
 }
 
+declare -A CLUSTER_NAME_PORT_MAP
+declare -A CLUSTER_NAME_XDCR_PORT_MAP
+declare -A CLUSTER_NAME_BUCKET_MAP
+declare -a cluster1BucketsArr
+declare -a cluster2BucketsArr
+
 CLUSTER_NAME_PORT_MAP=(["C1"]=8091)
 CLUSTER_NAME_XDCR_PORT_MAP=(["C1"]=9998)
 
