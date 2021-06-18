@@ -401,12 +401,12 @@ function testForClusterRun {
 
 function setupCluster {
 	for clusterName in $(echo ${!CLUSTER_NAME_PORT_MAP[@]}); do
-	  if [[ ! -z "${CLUSTER_SETUP_DONE_MAP[$clusterName]:-}" ]];then
-	      echo "$clusterName has already been set up - skipping setup"
-	      continue
-	  else
-	      CLUSTER_SETUP_DONE_MAP[$clusterName]="1"
-	  fi
+		if [[ ! -z "${CLUSTER_SETUP_DONE_MAP[$clusterName]:-}" ]]; then
+			echo "$clusterName has already been set up - skipping setup"
+			continue
+		else
+			CLUSTER_SETUP_DONE_MAP[$clusterName]="1"
+		fi
 
 		local port=${CLUSTER_NAME_PORT_MAP[$clusterName]:-}
 		# If this nodeInfo is meant to be a dependency (added to a cluster) then don't add it

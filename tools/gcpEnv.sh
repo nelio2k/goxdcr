@@ -49,10 +49,30 @@ declare -A DefaultBucketReplProperties=(["replicationType"]="continuous" ["check
 
 cluster2BucketsArr=("dest_A" "dest_B" "dest_C" "dest_D" "dest_E" "dest_F" "dest_G" "dest_H" "dest_I" "dest_J" "dest_K" "dest_L" "dest_M" "dest_N" "dest_O" "dest_P")
 
-for bucket in ${cluster1BucketsArr[@]};do
-  for bucket2 in ${cluster2BucketsArr[@]};do
-    insertPropertyIntoBucketReplPropertyMap "C1" "$bucket" "ship" "$bucket2" DefaultBucketReplProperties
-  done
+function getRemoteClusterUuid {
+	uuid=$(curl -sX GET -u Administrator:Couchbase1 http://127.0.0.1:8091/pools/default/remoteClusters | jq '.[0]' | jq '.uuid' | sed 's/"//g')
+	echo "$uuid"
+}
+
+function getReplRestID {
+	local sourceBucket=$1
+	local targetBucket=$2
+	local remClusterId
+	remClusterId=$(getRemoteClusterUuid)
+
+	local restID="$remClusterId/$sourceBucket/$targetBucket"
+
+	local restFriendlyReplID=$(echo $restID | sed 's|/|%2F|g')
+
+	echo "$restFriendlyReplID"
+}
+
+for bucket in ${cluster1BucketsArr[@]}; do
+	for bucket2 in ${cluster2BucketsArr[@]}; do
+		local restID=$(getReplRestID)
+		insertBucketReplIntoExportMap "C1" "$bucket" "ship" "$bucket2" "$restID"
+		insertPropertyIntoBucketReplPropertyMap "C1" "$bucket" "ship" "$bucket2" DefaultBucketReplProperties
+	done
 done
 
 exportProvisionedConfig
