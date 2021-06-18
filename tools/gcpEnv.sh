@@ -80,26 +80,3 @@ done
 
 exportProvisionedConfig
 
-
-# MAIN
-function printHelp() {
-	findExec
-
-	cat <<EOF
-Usage: $0 -u <username> -p <password> -h <hostname:port> -s <sourceBucket> -t <targetBucket> -r <remoteClusterName> [-v <targetUrl>] [-n <remoteClusterUsername> -q <remoteClusterPassword>] [-c clean]
-
-This script will set up the necessary environment variable to allow the XDCR diff tool to connect to the metakv service in the
-specified source cluster (NOTE: over http://) and retrieve the specified replication spec and run the difftool on it.
-The difftool currently only supports connecting to remote targets with username and password. Thus, if the specified remote cluster
-reference only contains certificate, then specify the remoteClusterUsername and remoteClusterPassword accordingly.
-EOF
-}
-
-
-while getopts "h" opt; do
-	case ${opt} in
-	h)
-	  printHelp()
-		;;
-	esac
-done
