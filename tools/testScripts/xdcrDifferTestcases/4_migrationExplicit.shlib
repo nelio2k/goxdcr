@@ -27,16 +27,29 @@ insertPropertyIntoBucketNamePropertyMap "B0" BucketProperty
 insertPropertyIntoBucketNamePropertyMap "B1" Bucket1Properties
 insertPropertyIntoBucketNamePropertyMap "B2" BucketProperty
 
-declare -A DefaultBucketReplProperties=(["replicationType"]="continuous" ["checkpointInterval"]=60 ["statsInterval"]=500)
+mappingRule="{\"_default._default\":\"S2.col3\"}"
+
+declare -A MigrationReplProperties=(["replicationType"]="continuous" ["checkpointInterval"]=60 ["statsInterval"]=500
+	["collectionsMigrationMode"]=true ["colMappingRules"]="$mappingRule")
+
+# Bucket -> Scopes
+# -----------------
+BUCKET_NAME_SCOPE_MAP=(["B2"]="S2")
+
+# Scopes -> Collections
+# ----------------------
+declare -a collection2Arr=("col3" "col4" "col5")
+SCOPE_NAME_COLLECTION_MAP=(["S2"]=${collection2Arr[@]})
 
 function runDataLoad {
 	echo "RUNNING dataload..."
-	runCbWorkloadGenBucket "C1" "B1"
+	runCbWorkloadGenBucket "C1" "B1" &
+	waitForBgJobs
 }
 
 function runTestCase {
 	echo "============================================================================"
-	echo "Running XdcrDiffer simple non-collection unidirectional singleLoad test case"
+	echo "Running XdcrDiffer explicit migration singleLoad test case"
 	echo "============================================================================"
 	setupTopologies
 	if (($? != 0)); then
@@ -46,7 +59,7 @@ function runTestCase {
 	sleep 5
 	createRemoteClusterReference "C1" "C2"
 	sleep 1
-	createBucketReplication "C1" "B1" "C2" "B2" DefaultBucketReplProperties
+	createBucketReplication "C1" "B1" "C2" "B2" MigrationReplProperties
 
 	runDataLoad
 
@@ -82,8 +95,9 @@ function runTestCase {
 
 	echo "Writing some mismatching data"
 	writeJSONDocument "C1" "B1" "d1" '{"foo":"bar"}'
-	writeJSONDocument "C2" "B2" "d1" '{"foo2":"bar2"}'
-	writeJSONDocument "C2" "B2" "d2" '{"foo2":"bar2"}'
+	writeCollectionJSONDoc "C2" "B2" "S2" "col3" "d1" '{"foo2":"bar2"}'
+	# One missing from source doc
+	writeCollectionJSONDoc "C2" "B2" "S2" "col3" "d2" '{"foo2":"bar2"}'
 	sleep 5
 
 	runXdcrDiffer "C1" "B1" "C2" "B2"

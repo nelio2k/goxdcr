@@ -421,11 +421,29 @@ function runXdcrDiffer {
 	pushd $(pwd)
 
 	cd $xdcrDifferDir
-	$differSh -u $DEFAULT_ADMIN -p $DEFAULT_PW -h "localhost:$srcPort" -r $tgtCluster -s $srcBucket -t $tgtBucket -c
+	$differSh -u $DEFAULT_ADMIN -p $DEFAULT_PW -h "127.0.0.1:$srcPort" -r $tgtCluster -s $srcBucket -t $tgtBucket -c
 	retVal=$?
 
 	popd
 	return $retVal
+}
+
+function differGetTotalNumber {
+	local input="$1"
+	local collectionIDs
+	local collectionID
+	local sum=0
+
+	collectionIDs=$(echo "$input" | jq 'keys' | jq .[])
+	for collectionID in $(echo "$collectionIDs"); do
+		local keys
+		local numDocsForThisCollection
+		keys=$(echo "$input" | jq ".$collectionID")
+		numDocsForThisCollection=$(echo "$keys" | jq length)
+		sum=$(($sum + $numDocsForThisCollection))
+	done
+
+	echo "$sum"
 }
 
 function validateDifferResults {
@@ -437,6 +455,9 @@ function validateDifferResults {
 	local numOfMissingTgt
 	local resultOutput
 	local retVal=0
+	local mismatchOutput
+	local missingFromSourceOutput
+	local missingFromTargetOutput
 
 	if [[ ! -f "$mutationDiffResults" ]]; then
 		echo "Error: Unable to find mutation results file: $mutationDiffResults"
@@ -444,9 +465,13 @@ function validateDifferResults {
 	fi
 
 	resultOutput=$(cat $mutationDiffResults)
-	numOfMismatch=$(echo "$resultOutput" | jq '.Mismatch' | jq length)
-	numOfMissingSrc=$(echo "$resultOutput" | jq '.MissingFromSource' | jq length)
-	numOfMissingTgt=$(echo "$resultOutput" | jq '.MissingFromTarget' | jq length)
+	mismatchOutput=$(echo "$resultOutput" | jq '.Mismatch')
+	missingFromSourceOutput=$(echo "$resultOutput" | jq '.MissingFromSource')
+	missingFromTargetOutput=$(echo "$resultOutput" | jq '.MissingFromTarget')
+
+	numOfMismatch=$(differGetTotalNumber "$mismatchOutput")
+	numOfMissingSrc=$(differGetTotalNumber "$missingFromSourceOutput")
+	numOfMissingTgt=$(differGetTotalNumber "$missingFromTargetOutput")
 
 	if (($numOfMismatch != $expectedMismatchCnt)); then
 		echo "Expected $expectedMismatchCnt mismatch(es), but found $numOfMismatch"

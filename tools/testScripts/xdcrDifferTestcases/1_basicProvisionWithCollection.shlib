@@ -46,7 +46,7 @@ function runDataLoad {
 
 function runTestCase {
 	echo "============================================================================"
-	echo "Running XdcrDiffer simple collection bidirectional singleLoad test case"
+	echo "Running XdcrDiffer simple collection singleLoad test case"
 	echo "============================================================================"
 	setupTopologies
 	if (($? != 0)); then
