@@ -94,3 +94,4 @@ writeJSONDocument "C1" "B1" "regDoc" '{"foo":"bar"}'
 writeCollectionJSONDoc "C1" "B1" "S1" "col2" "collectionDoc" '{"colFoo":"colBar"}'
 
 exportProvisionedConfig
+
