@@ -60,6 +60,9 @@ function cycleThroughAllRepl {
 		replId=$(echo "$replId" | sed 's/"//g')
 		if (($specifiedId == 0)); then
 			echo -e "$counter \t\t $sourceCluster \t\t $sourceBucket \t\t $targetCluster \t\t $targetBucket \t $replId"
+		elif (( $specifiedId != $counter));then
+      counter=$(($counter + 1))
+      continue
 		else
 			local port=${CLUSTER_NAME_PORT_MAP[$sourceCluster]:-}
 			if [[ -z "$port" ]]; then
