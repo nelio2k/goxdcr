@@ -8,7 +8,7 @@ fi
 
 function printHelp() {
 	cat <<EOF
-Usage: $0 -r <host> [ -r <host2> ]... -b <bucketName> [-b <bucketName2>]... -t <threadPerBucket> -l <totalRatePerBucket>
+Usage: $0 [-s<hip>] -r <host> [ -r <host2> ]... -b <bucketName> [-b <bucketName2>]... -t <threadPerBucket> -l <totalRatePerBucket>
 
 EOF
 }
@@ -17,8 +17,9 @@ declare -a hostNames
 declare -a bucketNames
 declare -i threadPerBucket=0
 declare -i totalRatePerBucket=0
+declare -i shipSpecified
 
-while getopts "hr:b:t:l:" opt; do
+while getopts "hr:b:t:l:s" opt; do
 	case ${opt} in
 	h)
 	  printHelp
@@ -35,6 +36,9 @@ while getopts "hr:b:t:l:" opt; do
     ;;
   l)
     totalRatePerBucket=$OPTARG
+    ;;
+  s)
+    shipSpecified=1
     ;;
 	esac
 done
@@ -65,7 +69,8 @@ function launchWorker {
   local host=$1
   local bucket=$2
 
-  gcloud compute ssh xdcr-source-1 --zone us-central1-f -- "$pillowfightBin -P Couchbase1 -u Administrator -U couchbase://localhost/$bucket --rate-limit $ratePerThread -t $threadPerBucketPerNode" > /dev/null 2>&1
+  #gcloud compute ssh xdcr-source-1 --zone us-central1-f -- "$pillowfightBin -P Couchbase1 -u Administrator -U couchbase://localhost/$bucket --rate-limit $ratePerThread -t $threadPerBucketPerNode" > /dev/null 2>&1
+  gcloud compute ssh $host --zone us-central1-f -- "$pillowfightBin -P Couchbase1 -u Administrator -U couchbase://localhost/$bucket --rate-limit $ratePerThread -t $threadPerBucketPerNode" > /dev/null 2>&1
 }
 
 function ctrl_c() {
