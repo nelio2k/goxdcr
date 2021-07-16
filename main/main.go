@@ -11,6 +11,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"github.com/couchbase/goxdcr/peerToPeer"
 	"os"
 	"runtime"
 	"time"
@@ -219,6 +220,8 @@ func main() {
 			os.Exit(1)
 		}
 
+		p2pMgr, err := peerToPeer.NewPeerToPeerMgr(log.DefaultLoggerContext, top_svc, utils)
+
 		// start replication manager in normal mode
 		rm.StartReplicationManager(host,
 			uint16(options.xdcrRestPort),
@@ -240,7 +243,8 @@ func main() {
 			utils,
 			collectionsManifestService,
 			backfillReplService,
-			bucketTopologyService)
+			bucketTopologyService,
+			p2pMgr)
 
 		// keep main alive in normal mode
 		<-done

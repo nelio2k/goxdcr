@@ -31,6 +31,7 @@ import (
 	"github.com/couchbase/goxdcr/factory"
 	"github.com/couchbase/goxdcr/log"
 	"github.com/couchbase/goxdcr/metadata"
+	"github.com/couchbase/goxdcr/peerToPeer"
 	"github.com/couchbase/goxdcr/pipeline"
 	"github.com/couchbase/goxdcr/pipeline_manager"
 	"github.com/couchbase/goxdcr/pipeline_svc"
@@ -125,6 +126,8 @@ type replicationManager struct {
 	mem_stats_logger_finch chan bool
 
 	eventIdAtomicWell int64
+
+	p2pMgr peerToPeer.P2PManager
 }
 
 //singleton
@@ -149,7 +152,8 @@ func StartReplicationManager(sourceKVHost string,
 	utilitiesIn utilities.UtilsIface,
 	collectionsManifestSvc service_def.CollectionsManifestSvc,
 	backfillReplSvc service_def.BackfillReplSvc,
-	bucketTopologySvc service_def.BucketTopologySvc) {
+	bucketTopologySvc service_def.BucketTopologySvc,
+	p2pMgr peerToPeer.P2PManager) {
 
 	replication_mgr.once.Do(func() {
 		replication_mgr.eventIdAtomicWell = -1
@@ -168,7 +172,8 @@ func StartReplicationManager(sourceKVHost string,
 		replication_mgr.init(repl_spec_svc, remote_cluster_svc, cluster_info_svc,
 			xdcr_topology_svc, replication_settings_svc, checkpoint_svc, capi_svc,
 			audit_svc, uilog_svc, global_setting_svc, bucket_settings_svc, internal_settings_svc,
-			throughput_throttler_svc, resolver_svc, collectionsManifestSvc, backfillReplSvc, bucketTopologySvc)
+			throughput_throttler_svc, resolver_svc, collectionsManifestSvc, backfillReplSvc, bucketTopologySvc,
+			p2pMgr)
 
 		// start replication manager supervisor
 		// TODO should we make heart beat settings configurable?
@@ -195,7 +200,7 @@ func StartReplicationManager(sourceKVHost string,
 		replication_mgr.initMetadataChangeMonitor()
 
 		// start adminport
-		adminport := NewAdminport(sourceKVHost, xdcrRestPort, sourceKVAdminPort, replication_mgr.adminport_finch, replication_mgr.utils)
+		adminport := NewAdminport(sourceKVHost, xdcrRestPort, sourceKVAdminPort, replication_mgr.adminport_finch, replication_mgr.utils, replication_mgr.p2pMgr)
 		go adminport.Start()
 		logger_rm.Info("Admin port has been launched")
 		// add adminport as children of replication manager supervisor
@@ -445,7 +450,8 @@ func (rm *replicationManager) init(
 	resolverSvc service_def.ResolverSvcIface,
 	collectionsManifestSvc service_def.CollectionsManifestSvc,
 	backfillReplSvc service_def.BackfillReplSvc,
-	bucketTopologySvc service_def.BucketTopologySvc) {
+	bucketTopologySvc service_def.BucketTopologySvc,
+	p2pMgr peerToPeer.P2PManager) {
 
 	rm.GenericSupervisor = *supervisor.NewGenericSupervisor(base.ReplicationManagerSupervisorId, log.DefaultLoggerContext, rm, nil, rm.utils)
 	rm.repl_spec_svc = repl_spec_svc
@@ -464,6 +470,7 @@ func (rm *replicationManager) init(
 	rm.collectionsManifestSvc = collectionsManifestSvc
 	rm.backfillReplSvc = backfillReplSvc
 	rm.bucketTopologySvc = bucketTopologySvc
+	rm.p2pMgr = p2pMgr
 
 	fac := factory.NewXDCRFactory(repl_spec_svc, remote_cluster_svc, cluster_info_svc,
 		xdcr_topology_svc, checkpoint_svc, capi_svc, uilog_svc, bucket_settings_svc,
