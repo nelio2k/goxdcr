@@ -45,7 +45,7 @@ function eventingFunctionUIHandlerTest {
 		echo "Failed to create function $funcName"
 		exit 1
 	fi
-    echo
+	echo
 	echo "Get library xdcr function $funcName at XDCR admin port"
 	curl -s -request GET http://127.0.0.1:13000/evaluator/v1/libraries/$funcName \
 		-u $DEFAULT_ADMIN:$DEFAULT_PW
@@ -53,15 +53,15 @@ function eventingFunctionUIHandlerTest {
 		echo "Failed to GET function"
 		exit 1
 	fi
-    echo
-    echo "=== Get all libraries xdcr function $funcName at XDCR admin port ==="
-    curl -s -request GET http://127.0.0.1:13000/evaluator/v1/libraries/ \
-        -u $DEFAULT_ADMIN:$DEFAULT_PW
-    if (($? != 0)); then
-        echo "Failed to GET function"
-        exit 1
-    fi
-    echo
+	echo
+	echo "=== Get all libraries xdcr function $funcName at XDCR admin port ==="
+	curl -s -request GET http://127.0.0.1:13000/evaluator/v1/libraries/ \
+		-u $DEFAULT_ADMIN:$DEFAULT_PW
+	if (($? != 0)); then
+		echo "Failed to GET function"
+		exit 1
+	fi
+	echo
 	echo "=== Delete library $funcName at XDCR admin port ==="
 	curl -s -request DELETE http://localhost:13000/evaluator/v1/libraries/$funcName \
 		-u $DEFAULT_ADMIN:$DEFAULT_PW
@@ -72,68 +72,68 @@ function eventingFunctionUIHandlerTest {
 }
 
 function configureResolver {
-    echo "====== Configure Resolver ======"
-    DefaultEvaluatorWorkers=4
-    SetEvaluatorWorkers=3
-    setting=$(getSpecificInternalSettings "C1" "JsNumWorkers")
-    if (($setting != $DefaultEvaluatorWorkers)); then
-        echo "JsNumWorkers is $setting, expected $DefaultEvaluatorWorkers"
-        exit 1
-    else
-        echo "JsNumWorkers is $setting"
-    fi
-    setInternalSettings "C1" "JsNumWorkers"=$SetEvaluatorWorkers
-    echo "Setting JsNumWorkers to $SetEvaluatorWorkers. Sleep 10 seconds for XDCR to reboot"
-    sleep 10
-    setting=$(getSpecificInternalSettings "C1" "JsNumWorkers")
-    if (($setting != $SetEvaluatorWorkers)); then
-        echo "JsNumWorkers is $setting, expected $SetEvaluatorWorkers"
-        exit 1
-    else
-        echo "JsNumWorkers is set to $setting"
-    fi
-    # Set back to default
-    setInternalSettings "C1" "JsNumWorkers"=$DefaultEvaluatorWorkers
-    echo "Setting JsNumWorkers to $DefaultEvaluatorWorkers. Sleep 10 seconds for XDCR to reboot"
-    sleep 10
-    setting=$(getSpecificInternalSettings "C1" "JsNumWorkers")
-    if (($setting != $DefaultEvaluatorWorkers)); then
-        echo "JsNumWorkers is $setting, expected $DefaultEvaluatorWorkers"
-        exit 1
-    else
-        echo "JsNumWorkers is set to $setting"
-    fi
+	echo "====== Configure Resolver ======"
+	DefaultEvaluatorWorkers=4
+	SetEvaluatorWorkers=3
+	setting=$(getSpecificInternalSettings "C1" "JsNumWorkers")
+	if (($setting != $DefaultEvaluatorWorkers)); then
+		echo "JsNumWorkers is $setting, expected $DefaultEvaluatorWorkers"
+		exit 1
+	else
+		echo "JsNumWorkers is $setting"
+	fi
+	setInternalSettings "C1" "JsNumWorkers"=$SetEvaluatorWorkers
+	echo "Setting JsNumWorkers to $SetEvaluatorWorkers. Sleep 10 seconds for XDCR to reboot"
+	sleep 10
+	setting=$(getSpecificInternalSettings "C1" "JsNumWorkers")
+	if (($setting != $SetEvaluatorWorkers)); then
+		echo "JsNumWorkers is $setting, expected $SetEvaluatorWorkers"
+		exit 1
+	else
+		echo "JsNumWorkers is set to $setting"
+	fi
+	# Set back to default
+	setInternalSettings "C1" "JsNumWorkers"=$DefaultEvaluatorWorkers
+	echo "Setting JsNumWorkers to $DefaultEvaluatorWorkers. Sleep 10 seconds for XDCR to reboot"
+	sleep 10
+	setting=$(getSpecificInternalSettings "C1" "JsNumWorkers")
+	if (($setting != $DefaultEvaluatorWorkers)); then
+		echo "JsNumWorkers is $setting, expected $DefaultEvaluatorWorkers"
+		exit 1
+	else
+		echo "JsNumWorkers is set to $setting"
+	fi
 
-    DefaultWorkerQuota=1572864 #1.5*1024*1024
-    SetWorkerQuota=1536 #1.5*1024
-    setting=$(getSpecificInternalSettings "C1" "JsWorkerMemQuotaBytes")
-    if (($setting != $DefaultWorkerQuota)); then
-        echo "JsWorkerMemQuotaBytes is $setting, expected $DefaultWorkerQuota"
-        exit 1
-    else
-        echo "JsWorkerMemQuotaBytes is $setting"
-    fi
-    setInternalSettings "C1" "JsWorkerMemQuotaBytes"=$SetWorkerQuota
-    echo "Setting JsWorkerMemQuotaBytes to $SetWorkerQuota. Sleep 10 seconds for XDCR to reboot"
-    sleep 10
-    setting=$(getSpecificInternalSettings "C1" "JsWorkerMemQuotaBytes")
-    if (($setting != $SetWorkerQuota)); then
-        echo "JsWorkerMemQuotaBytes is $setting, expected $SetWorkerQuota"
-        exit 1
-    else
-        echo "JsWorkerMemQuotaBytes is set to $setting"
-    fi
-    # Set back to default
-    setInternalSettings "C1" "JsWorkerMemQuotaBytes"=$DefaultWorkerQuota
-    echo "Setting JsWorkerMemQuotaBytes to $DefaultWorkerQuota. Sleep 10 seconds for XDCR to reboot"
-    sleep 10
-    setting=$(getSpecificInternalSettings "C1" "JsWorkerMemQuotaBytes")
-    if (($setting != $DefaultWorkerQuota)); then
-        echo "JsWorkerMemQuotaBytes is $setting, expected $DefaultWorkerQuota"
-        exit 1
-    else
-        echo "JsWorkerMemQuotaBytes is set to $setting"
-    fi
+	DefaultWorkerQuota=1572864 #1.5*1024*1024
+	SetWorkerQuota=1536        #1.5*1024
+	setting=$(getSpecificInternalSettings "C1" "JsWorkerMemQuotaBytes")
+	if (($setting != $DefaultWorkerQuota)); then
+		echo "JsWorkerMemQuotaBytes is $setting, expected $DefaultWorkerQuota"
+		exit 1
+	else
+		echo "JsWorkerMemQuotaBytes is $setting"
+	fi
+	setInternalSettings "C1" "JsWorkerMemQuotaBytes"=$SetWorkerQuota
+	echo "Setting JsWorkerMemQuotaBytes to $SetWorkerQuota. Sleep 10 seconds for XDCR to reboot"
+	sleep 10
+	setting=$(getSpecificInternalSettings "C1" "JsWorkerMemQuotaBytes")
+	if (($setting != $SetWorkerQuota)); then
+		echo "JsWorkerMemQuotaBytes is $setting, expected $SetWorkerQuota"
+		exit 1
+	else
+		echo "JsWorkerMemQuotaBytes is set to $setting"
+	fi
+	# Set back to default
+	setInternalSettings "C1" "JsWorkerMemQuotaBytes"=$DefaultWorkerQuota
+	echo "Setting JsWorkerMemQuotaBytes to $DefaultWorkerQuota. Sleep 10 seconds for XDCR to reboot"
+	sleep 10
+	setting=$(getSpecificInternalSettings "C1" "JsWorkerMemQuotaBytes")
+	if (($setting != $DefaultWorkerQuota)); then
+		echo "JsWorkerMemQuotaBytes is $setting, expected $DefaultWorkerQuota"
+		exit 1
+	else
+		echo "JsWorkerMemQuotaBytes is set to $setting"
+	fi
 	echo "====== Configure Resolver PASSED ======"
 }
 
@@ -174,7 +174,7 @@ function remoteClusterUserPermission {
 	# Delete tmpuser
 	curl -X DELETE -u $DEFAULT_ADMIN:$DEFAULT_PW http://localhost:9001/settings/rbac/users/local/tmpuser
 	if (($result != 0)); then
-        exit 1
+		exit 1
 	fi
 	echo "====== remoteClusterUserPermission PASSED ======"
 }
@@ -182,8 +182,8 @@ function remoteClusterUserPermission {
 function mergeFunctionTimeoutTest {
 	echo "====== Test JS Function timeout setting ======"
 
-    funcName="loopForever"
-    echo "Create library xdcr function $funcName at XDCR admin port"
+	funcName="loopForever"
+	echo "Create library xdcr function $funcName at XDCR admin port"
 	curl -s -request POST \
 		http://localhost:13000/evaluator/v1/libraries/$funcName \
 		-u $DEFAULT_ADMIN:$DEFAULT_PW \
@@ -194,32 +194,32 @@ function mergeFunctionTimeoutTest {
 	setReplicationSettings "C1" "CCR1" "C2" "CCR2" "$setting=$value"
 	expected='"default": "loopForever"'
 	getMergeFuncMap=$(getReplicationSettings "C1" "CCR1" "C2" "CCR2" | jq .$setting)
-    if [[ $getMergeFuncMap != *'"default": "loopForever"'* ]]; then
-        echo "Merge Function map is $getMergeFuncMap, expected $expected."
-        exit 1
-    fi
+	if [[ $getMergeFuncMap != *'"default": "loopForever"'* ]]; then
+		echo "Merge Function map is $getMergeFuncMap, expected $expected."
+		exit 1
+	fi
 	setReplicationSettings "C1" "CCR1" "C2" "CCR2" "jsFunctionTimeoutMs=4000"
 	timeout=$(getReplicationSettings "C1" "CCR1" "C2" "CCR2" | jq .jsFunctionTimeoutMs)
-    if [[ $timeout != 4000 ]]; then
-        echo "jsFunctionTimeoutMs is $timeout, expect 4000"
-        exit
-    fi
-    # Set the merge function back so the rest of the test can work
+	if [[ $timeout != 4000 ]]; then
+		echo "jsFunctionTimeoutMs is $timeout, expect 4000"
+		exit
+	fi
+	# Set the merge function back so the rest of the test can work
 	value='{"default":"simpleMerge"}'
 	setReplicationSettings "C1" "CCR1" "C2" "CCR2" "$setting=$value"
 	expected='"default": "simpleMerge"'
 	getMergeFuncMap=$(getReplicationSettings "C1" "CCR1" "C2" "CCR2" | jq .$setting)
-    if [[ $getMergeFuncMap != *'"default": "simpleMerge"'* ]]; then
-        echo "Merge Function map is $getMergeFuncMap, expected $expected."
-        exit 1
-    fi
+	if [[ $getMergeFuncMap != *'"default": "simpleMerge"'* ]]; then
+		echo "Merge Function map is $getMergeFuncMap, expected $expected."
+		exit 1
+	fi
 }
 function runTestCase {
 	echo "=================================="
 	echo "Running REST API tests"
 	echo "=================================="
 
-    mergeFunctionTimeoutTest
+	mergeFunctionTimeoutTest
 	ccrReplicationSettings
 	eventingFunctionUIHandlerTest
 	configureResolver
