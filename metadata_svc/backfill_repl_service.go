@@ -163,7 +163,7 @@ func (b *BackfillReplicationService) initCacheFromMetaKV() (err error) {
 		backfillSpec.SetReplicationSpec(actualSpec)
 
 		// Last step is to make sure that the sha mapping is retrieved
-		b.InitTopicShaCounter(backfillSpec.Id)
+		b.InitTopicShaCounterIfNeeded(backfillSpec.Id)
 		mappingsDoc, err := b.GetMappingsDoc(backfillSpec.Id, false /*initIfNotFound*/)
 		if err != nil {
 			b.logger.Errorf("Unable to retrieve mappingDoc for backfill replication %v", backfillSpec.Id)
@@ -361,7 +361,7 @@ func (b *BackfillReplicationService) AddBackfillReplSpec(spec *metadata.Backfill
 	}
 
 	// First, persist the collection mapping info for just the VBs this node owns
-	alreadyExists := b.InitTopicShaCounterWithInternalId(spec.Id, spec.InternalId)
+	alreadyExists := b.InitTopicShaCounterWithInternalIdIfNeeded(spec.Id, spec.InternalId)
 	if alreadyExists {
 		return fmt.Errorf("Error - previous spec shouldn't exist")
 	}
