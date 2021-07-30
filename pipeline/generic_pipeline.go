@@ -54,7 +54,7 @@ type CheckpointFunc func(pipeline common.Pipeline) error
 // Returns the VBMasterCheck response and results, which will contain checkpoint information
 type VBMasterCheckFunc func(common.Pipeline) (map[string]*peerToPeer.VBMasterCheckResp, error)
 
-type MergeVBMasterRespCkptsFunc func(common.Pipeline, map[string]*peerToPeer.VBMasterCheckResp) error
+type MergeVBMasterRespCkptsFunc func(common.Pipeline, peerToPeer.PeersVBMasterCheckRespMap) error
 
 //GenericPipeline is the generic implementation of a data processing pipeline
 //

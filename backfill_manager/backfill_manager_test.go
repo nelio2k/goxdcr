@@ -13,7 +13,9 @@ package backfill_manager
 import (
 	"fmt"
 	"github.com/couchbase/goxdcr/base"
+	"github.com/couchbase/goxdcr/common"
 	"github.com/couchbase/goxdcr/metadata"
+	"github.com/couchbase/goxdcr/peerToPeer"
 	pipeline_mgr "github.com/couchbase/goxdcr/pipeline_manager/mocks"
 	service_def_real "github.com/couchbase/goxdcr/service_def"
 	service_def "github.com/couchbase/goxdcr/service_def/mocks"
@@ -460,4 +462,82 @@ func TestBackfillMgrRetry(t *testing.T) {
 
 	// Not tested here - but look at the logs - there should be 2 instances of retries
 	assert.Len(backfillMgr.errorRetryQueue, 3)
+}
+
+func TestBackfillMgrLaunchSpecsThenPeers(t *testing.T) {
+	assert := assert.New(t)
+	fmt.Println("============== Test case start: TestBackfillMgrLaunchSpecsThenPeers =================")
+	defer fmt.Println("============== Test case end: TestBackfillMgrLaunchSpecsThenPeers =================")
+	manifestSvc, replSpecSvc, backfillReplSvc, pipelineMgr, clusterInfoSvc, xdcrCompTopologySvc, checkpointSvcMock, bucketTopologySvc := setupBoilerPlate()
+	specs, manifestPairs := setupStartupSpecs(5)
+	setupReplStartupSpecs(replSpecSvc, specs)
+	setupBackfillSpecs(backfillReplSvc, specs)
+	setupStartupManifests(manifestSvc, specs, manifestPairs)
+	setupMock(manifestSvc, replSpecSvc, pipelineMgr, clusterInfoSvc, xdcrCompTopologySvc, checkpointSvcMock, defaultSeqnoGetter, vbsGetter, backfillReplSvc, nil, bucketTopologySvc)
+
+	backfillMgr := NewBackfillManager(manifestSvc, replSpecSvc, backfillReplSvc, pipelineMgr, clusterInfoSvc, xdcrCompTopologySvc, checkpointSvcMock, bucketTopologySvc)
+	assert.NotNil(backfillMgr)
+
+	assert.Nil(backfillMgr.Start())
+
+	var specIdToUse string
+	var specToUse *metadata.ReplicationSpecification
+	for specId, oneSpec := range specs {
+		specIdToUse = specId
+		specToUse = oneSpec
+		break
+	}
+
+	resp := &peerToPeer.VBMasterCheckResp{
+		ResponseCommon:            peerToPeer.NewResponseCommon(peerToPeer.ReqVBMasterChk, "", "", uint32(6), ""),
+		ResponsePayloadCompressed: nil,
+		ErrorMsg:                  "",
+		ReplicationSpecId:         specIdToUse,
+		SourceBucketName:          specToUse.SourceBucketName,
+		PipelineType:              common.MainPipeline,
+	}
+
+	_, tasks0 := getTaskForVB0(specToUse.SourceBucketName)
+
+	vbTaskMap := metadata.NewVBTasksMap()
+	vbTaskMap.VBTasksMap[0] = tasks0
+	assert.NotEqual(0, len(tasks0.GetAllCollectionNamespaceMappings()))
+
+	resp.Init()
+	resp.InitBucket(specToUse.SourceBucketName)
+	bucketVBMapType := resp.GetReponse()
+	(*bucketVBMapType)[specToUse.SourceBucketName].RegisterNotMyVBs([]uint16{0})
+	assert.Nil(resp.LoadBackfillTasks(*vbTaskMap, specToUse.SourceBucketName))
+
+	peersMap := make(peerToPeer.PeersVBMasterCheckRespMap)
+	peersMap["dummyNode"] = resp
+	settingsMap := make(metadata.ReplicationSettingsMap)
+	settingsMap[base.NameKey] = specIdToUse
+	settingsMap[peerToPeer.MergeBackfillKey] = peersMap
+	assert.Nil(backfillMgr.GetPipelineSvc().UpdateSettings(settingsMap))
+
+}
+
+func getTaskForVB0(srcBucketName string) (*metadata.ReplicationSpecification, *metadata.BackfillTasks) {
+	collectionNs := make(metadata.CollectionNamespaceMapping)
+	ns1 := &base.CollectionNamespace{
+		ScopeName:      "s1",
+		CollectionName: "col1",
+	}
+	collectionNs.AddSingleMapping(ns1, ns1)
+
+	emptySpec, _ := metadata.NewReplicationSpecification(srcBucketName, "", "", "", "")
+	ts0 := &metadata.BackfillVBTimestamps{
+		StartingTimestamp: &base.VBTimestamp{
+			Vbno:  0,
+			Seqno: 0,
+		},
+		EndingTimestamp: &base.VBTimestamp{
+			Vbno:  0,
+			Seqno: 1000,
+		},
+	}
+	task0 := metadata.NewBackfillTask(ts0, []metadata.CollectionNamespaceMapping{collectionNs})
+	taskList := metadata.NewBackfillTasksWithTask(task0)
+	return emptySpec, &taskList
 }

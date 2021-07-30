@@ -49,6 +49,10 @@ const RespMagic = 0x100
 const RequestType ReqRespType = iota
 const ResponseType ReqRespType = iota
 
+const VBUnableToLoad = "VB not able to stored into response"
+
+const MergeBackfillKey = "mergeBackfillInfoFromPeers"
+
 type RequestCommon struct {
 	Magic             int
 	ReqType           OpCode
@@ -420,6 +424,8 @@ func (v *VBMasterCheckReq) GenerateResponse() interface{} {
 	return resp
 }
 
+type PeersVBMasterCheckRespMap map[string]*VBMasterCheckResp
+
 type VBMasterCheckResp struct {
 	ResponseCommon
 
@@ -443,6 +449,11 @@ func NewVBMasterCheckRespGivenPayload(payload BucketVBMPayloadType) *VBMasterChe
 
 func (v *VBMasterCheckResp) GetReponse() *BucketVBMPayloadType {
 	return v.responsePayload
+}
+
+// Unit test
+func (v *VBMasterCheckResp) SetReponse(payload *BucketVBMPayloadType) {
+	v.responsePayload = payload
 }
 
 func (v *VBMasterCheckResp) Serialize() ([]byte, error) {
@@ -512,7 +523,8 @@ type VBMasterPayload struct {
 	SrcManifests *metadata.ManifestsCache
 	TgtManifests *metadata.ManifestsCache
 
-	BrokenMappingDoc *metadata.CollectionNsMappingsDoc
+	BrokenMappingDoc   *metadata.CollectionNsMappingsDoc
+	BackfillMappingDoc *metadata.CollectionNsMappingsDoc
 }
 
 func (p *VBMasterPayload) RegisterVbsIntersect(vbsIntersect []uint16) {
@@ -553,6 +565,10 @@ func (p *VBMasterPayload) GetBrokenMappingDoc() *metadata.CollectionNsMappingsDo
 	return p.BrokenMappingDoc
 }
 
+func (p *VBMasterPayload) GetBackfillMappingDoc() *metadata.CollectionNsMappingsDoc {
+	return p.BackfillMappingDoc
+}
+
 type VBsPayload map[uint16]*Payload
 
 func NewVBsPayload(vbsList []uint16) *VBsPayload {
@@ -575,6 +591,9 @@ func NewVBMasterPayload() *VBMasterPayload {
 
 type Payload struct {
 	CheckpointsDoc *metadata.CheckpointsDoc
+
+	// Backfill replication is decomposed and just the VBTasksMap is transferred
+	BackfillTsks *metadata.BackfillTasks
 }
 
 func NewPayload() *Payload {
@@ -637,5 +656,59 @@ func (v *VBMasterCheckResp) LoadBrokenMappingDoc(brokenMappingDoc metadata.Colle
 	}
 
 	payload.BrokenMappingDoc = &brokenMappingDoc
+	return nil
+}
+
+func (v *VBMasterCheckResp) LoadBackfillTasks(backfillTasks metadata.VBTasksMapType, srcBucketName string) error {
+	if !backfillTasks.ContainsAtLeastOneTask() {
+		// Nothing to do
+		return nil
+	}
+
+	payload, found := (*v.responsePayload)[srcBucketName]
+	if !found {
+		return fmt.Errorf("Bucket %v not found from response payload", srcBucketName)
+	}
+
+	backfillMapping := backfillTasks.GetAllCollectionNamespaceMappings()
+	if len(backfillMapping) == 0 {
+		return fmt.Errorf("backfill replication from source bucket %v contains at least one task but the mapping is empty", srcBucketName)
+	}
+
+	backfillMappingDoc := &metadata.CollectionNsMappingsDoc{}
+	err := backfillMappingDoc.LoadShaMap(backfillMapping)
+	if err != nil {
+		return err
+	}
+	payload.BackfillMappingDoc = backfillMappingDoc
+
+	// LoadPipelineCkpts has already been done so all the VBs struct would have been set up
+	errMap := make(base.ErrorMap)
+	for vb, tasks := range backfillTasks.VBTasksMap {
+		if tasks == nil || tasks.Len() == 0 {
+			continue
+		}
+
+		notMyVBMap := *payload.NotMyVBs
+		vbPayload, found := notMyVBMap[vb]
+		if found {
+			vbPayload.BackfillTsks = tasks
+			continue
+		}
+
+		// If not found above, try next data structure
+		conflictingVBMap := *payload.ConflictingVBs
+		vbPayload2, found2 := conflictingVBMap[vb]
+		if found2 {
+			vbPayload2.BackfillTsks = tasks
+		}
+
+		// Not found - log an error
+		errMap[fmt.Sprintf("vb %v", vb)] = fmt.Errorf("LoadBackfillTasks: %v", VBUnableToLoad)
+	}
+
+	if len(errMap) > 0 {
+		return fmt.Errorf(base.FlattenErrorMap(errMap))
+	}
 	return nil
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/couchbase/goxdcr/common"
 	"github.com/couchbase/goxdcr/log"
 	"github.com/couchbase/goxdcr/metadata"
+	"github.com/couchbase/goxdcr/peerToPeer"
 	"github.com/couchbase/goxdcr/pipeline_manager"
 	"github.com/couchbase/goxdcr/service_def"
 	"github.com/couchbase/goxdcr/utils"
@@ -144,18 +145,17 @@ func (p *pipelineSvcWrapper) Stop() error {
 func (p *pipelineSvcWrapper) UpdateSettings(settings metadata.ReplicationSettingsMap) error {
 	errMap := make(base.ErrorMap)
 
-	topic, exists := settings[base.NameKey].(string)
+	topic, topicExists := settings[base.NameKey].(string)
 	_, exists2 := settings[metadata.CollectionsDelAllBackfillKey].(bool)
-	if exists && exists2 {
+	if topicExists && exists2 {
 		err := p.backfillMgr.DelAllBackfills(topic)
 		if err != nil {
 			errMap[metadata.CollectionsDelAllBackfillKey] = err
 		}
 	}
 
-	topic, exists = settings[base.NameKey].(string)
 	vbno, exists2 := settings[metadata.CollectionsDelVbBackfillKey].(int)
-	if exists && exists2 && vbno >= 0 {
+	if topicExists && exists2 && vbno >= 0 {
 		err := p.backfillMgr.DelBackfillForVB(topic, uint16(vbno))
 		if err != nil {
 			errMap[metadata.CollectionsDelVbBackfillKey] = err
@@ -168,6 +168,14 @@ func (p *pipelineSvcWrapper) UpdateSettings(settings metadata.ReplicationSetting
 		err := p.backfillMgr.RequestOnDemandBackfill(topic, backfillMapping)
 		if err != nil {
 			errMap[metadata.CollectionsManualBackfillKey] = err
+		}
+	}
+
+	peerBackfillInfo, exists := settings[peerToPeer.MergeBackfillKey].(peerToPeer.PeersVBMasterCheckRespMap)
+	if topicExists && exists {
+		err := p.backfillMgr.MergeIncomingPeerNodesBackfill(topic, peerBackfillInfo)
+		if err != nil {
+			errMap[peerToPeer.MergeBackfillKey] = err
 		}
 	}
 
@@ -1682,4 +1690,61 @@ func (b *BackfillMgr) validateReplIdExists(replId string) bool {
 		}
 	}
 	return false
+}
+
+func (b *BackfillMgr) MergeIncomingPeerNodesBackfill(topic string, peerResponses map[string]*peerToPeer.VBMasterCheckResp) error {
+	spec, err := b.replSpecSvc.ReplicationSpec(topic)
+	if err != nil {
+		return err
+	}
+
+	b.specReqHandlersMtx.RLock()
+	handler := b.specToReqHandlerMap[topic]
+	b.specReqHandlersMtx.RUnlock()
+	if handler == nil {
+		err := fmt.Errorf("Unable to find handler for spec %v", topic)
+		b.logger.Errorf(err.Error())
+		return err
+	}
+
+	errMap := make(base.ErrorMap)
+	for nodeName, resp := range peerResponses {
+		srcBucketName := resp.SourceBucketName
+		bucketMapPayload := resp.GetReponse()
+		backfillMappingDoc := (*bucketMapPayload)[srcBucketName].GetBackfillMappingDoc()
+		if backfillMappingDoc == nil || backfillMappingDoc.Size() == 0 {
+			// Nothing to do here
+			continue
+		}
+		// Need to reconstruct backfill replication
+		shaMap, err := backfillMappingDoc.ToShaMap()
+		if err != nil {
+			errMap[fmt.Sprintf("%v_%v", topic, nodeName)] = fmt.Errorf("nodeRespData BackfillMappingDoc ToShaMap err %v", err)
+			continue
+		}
+		vbTaskMap := metadata.NewVBTasksMap()
+		err = vbTaskMap.LoadFromMappingsShaMap(shaMap)
+		if err != nil {
+			errMap[fmt.Sprintf("%v_%v", topic, nodeName)] = fmt.Errorf("nodeRespData LoadFromMappingsShaMap err %v", err)
+			continue
+		}
+
+		backfillSpec := metadata.NewBackfillReplicationSpec(topic, backfillMappingDoc.SpecInternalId, vbTaskMap, spec)
+		b.logger.Infof("Replication %v received peer node backfill replication: %v", topic, backfillSpec)
+
+		mergeReq := internalPeerBackfillTaskMergeReq{
+			backfillSpec: backfillSpec,
+		}
+		err = handler.HandleBackfillRequest(mergeReq)
+		if err != nil {
+			err = fmt.Errorf("node %v backfill merge request was unable to be merged - %v", nodeName, err)
+			b.logger.Errorf(err.Error())
+			errMap[nodeName] = err
+		}
+	}
+	if len(errMap) > 0 {
+		return fmt.Errorf(base.FlattenErrorMap(errMap))
+	} else {
+		return nil
+	}
 }

@@ -281,6 +281,9 @@ func (b *BackfillRequestHandler) run() {
 						go b.HandleBackfillRequest(delReq)
 					}
 				}
+			case reflect.TypeOf(internalPeerBackfillTaskMergeReq{}):
+				err := b.handlePeerNodesBackfillMerge(reqAndResp)
+				b.handlePersist(reqAndResp, err, requestPersistFunc)
 			case nil:
 				// This is when stop() is called and the channel is closed
 			default:
@@ -478,6 +481,7 @@ func (b *BackfillRequestHandler) handleBackfillRequestInternal(reqAndResp ReqAnd
 	return nil
 }
 
+// reqRO and seqnosMap is only needed for logging purposes
 func (b *BackfillRequestHandler) updateBackfillSpec(persistResponse chan error, vbTasksMap *metadata.VBTasksMapType, reqRO metadata.CollectionNamespaceMapping, seqnosMap map[uint16]uint64, force bool) error {
 	clonedSpec := b.spec.Clone()
 
@@ -510,32 +514,7 @@ func (b *BackfillRequestHandler) updateBackfillSpec(persistResponse chan error, 
 			return nil
 		}
 
-		var shouldSkipFirst bool = true
-		if b.cachedBackfillSpec.VBTasksMap.ContainsAtLeastOneTask() {
-			b.pipelinesMtx.RLock()
-			pipeline, _ := b.getPipeline(common.BackfillPipeline)
-			if pipeline != nil && (pipeline.State() == common.Pipeline_Initial || pipeline.State() == common.Pipeline_Stopped) {
-				// See if there are checkpoints present that represent the backfill pipeline has started before
-				// If any is present, it means that the first VBTask has made progress and the incoming task cannot be merged with it
-				checkpointMgr, ok := pipeline.RuntimeContext().Service(base.CHECKPOINT_MGR_SVC).(pipeline_svc.CheckpointMgrSvc)
-				if ok {
-					ckptExists, err := checkpointMgr.CheckpointsExist(pipeline.FullTopic())
-					if err == nil && !ckptExists {
-						shouldSkipFirst = false
-					}
-				}
-			}
-			b.pipelinesMtx.RUnlock()
-
-			skipFirstString := ""
-			if !shouldSkipFirst {
-				skipFirstString = " (complete merge) "
-			}
-			// Note, this message is used for integration testing script
-			b.logger.Infof("Replication %v%v- These collections need to append backfill %v for vb->seqnos %v", b.id, skipFirstString, reqRO, seqnosMap)
-		} else {
-			b.logNewBackfillMsg(reqRO, seqnosMap)
-		}
+		shouldSkipFirst := b.figureOutIfCkptExists(reqRO, seqnosMap)
 
 		b.cachedBackfillSpec.MergeNewTasks(vbTasksMap, shouldSkipFirst)
 		b.requestPersistence(SetOp, persistResponse)
@@ -543,9 +522,45 @@ func (b *BackfillRequestHandler) updateBackfillSpec(persistResponse chan error, 
 	return nil
 }
 
+func (b *BackfillRequestHandler) figureOutIfCkptExists(reqRO metadata.CollectionNamespaceMapping, seqnosMap map[uint16]uint64) bool {
+	var shouldSkipFirst = true
+	if b.cachedBackfillSpec.VBTasksMap.ContainsAtLeastOneTask() {
+		b.pipelinesMtx.RLock()
+		pipeline, _ := b.getPipeline(common.BackfillPipeline)
+		if pipeline != nil && (pipeline.State() == common.Pipeline_Initial || pipeline.State() == common.Pipeline_Stopped) {
+			// See if there are checkpoints present that represent the backfill pipeline has started before
+			// If any is present, it means that the first VBTask has made progress and the incoming task cannot be merged with it
+			checkpointMgr, ok := pipeline.RuntimeContext().Service(base.CHECKPOINT_MGR_SVC).(pipeline_svc.CheckpointMgrSvc)
+			if ok {
+				ckptExists, err := checkpointMgr.CheckpointsExist(pipeline.FullTopic())
+				if err == nil && !ckptExists {
+					shouldSkipFirst = false
+				}
+			}
+		}
+		b.pipelinesMtx.RUnlock()
+
+		skipFirstString := ""
+		if !shouldSkipFirst {
+			skipFirstString = " (complete merge) "
+		}
+		// Note, this message is used for integration testing script
+		if reqRO != nil && seqnosMap != nil {
+			b.logger.Infof("Replication %v%v- These collections need to append backfill %v for vb->seqnos %v", b.id, skipFirstString, reqRO, seqnosMap)
+		}
+	} else {
+		if reqRO != nil && seqnosMap != nil {
+			b.logNewBackfillMsg(reqRO, seqnosMap)
+		}
+	}
+	return shouldSkipFirst
+}
+
 // Note, this message is used for integration testing script
 func (b *BackfillRequestHandler) logNewBackfillMsg(req metadata.CollectionNamespaceMapping, seqnosMap map[uint16]uint64) {
-	b.logger.Infof("Replication %v - These collections need to backfill %v for vb->seqnos %v", b.id, req.String(), seqnosMap)
+	if req != nil && seqnosMap != nil {
+		b.logger.Infof("Replication %v - These collections need to backfill %v for vb->seqnos %v", b.id, req.String(), seqnosMap)
+	}
 }
 
 func (b *BackfillRequestHandler) requestPersistence(op PersistType, resp chan error) error {
@@ -952,17 +967,6 @@ func (b *BackfillRequestHandler) handleBackfillRequestDiffPair(resp ReqAndResp) 
 	}
 }
 
-type internalDelBackfillReq struct {
-	specificVBRequested bool
-	vbno                uint16
-}
-
-type internalVBDiffBackfillReq struct {
-	addedVBsList   []uint16
-	removedVBsList []uint16
-	req            interface{}
-}
-
 func (b *BackfillRequestHandler) DelAllBackfills() error {
 	var delBackfillReq internalDelBackfillReq
 	return b.HandleBackfillRequest(delBackfillReq)
@@ -1048,4 +1052,35 @@ func (b *BackfillRequestHandler) handleVBsDiff(added []uint16, removed []uint16)
 
 	go b.handleBackfillRequestWithArgs(internalDiffReq, false)
 	return nil
+}
+
+func (b *BackfillRequestHandler) handlePeerNodesBackfillMerge(reqAndResp ReqAndResp) error {
+	peerNodesReq, ok := reqAndResp.Request.(internalPeerBackfillTaskMergeReq)
+	if !ok {
+		err := fmt.Errorf("Invalid type: expecting internalPeerBackfillTaskMergeReq, got %v", reflect.TypeOf(reqAndResp.Request))
+		return err
+	}
+
+	if peerNodesReq.backfillSpec.InternalId != "" && b.spec.InternalId != "" &&
+		peerNodesReq.backfillSpec.InternalId != b.spec.InternalId {
+		return fmt.Errorf("Unable to handle spec merge because internalID mismatch: expected %v got %v",
+			b.spec.InternalId, peerNodesReq.backfillSpec.InternalId)
+	}
+
+	return b.updateBackfillSpec(reqAndResp.PersistResponse, peerNodesReq.backfillSpec.VBTasksMap, nil, nil, false)
+}
+
+type internalDelBackfillReq struct {
+	specificVBRequested bool
+	vbno                uint16
+}
+
+type internalVBDiffBackfillReq struct {
+	addedVBsList   []uint16
+	removedVBsList []uint16
+	req            interface{}
+}
+
+type internalPeerBackfillTaskMergeReq struct {
+	backfillSpec *metadata.BackfillReplicationSpec
 }

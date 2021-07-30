@@ -1489,13 +1489,26 @@ func (xdcrf *XDCRFactory) MakeOSOSnapshotRaiser(pipeline common.Pipeline) func(v
 }
 
 // Follows pipeline.MergeVBMasterRespCkptsFunc
-func (xdcrf *XDCRFactory) MergePeerNodesCkptsResponse(pipeline common.Pipeline, resp map[string]*peerToPeer.VBMasterCheckResp) error {
+func (xdcrf *XDCRFactory) MergePeerNodesCkptsResponse(pipeline common.Pipeline, resp peerToPeer.PeersVBMasterCheckRespMap) error {
 	if pipeline == nil {
 		return errors.New("pipeline=nil")
 	}
-	ckpt_mgr := pipeline.RuntimeContext().Service(base.CHECKPOINT_MGR_SVC)
-	if ckpt_mgr == nil {
+	ckptMgr := pipeline.RuntimeContext().Service(base.CHECKPOINT_MGR_SVC)
+	if ckptMgr == nil {
 		return errors.New(fmt.Sprintf("CheckpointingManager has not been attached to pipeline %v", pipeline.Topic()))
 	}
-	return ckpt_mgr.(*pipeline_svc.CheckpointManager).MergePeerNodesCkptInfo(resp)
+	err := ckptMgr.(*pipeline_svc.CheckpointManager).MergePeerNodesCkptInfo(resp)
+	if err != nil {
+		return err
+	}
+
+	backfillMgr := pipeline.RuntimeContext().Service(base.BACKFILL_MGR_SVC)
+	if backfillMgr == nil {
+		return errors.New(fmt.Sprintf("BackfillManager has not been attached to pipeline %v", pipeline.Topic()))
+	}
+	backfillMgrPipelineSvc := pipeline.RuntimeContext().Service(base.BACKFILL_MGR_SVC)
+	settingsMap := make(metadata.ReplicationSettingsMap)
+	settingsMap[base.NameKey] = pipeline.Topic()
+	settingsMap[peerToPeer.MergeBackfillKey] = resp
+	return backfillMgrPipelineSvc.UpdateSettings(settingsMap)
 }
