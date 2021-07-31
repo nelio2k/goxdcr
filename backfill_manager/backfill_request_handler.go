@@ -441,15 +441,8 @@ func (b *BackfillRequestHandler) getVBsInternal(kv_vb_map map[string][]uint16) (
 
 // TODO - MB-38931 - once consistent metakv is in place, need to have a listener, handle concurrent updates, etc
 func (b *BackfillRequestHandler) handleBackfillRequestInternal(reqAndResp ReqAndResp) error {
-	seqnosMap, err := b.getThroughSeqno()
+	seqnosMap, myVBs, err := b.getMaxSeqnosMapToBackfill()
 	if err != nil {
-		b.logger.Errorf("%v unable to get seqno as part of handling backfill pipeline request - %v", b.Id(), err)
-		return err
-	}
-
-	myVBs, err := b.getVBs()
-	if err != nil {
-		b.logger.Errorf("%v unable to get VBs - %v", b.Id(), err)
 		return err
 	}
 
@@ -900,44 +893,9 @@ func (b *BackfillRequestHandler) handleBackfillRequestDiffPair(resp ReqAndResp) 
 	}
 
 	if len(pairRO.Added) > 0 {
-		myVBs, err := b.getVBs()
+		maxSeqnos, newVBsList, err := b.getMaxSeqnosMapToBackfill()
 		if err != nil {
-			return fmt.Errorf("unable to get VBs: %v", err.Error())
-		}
-		// When this is executing, the main pipeline is going to be shutting down and restarting
-		// Since the pipeline is restarting concurrently, and there's no way to get the exact
-		// pipeline shutdown/startup sequence, we need to do the following.
-		//
-		// 1a. If we can grab the throughSeqNoSvc we can try to get the throughSeqnos before
-		//    the pipeline shuts down to be end point of the backfills.
-		// 1b. It's possible that pipeline has already restarted and we grabbed the new instance of tsTracker,
-		//     which returns a very small throughSeqNo. Step 3 will cover this.
-		// 2. Get the latest checkpoint to be the end point of the backfill
-		// 3. Compare 1 vs 2, use the max() of each to be the end point of the backfill
-		tSeqnos, tSeqnoErr := b.getThroughSeqno()
-		ckptSeqnos, ckptSeqnosErr := b.mainpipelineCkptSeqnosGetter()
-
-		maxSeqnos := make(map[uint16]uint64)
-		var newVBsList []uint16
-		for _, vbno := range myVBs {
-			var vbFound bool
-			if tSeqnoErr == nil {
-				seqno, ok := tSeqnos[vbno]
-				if ok && seqno > maxSeqnos[vbno] {
-					maxSeqnos[vbno] = seqno
-					vbFound = true
-				}
-			}
-			if ckptSeqnosErr == nil {
-				seqno, ok := ckptSeqnos[vbno]
-				if ok && seqno > maxSeqnos[vbno] {
-					maxSeqnos[vbno] = seqno
-					vbFound = true
-				}
-			}
-			if vbFound {
-				newVBsList = append(newVBsList, vbno)
-			}
+			return err
 		}
 
 		vbTasksMap, err := metadata.NewBackfillVBTasksMap(pairRO.Added.Clone(), newVBsList, maxSeqnos)
@@ -965,6 +923,50 @@ func (b *BackfillRequestHandler) handleBackfillRequestDiffPair(resp ReqAndResp) 
 			return nil
 		}
 	}
+}
+
+func (b *BackfillRequestHandler) getMaxSeqnosMapToBackfill() (map[uint16]uint64, []uint16, error) {
+	myVBs, err := b.getVBs()
+	if err != nil {
+		return nil, nil, fmt.Errorf("unable to get VBs: %v", err.Error())
+	}
+	// When this is executing, the main pipeline is going to be shutting down and restarting
+	// Since the pipeline is restarting concurrently, and there's no way to get the exact
+	// pipeline shutdown/startup sequence, we need to do the following.
+	//
+	// 1a. If we can grab the throughSeqNoSvc we can try to get the throughSeqnos before
+	//    the pipeline shuts down to be end point of the backfills.
+	// 1b. It's possible that pipeline has already restarted and we grabbed the new instance of tsTracker,
+	//     which returns a very small throughSeqNo. Step 3 will cover this.
+	// 2. Get the latest checkpoint to be the end point of the backfill
+	// 3. Compare 1 vs 2, use the max() of each to be the end point of the backfill
+	tSeqnos, tSeqnoErr := b.getThroughSeqno()
+	ckptSeqnos, ckptSeqnosErr := b.mainpipelineCkptSeqnosGetter()
+	fmt.Printf("NEIL DEBUG getSeqno err %v - get ckptsenqo err %v\n", tSeqnoErr, ckptSeqnosErr)
+
+	maxSeqnos := make(map[uint16]uint64)
+	var newVBsList []uint16
+	for _, vbno := range myVBs {
+		var vbFound bool
+		if tSeqnoErr == nil {
+			seqno, ok := tSeqnos[vbno]
+			if ok && seqno > maxSeqnos[vbno] {
+				maxSeqnos[vbno] = seqno
+				vbFound = true
+			}
+		}
+		if ckptSeqnosErr == nil {
+			seqno, ok := ckptSeqnos[vbno]
+			if ok && seqno > maxSeqnos[vbno] {
+				maxSeqnos[vbno] = seqno
+				vbFound = true
+			}
+		}
+		if vbFound {
+			newVBsList = append(newVBsList, vbno)
+		}
+	}
+	return maxSeqnos, newVBsList, err
 }
 
 func (b *BackfillRequestHandler) DelAllBackfills() error {
@@ -1032,7 +1034,9 @@ func (b *BackfillRequestHandler) GetDelVBSpecificBackfillCb(vbno uint16) (cb bas
 }
 
 func (b *BackfillRequestHandler) handleVBsDiff(added []uint16, removed []uint16) error {
-	if len(added) == 0 && len(removed) == 0 {
+	// TODO - NEIL - removed VBs cannot be removed until GC is completed
+	//if len(added) == 0 && len(removed) == 0 {
+	if len(added) == 0 {
 		return nil
 	}
 
@@ -1044,10 +1048,11 @@ func (b *BackfillRequestHandler) handleVBsDiff(added []uint16, removed []uint16)
 		return err
 	}
 
+	// TODO - NEIL - removed VBs cannot be removed until GC is completed
 	internalDiffReq := internalVBDiffBackfillReq{
-		addedVBsList:   added,
-		removedVBsList: removed,
-		req:            backfillReqRaw,
+		addedVBsList: added,
+		//removedVBsList: removed,
+		req: backfillReqRaw,
 	}
 
 	go b.handleBackfillRequestWithArgs(internalDiffReq, false)
@@ -1058,16 +1063,20 @@ func (b *BackfillRequestHandler) handlePeerNodesBackfillMerge(reqAndResp ReqAndR
 	peerNodesReq, ok := reqAndResp.Request.(internalPeerBackfillTaskMergeReq)
 	if !ok {
 		err := fmt.Errorf("Invalid type: expecting internalPeerBackfillTaskMergeReq, got %v", reflect.TypeOf(reqAndResp.Request))
+		panic("err0")
 		return err
 	}
 
 	if peerNodesReq.backfillSpec.InternalId != "" && b.spec.InternalId != "" &&
 		peerNodesReq.backfillSpec.InternalId != b.spec.InternalId {
+		panic("err1")
 		return fmt.Errorf("Unable to handle spec merge because internalID mismatch: expected %v got %v",
 			b.spec.InternalId, peerNodesReq.backfillSpec.InternalId)
 	}
 
-	return b.updateBackfillSpec(reqAndResp.PersistResponse, peerNodesReq.backfillSpec.VBTasksMap, nil, nil, false)
+	err := b.updateBackfillSpec(reqAndResp.PersistResponse, peerNodesReq.backfillSpec.VBTasksMap, nil, nil, false)
+	fmt.Printf("NEIL DEBUG After merge cacheSpec VBTaskMap: %v\n", b.cachedBackfillSpec.VBTasksMap.DebugString())
+	return err
 }
 
 type internalDelBackfillReq struct {

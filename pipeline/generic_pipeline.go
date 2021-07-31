@@ -265,12 +265,16 @@ func (genericPipeline *GenericPipeline) Start(settings metadata.ReplicationSetti
 		resp, err := genericPipeline.vbMasterCheckFunc(genericPipeline)
 		if err != nil {
 			errMap["genericPipeline.vbMasterCheckFunc"] = err
-			return errMap
+			// Even if vbmaster has issues, the data being sent should still be stored and then forwarded to others
+			// to prevent data loss
 		}
 
 		err = genericPipeline.mergeCkptFunc(genericPipeline, resp)
 		if err != nil {
 			errMap["genericPipeline.mergeCkptFunc"] = err
+		}
+
+		if len(errMap) > 0 {
 			return errMap
 		}
 	}

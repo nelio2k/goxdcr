@@ -1163,6 +1163,10 @@ func (xmem *XmemNozzle) batchSetMetaWithRetry(batch *dataBatch, numOfRetry int) 
 		xmem.checkAndUpdateSentStats(item)
 
 		if item != nil {
+			if strings.Contains(xmem.topic, "backfill") {
+				time.Sleep(1 * time.Second)
+			}
+
 			atomic.AddUint64(&xmem.counter_waittime, uint64(time.Since(item.Start_time).Seconds()*1000))
 			needSendStatus, err := needSend(item, batch, xmem.Logger())
 			if err != nil {

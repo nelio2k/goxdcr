@@ -420,10 +420,6 @@ func (pipelineMgr *PipelineManager) StopSerializer() {
 	}
 }
 
-func backfillPipelineName(topic string) string {
-	return fmt.Sprintf("backfill_%v", topic)
-}
-
 func (pipelineMgr *PipelineManager) StartPipeline(topic string) base.ErrorMap {
 	var err error
 	errMap := make(base.ErrorMap)

@@ -264,6 +264,9 @@ func generateResp(respCommon ResponseCommon, err error, body []byte) (ReqRespCom
 	case ReqVBMasterChk:
 		resp := &VBMasterCheckResp{}
 		err = resp.DeSerialize(body)
+		if err != nil {
+			return nil, err
+		}
 		if len(resp.ResponsePayloadCompressed) > 0 && len(*resp.responsePayload) == 0 {
 			panic("Should not be possible")
 		}
@@ -569,6 +572,29 @@ func (p *VBMasterPayload) GetBackfillMappingDoc() *metadata.CollectionNsMappings
 	return p.BackfillMappingDoc
 }
 
+func (p *VBMasterPayload) GetBackfillVBTasks() *metadata.VBTasksMapType {
+	taskMap := metadata.NewVBTasksMap()
+
+	//fmt.Printf("NEIL DEBUG GetBackfillVBTasks NotMyVBs: %v\n", p.NotMyVBs)
+	for vb, payload := range *p.NotMyVBs {
+		if payload.BackfillTsks != nil {
+			//fmt.Printf("NEIL DEBUG vb %v appending %v\n", vb, payload.BackfillTsks.PrettyPrint())
+			taskMap.VBTasksMap[vb] = payload.BackfillTsks
+			taskMap.VBTasksMap[vb].PostUnmarshalInit()
+		}
+	}
+
+	for vb, payload := range *p.ConflictingVBs {
+		if payload.BackfillTsks != nil {
+			//taskMap.VBTasksMap[vb].Append(payload.BackfillTsks)
+			taskMap.VBTasksMap[vb] = payload.BackfillTsks
+			taskMap.VBTasksMap[vb].PostUnmarshalInit()
+		}
+	}
+
+	return taskMap
+}
+
 type VBsPayload map[uint16]*Payload
 
 func NewVBsPayload(vbsList []uint16) *VBsPayload {
@@ -659,7 +685,9 @@ func (v *VBMasterCheckResp) LoadBrokenMappingDoc(brokenMappingDoc metadata.Colle
 	return nil
 }
 
-func (v *VBMasterCheckResp) LoadBackfillTasks(backfillTasks metadata.VBTasksMapType, srcBucketName string) error {
+var counter int
+
+func (v *VBMasterCheckResp) LoadBackfillTasks(backfillTasks *metadata.VBTasksMapType, srcBucketName string) error {
 	if !backfillTasks.ContainsAtLeastOneTask() {
 		// Nothing to do
 		return nil
@@ -683,9 +711,16 @@ func (v *VBMasterCheckResp) LoadBackfillTasks(backfillTasks metadata.VBTasksMapT
 	payload.BackfillMappingDoc = backfillMappingDoc
 
 	// LoadPipelineCkpts has already been done so all the VBs struct would have been set up
-	errMap := make(base.ErrorMap)
+	var tasksLoaded []uint16
+	var taskEmpty []uint16
+	var taskNotFound []uint16
+
+	fmt.Printf("NEIL DEBUG before loading NotMyVBs: %v\n", payload.NotMyVBs)
+	fmt.Printf("NEIL DEBUG before loading vbtasks: %v\n", backfillTasks.VBTasksMap)
+
 	for vb, tasks := range backfillTasks.VBTasksMap {
 		if tasks == nil || tasks.Len() == 0 {
+			taskEmpty = append(taskEmpty, vb)
 			continue
 		}
 
@@ -693,6 +728,8 @@ func (v *VBMasterCheckResp) LoadBackfillTasks(backfillTasks metadata.VBTasksMapT
 		vbPayload, found := notMyVBMap[vb]
 		if found {
 			vbPayload.BackfillTsks = tasks
+			fmt.Printf("NEIL DEBUG vb %v loaded %v\n", vb, vbPayload.BackfillTsks.PrettyPrint())
+			tasksLoaded = append(tasksLoaded, vb)
 			continue
 		}
 
@@ -701,14 +738,15 @@ func (v *VBMasterCheckResp) LoadBackfillTasks(backfillTasks metadata.VBTasksMapT
 		vbPayload2, found2 := conflictingVBMap[vb]
 		if found2 {
 			vbPayload2.BackfillTsks = tasks
+			tasksLoaded = append(tasksLoaded, vb)
+		} else {
+			taskNotFound = append(taskNotFound, vb)
 		}
-
-		// Not found - log an error
-		errMap[fmt.Sprintf("vb %v", vb)] = fmt.Errorf("LoadBackfillTasks: %v", VBUnableToLoad)
 	}
+	counter++
+	fmt.Printf("NEIL DEBUG counter %v loaded for VBs %v emtpyVBs %v notFoundVBs %v about to send backfilltask %v\n", counter, tasksLoaded, taskEmpty, taskNotFound, backfillTasks)
+	taskMapMarshal, _ := json.Marshal(backfillTasks.VBTasksMap)
+	ioutil.WriteFile(fmt.Sprintf("/tmp/toBeSent_%v", counter), taskMapMarshal, 0644)
 
-	if len(errMap) > 0 {
-		return fmt.Errorf(base.FlattenErrorMap(errMap))
-	}
 	return nil
 }

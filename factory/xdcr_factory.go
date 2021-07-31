@@ -896,13 +896,15 @@ func (xdcrf *XDCRFactory) PreReplicationVBMasterCheck(pipeline common.Pipeline) 
 	xdcrf.logger.Infof("Running VBMasterCheck for bucket %v", srcBucketName)
 	respMap, err := xdcrf.p2pMgr.CheckVBMaster(vbsReq, pipeline)
 	if err != nil {
-		return nil, err
+		// Should still return response to see if others can merge it
+		return respMap, err
 	}
 
 	err = checkNoOtherVBMasters(respMap, srcBucketName, sourceVBs)
 	if err != nil {
 		xdcrf.logger.Errorf("Error checkNoOtherVBMasters: %v\n", err)
-		return nil, err
+		// Should still return response to see if others can merge it
+		return respMap, err
 	}
 
 	return respMap, nil
@@ -1492,6 +1494,9 @@ func (xdcrf *XDCRFactory) MakeOSOSnapshotRaiser(pipeline common.Pipeline) func(v
 func (xdcrf *XDCRFactory) MergePeerNodesCkptsResponse(pipeline common.Pipeline, resp peerToPeer.PeersVBMasterCheckRespMap) error {
 	if pipeline == nil {
 		return errors.New("pipeline=nil")
+	}
+	if resp == nil {
+		return errors.New("nil response")
 	}
 	ckptMgr := pipeline.RuntimeContext().Service(base.CHECKPOINT_MGR_SVC)
 	if ckptMgr == nil {

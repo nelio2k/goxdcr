@@ -1081,6 +1081,7 @@ func (a *CollectionsManifestAgent) refreshTargetCustom(force, lock bool, waitTim
 	return
 }
 
+// TODO NEIL - backportbug here
 // Gets a sorted list of manifest UIDs that are referred by the checkpoints
 func (a *CollectionsManifestAgent) getAllManifestsUids() (srcManifestUids, tgtManifestUids []uint64, err error) {
 	ckptDocs, err := a.checkpointsSvc.CheckpointsDocs(a.replicationSpec.Id, false /*needBrokenMapping*/)

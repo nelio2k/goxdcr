@@ -16,6 +16,7 @@ import (
 	"github.com/couchbase/goxdcr/metadata"
 	"github.com/couchbase/goxdcr/service_def"
 	"github.com/couchbase/goxdcr/utils"
+	"io/ioutil"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -330,6 +331,8 @@ type ReqRespPair struct {
 	RespPtr interface{}
 }
 
+var testFileCounter uint32
+
 // VB Master check involves:
 // 1. Look at all the VBs request incoming
 // 2. For VBs that this node hasn't ensured that nobody else has the same VB, send check request to those nodes
@@ -371,6 +374,16 @@ func (p *P2PManagerImpl) CheckVBMaster(bucketAndVBs BucketVBMapType, pipeline co
 	respMap := make(map[string]*VBMasterCheckResp)
 	for k, v := range result {
 		respMap[k] = v.RespPtr.(*VBMasterCheckResp)
+		fmt.Printf("NEIL DEBUG received response with opaque %v\n", respMap[k].Opaque)
+		testBytes, testSerErr := respMap[k].Serialize()
+		if testSerErr != nil {
+			panic(testSerErr)
+		}
+		testFileCounter++
+		testSerErr = ioutil.WriteFile(fmt.Sprintf("/tmp/receivedResp_%v", testFileCounter), testBytes, 0644)
+		if testSerErr != nil {
+			panic(testSerErr)
+		}
 	}
 	return respMap, nil
 }

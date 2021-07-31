@@ -484,7 +484,7 @@ func (c *MapShaRefCounter) upsertMapping(specInternalId string, cleanup bool) er
 		c.lock.Lock()
 		if c.internalSpecId == "" {
 			c.internalSpecId = specInternalId
-		} else if c.internalSpecId != specInternalId {
+		} else if specInternalId != "" && c.internalSpecId != specInternalId {
 			err = fmt.Errorf("Upserting failed with mismatching internalId %v vs %v", c.internalSpecId, specInternalId)
 			c.lock.Unlock()
 			return err
@@ -517,7 +517,7 @@ func (c *MapShaRefCounter) upsertMapping(specInternalId string, cleanup bool) er
 		}
 		if collectionNsMappingsDoc.SpecInternalId == "" {
 			collectionNsMappingsDoc.SpecInternalId = specInternalId
-		} else if collectionNsMappingsDoc.SpecInternalId != specInternalId {
+		} else if specInternalId != "" && collectionNsMappingsDoc.SpecInternalId != specInternalId {
 			err = fmt.Errorf("Mismatching internalId in metakv %v vs %v", collectionNsMappingsDoc.SpecInternalId, specInternalId)
 			return err
 		}

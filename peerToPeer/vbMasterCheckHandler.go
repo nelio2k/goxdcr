@@ -15,6 +15,7 @@ import (
 	"github.com/couchbase/goxdcr/log"
 	"github.com/couchbase/goxdcr/metadata"
 	"github.com/couchbase/goxdcr/service_def"
+	"io/ioutil"
 	"sync"
 	"time"
 )
@@ -78,12 +79,7 @@ func (h *VBMasterCheckHandler) handleRequest(req *VBMasterCheckReq) {
 	waitGrp.Add(1)
 	var bgErr error
 	var result map[uint16]*metadata.CheckpointsDoc
-	if req.PipelineType == common.MainPipeline {
-		go h.populateMainPipelineCkpts(req.ReplicationId, waitGrp, &bgErr, &result)
-	} else {
-		panic("Shouldn't hit here")
-		// TODO
-	}
+	go h.populatePipelineCkpts(common.ComposeFullTopic(req.ReplicationId, req.PipelineType), waitGrp, &bgErr, &result)
 
 	cachedSrcManifests := make(metadata.ManifestsCache)
 	cachedTgtManifests := make(metadata.ManifestsCache)
@@ -155,15 +151,18 @@ func (h *VBMasterCheckHandler) handleRequest(req *VBMasterCheckReq) {
 		return
 	}
 
-	err = resp.LoadBackfillTasks(*backfillTasks, req.SourceBucketName)
+	err = resp.LoadBackfillTasks(backfillTasks, req.SourceBucketName)
 	if err != nil {
 		h.logger.Errorf("when loading brokenMappingDoc into response, got %v", err)
 		resp.ErrorMsg = err.Error()
 		req.CallBack(resp)
 		return
 	}
+	toBeSent2, _ := resp.Serialize()
+	ioutil.WriteFile(fmt.Sprintf("/tmp/toBeSent2_%v", counter), toBeSent2, 0644)
 
 	// Final Callback
+	fmt.Printf("NEIL DEBUG sending callback with opaque %v\n", resp.Opaque)
 	handlerResult, err := req.CallBack(resp)
 	if err != nil || handlerResult != nil && handlerResult.GetError() != nil {
 		var handlerResultErr error
@@ -177,7 +176,6 @@ func (h *VBMasterCheckHandler) handleRequest(req *VBMasterCheckReq) {
 
 func (h *VBMasterCheckHandler) populateBucketVBMapsIntoResp(bucketVBsMap BucketVBMapType, resp *VBMasterCheckResp, waitGrp *sync.WaitGroup) {
 	defer waitGrp.Done()
-	resp.Init()
 	for bucketName, vbsList := range bucketVBsMap {
 		resp.InitBucket(bucketName)
 
@@ -205,7 +203,16 @@ func (h *VBMasterCheckHandler) populateBucketVBMapsIntoResp(bucketVBsMap BucketV
 			}
 		}
 
-		latestInfo := <-srcNotificationCh
+		var latestInfo service_def.SourceNotification
+		latestInfo = <-srcNotificationCh
+		//select {
+		// Discard the first info as it may not be the most up-to-date
+		//case <-srcNotificationCh:
+		//	select {
+		//	case latestInfo = <-srcNotificationCh:
+		// done
+		//}
+		//}
 
 		// SourceVBMapRO should only contain one node
 		myVBMap := latestInfo.GetSourceVBMapRO()
@@ -214,12 +221,14 @@ func (h *VBMasterCheckHandler) populateBucketVBMapsIntoResp(bucketVBsMap BucketV
 			oneKey = key
 		}
 		myVbsList := myVBMap[oneKey]
+		fmt.Printf("NEIL DEBUG myVBList: %v\n", myVbsList)
 		_, _, vbsIntersect := base.ComputeDeltaOfUint16Lists(myVbsList, vbsList, true)
 		// Given my list and another list of VBs that I should not own,
 		// if there is any intersection, then that's an issue
 		if len(vbsIntersect) > 0 {
 			errMsg := fmt.Sprintf("Bucket %v has VBs intersect of %v", bucketName, vbsIntersect)
 			h.logger.Errorf(errMsg)
+			// TODO - not setting up VBs correctly
 			(*resp.responsePayload)[bucketName].RegisterVbsIntersect(vbsIntersect)
 			removed, _, _ := base.ComputeDeltaOfUint16Lists(myVbsList, vbsIntersect, true)
 			// Whatever are not intersected are OK
@@ -265,7 +274,7 @@ func (v *VBMasterCheckHandler) handleResponse(resp *VBMasterCheckResp) {
 	}
 }
 
-func (v *VBMasterCheckHandler) populateMainPipelineCkpts(replSpecId string, waitGrp *sync.WaitGroup, err *error, result *map[uint16]*metadata.CheckpointsDoc) {
+func (v *VBMasterCheckHandler) populatePipelineCkpts(replSpecId string, waitGrp *sync.WaitGroup, err *error, result *map[uint16]*metadata.CheckpointsDoc) {
 	defer waitGrp.Done()
 
 	ckptDocs, opErr := v.ckptSvc.CheckpointsDocs(replSpecId, true)
@@ -335,4 +344,6 @@ func (v *VBMasterCheckHandler) fetchBackfillTasks(replId string, backfillTasks *
 		clonedTask := backfillSpec.VBTasksMap.Clone()
 		*backfillTasks = *clonedTask
 	}
+
+	fmt.Printf("NEIL DEBUG fetched task %v\n", backfillTasks.DebugString())
 }

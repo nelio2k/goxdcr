@@ -2371,7 +2371,7 @@ func (ckmgr *CheckpointManager) mergeNodesToVBMasterCheckResp(respMap peerToPeer
 		return err
 	}
 
-	nameOnlySpec := &metadata.ReplicationSpecification{Id: ckmgr.pipeline.FullTopic()}
+	nameOnlySpec := &metadata.ReplicationSpecification{Id: ckmgr.pipeline.Topic()}
 	err = ckmgr.collectionsManifestSvc.PersistReceivedManifests(nameOnlySpec, combinedSrcManifests, combinedTgtManifests)
 	if err != nil {
 		// TODO check if manifests persisted

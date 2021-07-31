@@ -9,6 +9,7 @@
 package peerToPeer
 
 import (
+	"encoding/json"
 	"fmt"
 	"github.com/couchbase/goxdcr/metadata"
 	service_def "github.com/couchbase/goxdcr/service_def/mocks"
@@ -16,6 +17,7 @@ import (
 	utilsMock2 "github.com/couchbase/goxdcr/utils/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"io/ioutil"
 	"net/http"
 	"testing"
 	"time"
@@ -165,5 +167,65 @@ func TestPeerToPeerMgrSendVBCheck(t *testing.T) {
 	assert.Len(vbMasterCheckHandler.opaqueMap, 0)
 	assert.Len(vbMasterCheckHandler.opaqueReqMap, 0)
 	vbMasterCheckHandler.opaqueMapMtx.RUnlock()
+
+}
+
+func TestPeerToPeerMgrReceiveActualData(t *testing.T) {
+	fmt.Println("============== Test case start: TestPeerToPeerMgtReceiveActualData =================")
+	defer fmt.Println("============== Test case end: TestPeerToPeerMgtReceiveActualData =================")
+	assert := assert.New(t)
+
+	bucketName := "bucketName"
+	spec, _ := metadata.NewReplicationSpecification(bucketName, "", "", "", "")
+	specList := []*metadata.ReplicationSpecification{spec}
+
+	peerNodes := []string{"10.1.1.1:8091", "10.2.2.2:8091"}
+	myHostAddr := "127.0.0.1:8091"
+
+	queryResultErrs := []error{nil, nil}
+	queryResultsStatusCode := []int{http.StatusOK, http.StatusOK}
+
+	xdcrComp, utilsMock, bucket, replSvc, utilsReal := setupBoilerPlate()
+	setupMocks(utilsMock, utilsReal, xdcrComp, peerNodes, myHostAddr, specList, replSvc, queryResultErrs, queryResultsStatusCode)
+
+	mgr, err := NewPeerToPeerMgr(nil, xdcrComp, utilsMock, bucket, replSvc, 100*time.Millisecond, nil, nil, nil)
+	assert.Nil(err)
+	assert.NotNil(mgr)
+	commAPI, err := mgr.Start()
+	assert.NotNil(commAPI)
+	assert.Nil(err)
+
+	counter = 5
+	dataFile := fmt.Sprintf("/tmp/receivedResp_%v", counter)
+	sentFile := fmt.Sprintf("/tmp/toBeSent_%v", counter)
+	toBeSentFile := fmt.Sprintf("/tmp/toBeSent2_%v", counter-1)
+	slice, err := ioutil.ReadFile(dataFile)
+	assert.Nil(err)
+	sentSlice, err := ioutil.ReadFile(sentFile)
+	assert.Nil(err)
+	packetSlice, err := ioutil.ReadFile(toBeSentFile)
+	assert.Nil(err)
+
+	resp := &VBMasterCheckResp{}
+	assert.Nil(resp.DeSerialize(slice))
+
+	sentResp := &VBMasterCheckResp{}
+	assert.Nil(sentResp.DeSerialize(packetSlice))
+
+	bucketResp := resp.GetReponse()
+	bucketRespSent := sentResp.GetReponse()
+	assert.NotNil(bucketResp)
+	assert.NotNil(bucketRespSent)
+	backfillTask := (*bucketResp)["B0"].GetBackfillVBTasks()
+	backfillTaskSent := (*bucketRespSent)["B0"].GetBackfillVBTasks()
+	fmt.Printf("NEIL DEBUG len of backfilltasks %v\n", backfillTask.Len())
+	fmt.Printf("NEIL DEBUG len of sent backfilltasks %v\n", backfillTaskSent.Len())
+	for vb, tasks := range backfillTask.VBTasksMap {
+		fmt.Printf("NEIL DEBUG vb %v has task %v\n", vb, tasks.PrettyPrint())
+	}
+
+	vbTaskMap := make(map[uint16]*metadata.BackfillTasks)
+	assert.Nil(json.Unmarshal(sentSlice, &vbTaskMap))
+	fmt.Printf("NEIL DEBUG sent len of backfilltasks %v\n", len(vbTaskMap))
 
 }

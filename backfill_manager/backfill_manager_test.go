@@ -507,7 +507,11 @@ func TestBackfillMgrLaunchSpecsThenPeers(t *testing.T) {
 	resp.InitBucket(specToUse.SourceBucketName)
 	bucketVBMapType := resp.GetReponse()
 	(*bucketVBMapType)[specToUse.SourceBucketName].RegisterNotMyVBs([]uint16{0})
-	assert.Nil(resp.LoadBackfillTasks(*vbTaskMap, specToUse.SourceBucketName))
+	assert.Nil(resp.LoadBackfillTasks(vbTaskMap, specToUse.SourceBucketName))
+	checkResp := resp.GetReponse()
+	payload := (*checkResp)[specToUse.SourceBucketName]
+	vb0Tasks := payload.GetBackfillVBTasks().VBTasksMap[0]
+	assert.NotEqual(0, vb0Tasks.Len())
 
 	peersMap := make(peerToPeer.PeersVBMasterCheckRespMap)
 	peersMap["dummyNode"] = resp
