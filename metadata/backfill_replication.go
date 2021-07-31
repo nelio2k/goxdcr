@@ -14,6 +14,7 @@ import (
 	"fmt"
 	mcc "github.com/couchbase/gomemcached/client"
 	"github.com/couchbase/goxdcr/base"
+	"strings"
 	"sync"
 )
 
@@ -196,6 +197,27 @@ func (b *BackfillReplicationSpec) CloneGeneric() GenericSpecification {
 
 func (b *BackfillReplicationSpec) RedactGeneric() GenericSpecification {
 	return b.Redact()
+}
+
+func (b *BackfillReplicationSpec) PrintFirstTaskRange() string {
+	var combinedStrings []string
+	if b == nil {
+		return ""
+	}
+	if b.VBTasksMap == nil {
+		return "(no task)"
+	}
+	b.VBTasksMap.mutex.RLock()
+	defer b.VBTasksMap.mutex.RUnlock()
+	for vb, tasks := range b.VBTasksMap.VBTasksMap {
+		tasks.mutex.RLock()
+		if tasks.List[0] != nil {
+			combinedStrings = append(combinedStrings, fmt.Sprintf("vb: %v (%v,%v] ", vb,
+				tasks.List[0].GetStartingTimestampSeqno(), tasks.List[0].GetEndingTimestampSeqno()))
+		}
+		tasks.mutex.RUnlock()
+	}
+	return strings.Join(combinedStrings, " ")
 }
 
 type VBTasksMapType struct {

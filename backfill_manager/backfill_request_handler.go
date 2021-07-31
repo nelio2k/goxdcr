@@ -491,8 +491,14 @@ func (b *BackfillRequestHandler) updateBackfillSpec(persistResponse chan error, 
 	if !exists {
 		backfillSpec := metadata.NewBackfillReplicationSpec(clonedSpec.Id, clonedSpec.InternalId, vbTasksMap, clonedSpec)
 		b.cachedBackfillSpec = backfillSpec
-		b.logNewBackfillMsg(reqRO, seqnosMap)
-		b.requestPersistence(AddOp, persistResponse)
+		if reqRO != nil && seqnosMap != nil {
+			b.logNewBackfillMsg(reqRO, seqnosMap)
+		}
+		err := b.requestPersistence(AddOp, persistResponse)
+		if err != nil {
+			b.logger.Errorf("requestPersistence (add) err %v", err)
+			return err
+		}
 	} else {
 		if force {
 			// Force means remove all previous mapping so it can be re-added
@@ -503,14 +509,22 @@ func (b *BackfillRequestHandler) updateBackfillSpec(persistResponse chan error, 
 		} else if b.cachedBackfillSpec.Contains(vbTasksMap) {
 			// already handled - redundant request
 			// Just request persistence to ensure synchronization
-			b.requestPersistence(SetOp, persistResponse)
+			err := b.requestPersistence(SetOp, persistResponse)
+			if err != nil {
+				b.logger.Errorf("requestPersistence err %v", err)
+				return err
+			}
 			return nil
 		}
 
 		shouldSkipFirst := b.figureOutIfCkptExists(reqRO, seqnosMap)
 
 		b.cachedBackfillSpec.MergeNewTasks(vbTasksMap, shouldSkipFirst)
-		b.requestPersistence(SetOp, persistResponse)
+		err := b.requestPersistence(SetOp, persistResponse)
+		if err != nil {
+			b.logger.Errorf("requestPersistence err %v", err)
+			return err
+		}
 	}
 	return nil
 }
@@ -942,7 +956,7 @@ func (b *BackfillRequestHandler) getMaxSeqnosMapToBackfill() (map[uint16]uint64,
 	// 3. Compare 1 vs 2, use the max() of each to be the end point of the backfill
 	tSeqnos, tSeqnoErr := b.getThroughSeqno()
 	ckptSeqnos, ckptSeqnosErr := b.mainpipelineCkptSeqnosGetter()
-	fmt.Printf("NEIL DEBUG getSeqno err %v - get ckptsenqo err %v\n", tSeqnoErr, ckptSeqnosErr)
+	//fmt.Printf("NEIL DEBUG getSeqno err %v - get ckptsenqo err %v\n", tSeqnoErr, ckptSeqnosErr)
 
 	maxSeqnos := make(map[uint16]uint64)
 	var newVBsList []uint16
@@ -1063,19 +1077,20 @@ func (b *BackfillRequestHandler) handlePeerNodesBackfillMerge(reqAndResp ReqAndR
 	peerNodesReq, ok := reqAndResp.Request.(internalPeerBackfillTaskMergeReq)
 	if !ok {
 		err := fmt.Errorf("Invalid type: expecting internalPeerBackfillTaskMergeReq, got %v", reflect.TypeOf(reqAndResp.Request))
-		panic("err0")
 		return err
 	}
 
 	if peerNodesReq.backfillSpec.InternalId != "" && b.spec.InternalId != "" &&
 		peerNodesReq.backfillSpec.InternalId != b.spec.InternalId {
-		panic("err1")
 		return fmt.Errorf("Unable to handle spec merge because internalID mismatch: expected %v got %v",
 			b.spec.InternalId, peerNodesReq.backfillSpec.InternalId)
 	}
 
 	err := b.updateBackfillSpec(reqAndResp.PersistResponse, peerNodesReq.backfillSpec.VBTasksMap, nil, nil, false)
-	fmt.Printf("NEIL DEBUG After merge cacheSpec VBTaskMap: %v\n", b.cachedBackfillSpec.VBTasksMap.DebugString())
+	if err != nil {
+		b.logger.Errorf(err.Error())
+		return err
+	}
 	return err
 }
 

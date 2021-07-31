@@ -481,7 +481,7 @@ func (b *BackfillMgr) backfillReplSpecChangeHandlerCallback(changedSpecId string
 	if !ok || !ok2 {
 		return base.ErrorInvalidInput
 	}
-	b.logger.Infof("Backfill spec change callback for %v detected old %v new %v", changedSpecId, oldSpec, newSpec)
+	b.logger.Infof("Backfill spec change callback for %v detected old %v new %v", changedSpecId, oldSpec.PrintFirstTaskRange(), newSpec.PrintFirstTaskRange())
 	if oldSpec == nil && newSpec != nil {
 		// Requesting a backfill pipeline means that a pipeline will start and for the top task in each VBTasksMap
 		// will be sent to DCP to be run and backfilled

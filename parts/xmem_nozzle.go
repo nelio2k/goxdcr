@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"math"
 	"math/rand"
 	"net"
@@ -1163,7 +1164,8 @@ func (xmem *XmemNozzle) batchSetMetaWithRetry(batch *dataBatch, numOfRetry int) 
 		xmem.checkAndUpdateSentStats(item)
 
 		if item != nil {
-			if strings.Contains(xmem.topic, "backfill") {
+			_, slowFileErr := ioutil.ReadFile("/tmp/slowFile")
+			if strings.Contains(xmem.topic, "backfill") && slowFileErr == nil {
 				time.Sleep(1 * time.Second)
 			}
 
