@@ -321,6 +321,28 @@ func (v *VBTasksMapType) Len() int {
 	return len(v.VBTasksMap)
 }
 
+func (v *VBTasksMapType) LenWithVBs(vbs []uint16) int {
+	if v == nil {
+		return 0
+	}
+
+	lookupMap := make(map[uint16]bool)
+	for _, vb := range vbs {
+		lookupMap[vb] = true
+	}
+
+	v.mutex.RLock()
+	defer v.mutex.RUnlock()
+
+	var count int
+	for vbWithinTaskMap, _ := range v.VBTasksMap {
+		if _, exists := lookupMap[vbWithinTaskMap]; exists {
+			count++
+		}
+	}
+	return count
+}
+
 func (v *VBTasksMapType) GetLock() *sync.RWMutex {
 	if v == nil {
 		// instead of returning a nil lock, return an empty lock
@@ -597,6 +619,26 @@ func (v *VBTasksMapType) DebugString() string {
 	}
 	var buffer bytes.Buffer
 	for i := uint16(0); i < base.NumberOfVbs; i++ {
+		tasks, exists, unlockFunc := v.Get(i, false)
+		if exists {
+			buffer.WriteString(fmt.Sprintf("VB %v : %v", i, tasks.PrettyPrint()))
+		}
+		unlockFunc()
+	}
+	return buffer.String()
+}
+
+func (v *VBTasksMapType) DebugStringSubset(vbs []uint16) interface{} {
+	if v == nil {
+		return "nil VBTasksMapType"
+	}
+	sortedVb := base.SortUint16List(vbs)
+	var buffer bytes.Buffer
+	for i := uint16(0); i < base.NumberOfVbs; i++ {
+		_, found := base.SearchUint16List(sortedVb, i)
+		if !found {
+			continue
+		}
 		tasks, exists, unlockFunc := v.Get(i, false)
 		if exists {
 			buffer.WriteString(fmt.Sprintf("VB %v : %v", i, tasks.PrettyPrint()))

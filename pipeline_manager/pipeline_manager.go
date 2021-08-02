@@ -955,7 +955,15 @@ func (pipelineMgr *PipelineManager) StartBackfillPipeline(topic string) base.Err
 		return errMap
 	}
 
-	if backfillSpec.VBTasksMap.Len() == 0 {
+	var mainPipelineVbs []uint16
+	srcNozzles := mainPipeline.Sources()
+	for _, srcNozzle := range srcNozzles {
+		mainPipelineVbs = append(mainPipelineVbs, srcNozzle.ResponsibleVBs()...)
+	}
+
+	fmt.Printf("NEIL DEBUG given main pipeline VBs %v, the tasks are: %v\n", mainPipelineVbs, backfillSpec.VBTasksMap.DebugStringSubset(mainPipelineVbs))
+
+	if backfillSpec.VBTasksMap.Len() == 0 || backfillSpec.VBTasksMap.LenWithVBs(mainPipelineVbs) == 0 {
 		errMap["pipelineMgr.StartBackfillPipeline"] = ErrorBackfillSpecHasNoVBTasks
 		return errMap
 	}

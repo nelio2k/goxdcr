@@ -344,6 +344,4 @@ func (v *VBMasterCheckHandler) fetchBackfillTasks(replId string, backfillTasks *
 		clonedTask := backfillSpec.VBTasksMap.Clone()
 		*backfillTasks = *clonedTask
 	}
-
-	fmt.Printf("NEIL DEBUG fetched task of len %v\n", backfillTasks.Len())
 }

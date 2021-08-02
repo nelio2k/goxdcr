@@ -16,7 +16,6 @@ import (
 	"github.com/couchbase/goxdcr/metadata"
 	"github.com/couchbase/goxdcr/service_def"
 	utilities "github.com/couchbase/goxdcr/utils"
-	"io/ioutil"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -132,22 +131,18 @@ func (b *BackfillReplicationService) initCacheFromMetaKV() (err error) {
 			}
 		}
 		if replicationId == "" {
-			fmt.Printf("NEIL DEBUG continue with key0 %v\n", key)
 			continue
 		}
 		if !strings.HasSuffix(key, fmt.Sprintf("/%v", SpecKey)) {
-			fmt.Printf("NEIL DEBUG continue with key0a %v\n", key)
 			continue
 		}
 		if specProcessed[replicationId] {
 			// has already been processed
-			fmt.Printf("NEIL DEBUG continue with key1 %v\n", key)
 			continue
 		}
 		specProcessed[replicationId] = true
 
 		backfillSpec, err := b.constructBackfillSpec(marshalledSpec, rev, false /*lock*/)
-		fmt.Printf("NEIL DEBUG starting up key %v constructed backfillSpec %v\n", key, backfillSpec)
 		if err != nil {
 			b.logger.Errorf("Unable to construct spec %v from metaKV's data. err: %v", key, err)
 			continue
@@ -205,7 +200,6 @@ func (b *BackfillReplicationService) initCacheFromMetaKV() (err error) {
 			// TODO fix
 			panic(err)
 		}
-		fmt.Printf("NEIL DEBUG setting backfill spec for %v to %v\n", replicationId, backfillSpec)
 	}
 
 	if len(b.unrecoverableBackfillIds) > 0 {
@@ -400,9 +394,6 @@ func (b *BackfillReplicationService) AddBackfillReplSpec(spec *metadata.Backfill
 	// TODO - once consistent metakv is in play, there could be conflict when adding, so this
 	// section would need to handle that and do RMW
 	key := getBackfillReplicationDocKeyFunc(spec.Id)
-	numToUse := atomic.AddUint32(&counter, 1)
-	fmt.Printf("NEIL DEBUG adding backfillSpec to metakv with key %v counter %v\n", key, numToUse)
-	ioutil.WriteFile(fmt.Sprintf("/tmp/backfillSpec_%v", numToUse), value, 0644)
 	err = b.metadataSvc.Add(key, value)
 	if err != nil {
 		b.logger.Errorf("Add returned error: %v\n", err)
@@ -517,9 +508,6 @@ var counter uint32
 func (b *BackfillReplicationService) setBackfillSpecUsingMarshalledData(spec *metadata.BackfillReplicationSpec, specValue []byte) error {
 	key := getBackfillReplicationDocKeyFunc(spec.Id)
 	err := b.metadataSvc.Set(key, specValue, spec.Revision())
-	numToUse := atomic.AddUint32(&counter, 1)
-	fmt.Printf("NEIL DEBUG setting backfillSpec to metakv with key %v counter %v\n", key, numToUse)
-	ioutil.WriteFile(fmt.Sprintf("/tmp/backfillSpec_%v", numToUse), specValue, 0644)
 	if err != nil {
 		return err
 	}
@@ -603,7 +591,6 @@ func (b *BackfillReplicationService) DelBackfillReplSpec(replicationId string) (
 
 	key := getBackfillReplicationDocKeyFunc(replicationId)
 	err = b.metadataSvc.Del(key, nil /*rev*/)
-	fmt.Printf("NEIL DEBUG dbackfillSpec Deleted %v\n", key)
 	if err != nil && err != service_def.MetadataNotFoundErr {
 		b.logger.Errorf("Failed to delete backfill spec, key=%v, err=%v\n", key, err)
 		return nil, err
