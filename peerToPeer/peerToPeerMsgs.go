@@ -715,8 +715,8 @@ func (v *VBMasterCheckResp) LoadBackfillTasks(backfillTasks *metadata.VBTasksMap
 	var taskEmpty []uint16
 	var taskNotFound []uint16
 
-	fmt.Printf("NEIL DEBUG before loading NotMyVBs: %v\n", payload.NotMyVBs)
-	fmt.Printf("NEIL DEBUG before loading vbtasks: %v\n", backfillTasks.VBTasksMap)
+	//fmt.Printf("NEIL DEBUG before loading NotMyVBs: %v\n", payload.NotMyVBs)
+	//fmt.Printf("NEIL DEBUG before loading vbtasks: %v\n", backfillTasks.VBTasksMap)
 
 	for vb, tasks := range backfillTasks.VBTasksMap {
 		if tasks == nil || tasks.Len() == 0 {
@@ -728,7 +728,7 @@ func (v *VBMasterCheckResp) LoadBackfillTasks(backfillTasks *metadata.VBTasksMap
 		vbPayload, found := notMyVBMap[vb]
 		if found {
 			vbPayload.BackfillTsks = tasks
-			fmt.Printf("NEIL DEBUG vb %v loaded %v\n", vb, vbPayload.BackfillTsks.PrettyPrint())
+			//fmt.Printf("NEIL DEBUG vb %v loaded %v\n", vb, vbPayload.BackfillTsks.PrettyPrint())
 			tasksLoaded = append(tasksLoaded, vb)
 			continue
 		}
@@ -744,9 +744,9 @@ func (v *VBMasterCheckResp) LoadBackfillTasks(backfillTasks *metadata.VBTasksMap
 		}
 	}
 	counter++
-	fmt.Printf("NEIL DEBUG counter %v loaded for VBs %v emtpyVBs %v notFoundVBs %v about to send backfilltask %v\n", counter, tasksLoaded, taskEmpty, taskNotFound, backfillTasks)
-	taskMapMarshal, _ := json.Marshal(backfillTasks.VBTasksMap)
-	ioutil.WriteFile(fmt.Sprintf("/tmp/toBeSent_%v", counter), taskMapMarshal, 0644)
+	//fmt.Printf("NEIL DEBUG counter %v loaded for VBs %v emtpyVBs %v notFoundVBs %v about to send backfilltask %v\n", counter, tasksLoaded, taskEmpty, taskNotFound, backfillTasks)
+	//taskMapMarshal, _ := json.Marshal(backfillTasks.VBTasksMap)
+	//ioutil.WriteFile(fmt.Sprintf("/tmp/toBeSent_%v", counter), taskMapMarshal, 0644)
 
 	return nil
 }

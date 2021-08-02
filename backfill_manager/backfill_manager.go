@@ -363,6 +363,7 @@ func (b *BackfillMgr) initCache() error {
 		}
 		b.createBackfillRequestHandler(spec)
 	}
+
 	return nil
 }
 
@@ -1729,22 +1730,18 @@ func (b *BackfillMgr) MergeIncomingPeerNodesBackfill(topic string, peerResponses
 			continue
 		}
 
-		fmt.Printf("NEIL DEBUG shaMap before loading into vbTaskMap: %v\n", shaMap)
+		//fmt.Printf("NEIL DEBUG shaMap before loading into vbTaskMap: %v\n", shaMap)
 		vbTaskMap := (*bucketMapPayload)[srcBucketName].GetBackfillVBTasks()
-		fmt.Printf("NEIL DEBUG vbTaskMap from payload: %v\n", vbTaskMap)
+		//fmt.Printf("NEIL DEBUG vbTaskMap from payload: %v\n", vbTaskMap)
 		err = vbTaskMap.LoadFromMappingsShaMap(shaMap)
 		if err != nil {
 			errMap[fmt.Sprintf("%v_%v", topic, nodeName)] = fmt.Errorf("nodeRespData LoadFromMappingsShaMap err %v", err)
 			continue
 		}
 
-		fmt.Printf("NEIL DEBUG vbTaskMap: %v\n", vbTaskMap)
+		//fmt.Printf("NEIL DEBUG vbTaskMap: %v\n", vbTaskMap)
 		backfillSpec := metadata.NewBackfillReplicationSpec(topic, backfillMappingDoc.SpecInternalId, vbTaskMap, spec)
 		b.logger.Infof("Replication %v received peer node backfill replication: %v", topic, backfillSpec)
-
-		if !backfillSpec.VBTasksMap.SameAs(vbTaskMap) {
-			panic("not the same")
-		}
 
 		mergeReq := internalPeerBackfillTaskMergeReq{
 			backfillSpec: backfillSpec,

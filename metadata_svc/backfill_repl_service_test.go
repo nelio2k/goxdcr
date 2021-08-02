@@ -21,6 +21,7 @@ import (
 	utilsMock "github.com/couchbase/goxdcr/utils/mocks"
 	"github.com/stretchr/testify/assert"
 	mock "github.com/stretchr/testify/mock"
+	"io/ioutil"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -438,4 +439,9 @@ func TestBackfillMappingError(t *testing.T) {
 	}
 
 	assert.Equal(uint32(1), atomic.LoadUint32(&completeCbCnt))
+
+	testSpec, _ := ioutil.ReadFile("/tmp/backfillSpec_10")
+	backfillSpecTest, err := backfillReplSvc.constructBackfillSpec(testSpec, nil, false)
+	assert.Nil(err)
+	fmt.Printf("NEIL DEBUG spec: %v\n", backfillSpecTest)
 }

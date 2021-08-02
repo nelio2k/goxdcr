@@ -251,13 +251,13 @@ func (b *BackfillRequestHandler) run() {
 			switch reflect.TypeOf(reqAndResp.Request) {
 			case reflect.TypeOf(metadata.CollectionNamespaceMapping{}):
 				err := b.handleBackfillRequestInternal(reqAndResp)
-				b.handlePersist(reqAndResp, err, requestPersistFunc)
+				b.handlePersist(reqAndResp, err, requestPersistFunc, cancelPersistFunc)
 			case reflect.TypeOf(metadata.CollectionNamespaceMappingsDiffPair{}):
 				err := b.handleBackfillRequestDiffPair(reqAndResp)
-				b.handlePersist(reqAndResp, err, requestPersistFunc)
+				b.handlePersist(reqAndResp, err, requestPersistFunc, cancelPersistFunc)
 			case reflect.TypeOf(internalDelBackfillReq{}):
 				err := b.handleSpecialDelBackfill(reqAndResp)
-				b.handlePersist(reqAndResp, err, requestPersistFunc)
+				b.handlePersist(reqAndResp, err, requestPersistFunc, cancelPersistFunc)
 			case reflect.TypeOf(internalVBDiffBackfillReq{}):
 				internalReq := reqAndResp.Request.(internalVBDiffBackfillReq)
 				var addErr error
@@ -271,7 +271,7 @@ func (b *BackfillRequestHandler) run() {
 						panic(fmt.Sprintf("Unknown type %v", reflect.TypeOf(internalReq.req)))
 					}
 				}
-				b.handlePersist(reqAndResp, addErr, requestPersistFunc)
+				b.handlePersist(reqAndResp, addErr, requestPersistFunc, cancelPersistFunc)
 				if len(internalReq.removedVBsList) > 0 {
 					for _, vb := range internalReq.removedVBsList {
 						delReq := internalDelBackfillReq{
@@ -283,7 +283,7 @@ func (b *BackfillRequestHandler) run() {
 				}
 			case reflect.TypeOf(internalPeerBackfillTaskMergeReq{}):
 				err := b.handlePeerNodesBackfillMerge(reqAndResp)
-				b.handlePersist(reqAndResp, err, requestPersistFunc)
+				b.handlePersist(reqAndResp, err, requestPersistFunc, cancelPersistFunc)
 			case nil:
 				// This is when stop() is called and the channel is closed
 			default:
@@ -292,19 +292,8 @@ func (b *BackfillRequestHandler) run() {
 				close(reqAndResp.PersistResponse)
 			}
 		case reqAndResp := <-b.doneTaskCh:
-			handleErr := b.handleVBDone(reqAndResp)
-			reqAndResp.HandleResponse <- handleErr
-			if handleErr == nil {
-				requestPersistFunc()
-				// Actual persistence will return to PersistResp
-			} else if handleErr == errorSyncDel {
-				// Handling this VB has led to completion of the backfill spec
-				// The spec has been synchronously deleted, and err returned to persistResponse
-				cancelPersistFunc()
-			} else {
-				// Erroneous state, no persist will take place for this request
-				close(reqAndResp.PersistResponse)
-			}
+			err := b.handleVBDone(reqAndResp)
+			b.handlePersist(reqAndResp, err, requestPersistFunc, cancelPersistFunc)
 		case <-batchPersistCh:
 			if atomic.LoadUint32(&needCoolDown) == 1 {
 				batchPersistCh <- true
@@ -350,10 +339,14 @@ func (b *BackfillRequestHandler) run() {
 	}
 }
 
-func (b *BackfillRequestHandler) handlePersist(reqAndResp ReqAndResp, err error, requestPersistFunc func()) {
+func (b *BackfillRequestHandler) handlePersist(reqAndResp ReqAndResp, err error, requestPersistFunc func(), cancelPersistFunc func()) {
 	reqAndResp.HandleResponse <- err
 	if err == nil {
 		requestPersistFunc()
+		// Actual persistence will return to PersistResp
+	} else if err == errorSyncDel {
+		// The spec has been synchronously deleted, and err returned to persistResponse
+		cancelPersistFunc()
 	} else {
 		close(reqAndResp.PersistResponse)
 	}
@@ -1086,11 +1079,13 @@ func (b *BackfillRequestHandler) handlePeerNodesBackfillMerge(reqAndResp ReqAndR
 			b.spec.InternalId, peerNodesReq.backfillSpec.InternalId)
 	}
 
+	fmt.Printf("NEIL DEBUG before merging %v\n", b.cachedBackfillSpec.PrintFirstTaskRange())
 	err := b.updateBackfillSpec(reqAndResp.PersistResponse, peerNodesReq.backfillSpec.VBTasksMap, nil, nil, false)
 	if err != nil {
 		b.logger.Errorf(err.Error())
 		return err
 	}
+	fmt.Printf("NEIL DEBUG after merging %v\n", b.cachedBackfillSpec.PrintFirstTaskRange())
 	return err
 }
 

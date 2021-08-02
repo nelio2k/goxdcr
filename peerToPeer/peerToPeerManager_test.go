@@ -216,16 +216,11 @@ func TestPeerToPeerMgrReceiveActualData(t *testing.T) {
 	bucketRespSent := sentResp.GetReponse()
 	assert.NotNil(bucketResp)
 	assert.NotNil(bucketRespSent)
-	backfillTask := (*bucketResp)["B0"].GetBackfillVBTasks()
-	backfillTaskSent := (*bucketRespSent)["B0"].GetBackfillVBTasks()
-	fmt.Printf("NEIL DEBUG len of backfilltasks %v\n", backfillTask.Len())
-	fmt.Printf("NEIL DEBUG len of sent backfilltasks %v\n", backfillTaskSent.Len())
-	for vb, tasks := range backfillTask.VBTasksMap {
-		fmt.Printf("NEIL DEBUG vb %v has task %v\n", vb, tasks.PrettyPrint())
-	}
+	//backfillTask := (*bucketResp)["B0"].GetBackfillVBTasks()
+	//backfillTaskSent := (*bucketRespSent)["B0"].GetBackfillVBTasks()
 
 	vbTaskMap := make(map[uint16]*metadata.BackfillTasks)
 	assert.Nil(json.Unmarshal(sentSlice, &vbTaskMap))
-	fmt.Printf("NEIL DEBUG sent len of backfilltasks %v\n", len(vbTaskMap))
+	//fmt.Printf("NEIL DEBUG sent len of backfilltasks %v\n", len(vbTaskMap))
 
 }

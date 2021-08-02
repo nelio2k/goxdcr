@@ -221,7 +221,7 @@ func (h *VBMasterCheckHandler) populateBucketVBMapsIntoResp(bucketVBsMap BucketV
 			oneKey = key
 		}
 		myVbsList := myVBMap[oneKey]
-		fmt.Printf("NEIL DEBUG myVBList: %v\n", myVbsList)
+		//fmt.Printf("NEIL DEBUG myVBList: %v\n", myVbsList)
 		_, _, vbsIntersect := base.ComputeDeltaOfUint16Lists(myVbsList, vbsList, true)
 		// Given my list and another list of VBs that I should not own,
 		// if there is any intersection, then that's an issue
@@ -345,5 +345,5 @@ func (v *VBMasterCheckHandler) fetchBackfillTasks(replId string, backfillTasks *
 		*backfillTasks = *clonedTask
 	}
 
-	fmt.Printf("NEIL DEBUG fetched task %v\n", backfillTasks.DebugString())
+	fmt.Printf("NEIL DEBUG fetched task of len %v\n", backfillTasks.Len())
 }

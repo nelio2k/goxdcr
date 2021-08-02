@@ -691,6 +691,28 @@ func (v *VBTasksMapType) PostUnmarshalInit() {
 	}
 }
 
+// Does not clone task - should pre-clone
+func (v *VBTasksMapType) FilterBasedOnVBs(vbsList []uint16) *VBTasksMapType {
+	v.mutex.RLock()
+	defer v.mutex.RUnlock()
+
+	vbsLookupMap := make(map[uint16]bool)
+	for _, vbno := range vbsList {
+		vbsLookupMap[vbno] = true
+	}
+
+	filteredMap := NewVBTasksMap()
+	filteredMap.mutex.Lock()
+	defer filteredMap.mutex.Unlock()
+	for vbno, tasks := range v.VBTasksMap {
+		if _, exists := vbsLookupMap[vbno]; !exists {
+			continue
+		}
+		filteredMap.VBTasksMap[vbno] = tasks
+	}
+	return filteredMap
+}
+
 // Backfill tasks are ordered list of backfill jobs, and to be handled in sequence
 type BackfillTasks struct {
 	List  []*BackfillTask
