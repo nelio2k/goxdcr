@@ -144,10 +144,12 @@ func (b *BackfillRequestHandler) Start() error {
 		var replSpec *metadata.ReplicationSpecification
 		replSpec, err = b.replicationSpecSvc.ReplicationSpec(b.id)
 		if err != nil {
+			b.logger.Errorf("Error getting replicationSpec %v", err)
 			return
 		}
 		b.sourceBucketTopologyCh, err = b.bucketTopologySvc.SubscribeToLocalBucketFeed(replSpec, b.id)
 		if err != nil {
+			b.logger.Errorf("Error subscribing to local bucket feed %v", err)
 			return
 		}
 		b.sourceUnsubscribeFuncMtx.Lock()
@@ -223,9 +225,13 @@ func (b *BackfillRequestHandler) run() {
 	}
 
 	cancelPersistFunc := func() {
+		var tooLate bool
 		if persistTimer != nil {
-			persistTimer.Stop()
+			tooLate = persistTimer.Stop()
 			persistTimer = nil
+		}
+		if tooLate {
+			fmt.Printf("NEIL DEBUG toolate fired caused race?\n")
 		}
 		// When cancelling, need to remove any potential batches
 		select {
@@ -662,6 +668,7 @@ func (b *BackfillRequestHandler) handleVBDone(reqAndResp ReqAndResp) error {
 	var hasMoreTasks bool
 	if backfillDone {
 		hasMoreTasks = b.cachedBackfillSpec.VBTasksMap.ContainsAtLeastOneTask()
+		fmt.Printf("NEIL DEBUG vbsDoneNotifier has more task: %v\n", hasMoreTasks)
 		b.vbsDoneNotifier(hasMoreTasks)
 	}
 
@@ -1079,13 +1086,13 @@ func (b *BackfillRequestHandler) handlePeerNodesBackfillMerge(reqAndResp ReqAndR
 			b.spec.InternalId, peerNodesReq.backfillSpec.InternalId)
 	}
 
-	fmt.Printf("NEIL DEBUG before merging %v\n", b.cachedBackfillSpec.PrintFirstTaskRange())
+	//fmt.Printf("NEIL DEBUG before merging %v\n", b.cachedBackfillSpec.PrintFirstTaskRange())
 	err := b.updateBackfillSpec(reqAndResp.PersistResponse, peerNodesReq.backfillSpec.VBTasksMap, nil, nil, false)
 	if err != nil {
 		b.logger.Errorf(err.Error())
 		return err
 	}
-	fmt.Printf("NEIL DEBUG after merging %v\n", b.cachedBackfillSpec.PrintFirstTaskRange())
+	//fmt.Printf("NEIL DEBUG after merging %v\n", b.cachedBackfillSpec.PrintFirstTaskRange())
 	return err
 }
 

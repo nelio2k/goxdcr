@@ -441,6 +441,24 @@ func (this *VBTasksMapType) Clone() *VBTasksMapType {
 	return clonedMap
 }
 
+func (this *VBTasksMapType) CloneWithSubsetVBs(vbsList []uint16) *VBTasksMapType {
+	sortedVBs := base.SortUint16List(vbsList)
+	clonedMap := NewVBTasksMap()
+	if this == nil {
+		return clonedMap
+	}
+	this.mutex.RLock()
+	defer this.mutex.RUnlock()
+	for k, v := range this.VBTasksMap {
+		if _, found := base.SearchUint16List(sortedVBs, k); !found {
+			continue
+		}
+		clonedTasks := v.Clone()
+		clonedMap.VBTasksMap[k] = clonedTasks
+	}
+	return clonedMap
+}
+
 // TODO Expensive - optimize later
 func (v *VBTasksMapType) LoadFromMappingsShaMap(shaToCollectionNsMap ShaToCollectionNamespaceMap) error {
 	if v == nil {

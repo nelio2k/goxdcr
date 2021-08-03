@@ -49,7 +49,7 @@ const targetBucketUUID = "targetBucketUuid"
 var defaultSeqnoGetter = func() map[uint16]uint64 {
 	retMap := make(map[uint16]uint64)
 	for i := uint16(0); i < 1024; i++ {
-		retMap[i] = 0
+		retMap[i] = 100
 	}
 	return retMap
 }
@@ -71,7 +71,9 @@ var vbsGetter = func(customList []uint16) map[string][]uint16 {
 	return retMap
 }
 
-func setupMock(manifestSvc *service_def.CollectionsManifestSvc, replSpecSvc *service_def.ReplicationSpecSvc, pipelineMgr *pipeline_mgr.PipelineMgrBackfillIface, clusterInfoSvcMock *service_def.ClusterInfoSvc, xdcrTopologyMock *service_def.XDCRCompTopologySvc, checkpointSvcMock *service_def.CheckpointsService, seqnoGetter func() map[uint16]uint64, localVBMapGetter func([]uint16) map[string][]uint16, backfillReplSvc *service_def.BackfillReplSvc, additionalSpecIds []string, bucketTopologySvc *service_def.BucketTopologySvc) {
+func setupMock(manifestSvc *service_def.CollectionsManifestSvc, replSpecSvc *service_def.ReplicationSpecSvc, pipelineMgr *pipeline_mgr.PipelineMgrBackfillIface,
+	clusterInfoSvcMock *service_def.ClusterInfoSvc, xdcrTopologyMock *service_def.XDCRCompTopologySvc,
+	checkpointSvcMock *service_def.CheckpointsService, seqnoGetter func() map[uint16]uint64, localVBMapGetter func([]uint16) map[string][]uint16, backfillReplSvc *service_def.BackfillReplSvc, additionalSpecIds []string, bucketTopologySvc *service_def.BucketTopologySvc) {
 
 	returnedSpec, _ := metadata.NewReplicationSpecification(sourceBucketName, sourceBucketUUID, targetClusterUUID, targetBucketName, targetBucketUUID)
 	var specList = []string{returnedSpec.Id}
@@ -87,9 +89,14 @@ func setupMock(manifestSvc *service_def.CollectionsManifestSvc, replSpecSvc *ser
 	pipelineMgr.On("BackfillMappingStatusUpdate", mock.Anything, mock.Anything).Return(nil)
 	clusterInfoSvcMock.On("GetLocalServerVBucketsMap", mock.Anything, mock.Anything).Return(localVBMapGetter(nil), nil)
 	xdcrTopologyMock.On("MyKVNodes").Return([]string{"localhost:9000"}, nil)
+	checkpointSvcMock.On("CheckpointsDocs", mock.Anything, mock.Anything).Return(nil, base.ErrorNotFound)
 
 	sourceCh := make(chan service_def_real.SourceNotification, base.BucketTopologyWatcherChanLen)
-	srcNotification := getDefaultSourceNotification(nil)
+	var vbsList []uint16
+	for i := uint16(0); i < base.NumberOfVbs; i++ {
+		vbsList = append(vbsList, i)
+	}
+	srcNotification := getDefaultSourceNotification(vbsList)
 	go func() {
 		for i := 0; i < 50; i++ {
 			sourceCh <- srcNotification
@@ -124,7 +131,8 @@ func setupBackfillReplSvcNegMock(backfillReplSvc *service_def.BackfillReplSvc) {
 	backfillReplSvc.On("AddBackfillReplSpec", mock.Anything).Return(base.ErrorInvalidInput)
 	backfillReplSvc.On("SetBackfillReplSpec", mock.Anything).Return(base.ErrorInvalidInput)
 	backfillReplSvc.On("DelBackfillReplSpec", mock.Anything).Return(nil, base.ErrorInvalidInput)
-	backfillReplSvc.On("SetCompleteBackfillRaiser", mock.Anything).Return(base.ErrorInvalidInput)
+	// SetCompleteBackfillRaiser for now can only return nil
+	backfillReplSvc.On("SetCompleteBackfillRaiser", mock.Anything).Return(nil)
 }
 
 func setupReplStartupSpecs(replSpecSvc *service_def.ReplicationSpecSvc,

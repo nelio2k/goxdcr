@@ -137,6 +137,13 @@ type DualSortedSeqnoListWithLock struct {
 	lock         *sync.RWMutex
 }
 
+const (
+	VBSeqnoNotDone           uint64 = iota
+	VBSeqnoStreamEndReceived uint64 = iota
+	VBSeqnoBypassed          uint64 = iota
+	VBSeqnoAllProcessed      uint64 = iota
+)
+
 func newDualSortedSeqnoListWithLock() *DualSortedSeqnoListWithLock {
 	return &DualSortedSeqnoListWithLock{make([]uint64, 0), make([]uint64, 0), &sync.RWMutex{}}
 }
@@ -829,6 +836,7 @@ func (tsTracker *ThroughSeqnoTrackerSvc) Attach(pipeline common.Pipeline) error 
 		dcp_parts := pipeline.Sources()
 		for _, dcp := range dcp_parts {
 			dcp.RegisterComponentEventListener(common.StreamingEnd, tsTracker)
+			dcp.RegisterComponentEventListener(common.StreamingBypassed, tsTracker)
 		}
 	}
 
@@ -1029,6 +1037,15 @@ func (tsTracker *ThroughSeqnoTrackerSvc) ProcessEvent(event *common.Event) error
 			tsTracker.handleGeneralError(err)
 			return err
 		}
+	case common.StreamingBypassed:
+		vbno, ok := event.Data.(uint16)
+		if !ok {
+			err := fmt.Errorf("Invalid vbno data type raised for StreamingBypassed. Type: %v", reflect.TypeOf(event.Data))
+			tsTracker.logger.Errorf(err.Error())
+			tsTracker.handleGeneralError(err)
+			return err
+		}
+		tsTracker.handleBackfillStreamBypass(vbno)
 	case common.DataCloned:
 		data := event.Data.([]interface{})
 		vbno := data[0].(uint16)
@@ -1057,6 +1074,14 @@ func (tsTracker *ThroughSeqnoTrackerSvc) addSentSeqnoAndManifestId(vbno uint16, 
 	tsTracker.addManifestId(vbno, seqno, manifestId)
 }
 
+func (tsTracker *ThroughSeqnoTrackerSvc) handleBackfillStreamBypass(vbno uint16) {
+	if atomic.CompareAndSwapUint32(&tsTracker.vbBackfillHelperActive, 0, 1) {
+		go tsTracker.bgScanForThroughSeqno()
+	}
+
+	tsTracker.vbBackfillHelperDoneMap[vbno].SetSeqno(VBSeqnoBypassed)
+}
+
 func (tsTracker *ThroughSeqnoTrackerSvc) handleBackfillStreamEnd(vbno uint16) {
 	if atomic.CompareAndSwapUint32(&tsTracker.vbBackfillHelperActive, 0, 1) {
 		go tsTracker.bgScanForThroughSeqno()
@@ -1065,7 +1090,7 @@ func (tsTracker *ThroughSeqnoTrackerSvc) handleBackfillStreamEnd(vbno uint16) {
 	lastSeenSeqno := tsTracker.vb_last_seen_seqno_map[vbno].GetSeqno()
 	tsTracker.vbBackfillLastDCPSeqnoMap[vbno].SetSeqno(lastSeenSeqno)
 
-	tsTracker.vbBackfillHelperDoneMap[vbno].SetSeqno(1)
+	tsTracker.vbBackfillHelperDoneMap[vbno].SetSeqno(VBSeqnoStreamEndReceived)
 }
 
 func (tsTracker *ThroughSeqnoTrackerSvc) bgScanForThroughSeqno() {
@@ -1096,7 +1121,8 @@ func (tsTracker *ThroughSeqnoTrackerSvc) bgScanForThroughSeqno() {
 
 			for vbno, lastSeenSeqnoLocked := range tsTracker.vbBackfillLastDCPSeqnoMap {
 				currentState := tsTracker.vbBackfillHelperDoneMap[vbno].GetSeqno()
-				if currentState != 1 {
+				// This part only handles either streamEndReceived or Bypassed
+				if currentState != VBSeqnoStreamEndReceived && currentState != VBSeqnoBypassed {
 					// StreamEnd hasn't been received yet OR
 					// Already marked done
 					// so don't check the Seqnos
@@ -1105,10 +1131,11 @@ func (tsTracker *ThroughSeqnoTrackerSvc) bgScanForThroughSeqno() {
 
 				// Otherwise, at this stage it means seqnoEnd has been sent by the producer
 				// Need to ensure throughSeqno is caught up with what DCP nozzle last saw before streamEnd
+				// Or a special case of bypassed
 				lastSeenSeqno := lastSeenSeqnoLocked.GetSeqno()
 				vbThroughSeqno := throughSeqnos[vbno]
-				if vbThroughSeqno >= lastSeenSeqno {
-					tsTracker.vbBackfillHelperDoneMap[vbno].SetSeqno(2)
+				if currentState == VBSeqnoBypassed || vbThroughSeqno >= lastSeenSeqno {
+					tsTracker.vbBackfillHelperDoneMap[vbno].SetSeqno(VBSeqnoAllProcessed)
 					doneLists = append(doneLists, vbno)
 				}
 			}
@@ -1132,7 +1159,7 @@ func (tsTracker *ThroughSeqnoTrackerSvc) bgScanForThroughSeqno() {
 func (tsTracker *ThroughSeqnoTrackerSvc) bgScanForDoneVBs() (total, totalDone int, waitingOnVbs []uint16) {
 	total = len(tsTracker.vbBackfillHelperDoneMap)
 	for vbno, seqnoWithLock := range tsTracker.vbBackfillHelperDoneMap {
-		if seqnoWithLock.GetSeqno() == 2 {
+		if seqnoWithLock.GetSeqno() == VBSeqnoAllProcessed {
 			totalDone++
 		} else {
 			waitingOnVbs = append(waitingOnVbs, vbno)

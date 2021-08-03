@@ -17,6 +17,8 @@ const (
 	StreamingStart ComponentEventType = iota
 	// data streaming ends
 	StreamingEnd ComponentEventType = iota
+	// data streaming bypass - if a backfill taks does not have this VB
+	StreamingBypassed ComponentEventType = iota
 	//data received by the component
 	DataReceived ComponentEventType = iota
 	//data is processed by the component

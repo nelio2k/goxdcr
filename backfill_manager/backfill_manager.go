@@ -283,7 +283,10 @@ func (b *BackfillMgr) Start() error {
 		return err
 	}
 
-	b.backfillReplSvc.SetCompleteBackfillRaiser(b.RequestCompleteBackfill)
+	err = b.backfillReplSvc.SetCompleteBackfillRaiser(b.RequestCompleteBackfill)
+	if err != nil {
+		return err
+	}
 
 	go b.runRetryMonitor()
 
@@ -361,7 +364,10 @@ func (b *BackfillMgr) initCache() error {
 			b.cacheMtx.Unlock()
 			// Default with default manifest in case of error
 		}
-		b.createBackfillRequestHandler(spec)
+		err = b.createBackfillRequestHandler(spec)
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -389,6 +395,7 @@ func (b *BackfillMgr) createBackfillRequestHandler(spec *metadata.ReplicationSpe
 			b.logger.Errorf("Unable to clean up backfill pipeline checkpoint %v - %v", replId, err)
 		}
 		if startNewTask {
+			fmt.Printf("NEIL DEBUG request backfill 2\n")
 			err = b.pipelineMgr.RequestBackfill(replId)
 			if err != nil {
 				b.logger.Errorf("Unable to request backfill pipeline %v - %v", replId, err)
@@ -426,8 +433,7 @@ func (b *BackfillMgr) createBackfillRequestHandler(spec *metadata.ReplicationSpe
 	b.specReqHandlersMtx.Unlock()
 
 	b.logger.Infof("Starting backfill request handler for spec %v internalId %v", replId, internalId)
-	reqHandler.Start()
-	return nil
+	return reqHandler.Start()
 }
 
 func (b *BackfillMgr) deleteBackfillRequestHandler(replId, internalId string) error {
@@ -487,6 +493,7 @@ func (b *BackfillMgr) backfillReplSpecChangeHandlerCallback(changedSpecId string
 		// Requesting a backfill pipeline means that a pipeline will start and for the top task in each VBTasksMap
 		// will be sent to DCP to be run and backfilled
 		// Once all the VB Task's top task is done, then the backfill pipeline will be considered finished
+		fmt.Printf("NEIL DEBUG request backfill 0\n")
 		err := b.pipelineMgr.RequestBackfill(changedSpecId)
 		if err != nil {
 			b.logger.Errorf("Unable to request backfill for %v", changedSpecId)
@@ -524,6 +531,7 @@ func (b *BackfillMgr) backfillReplSpecChangeHandlerCallback(changedSpecId string
 					b.logger.Errorf("Unable to request backfill pipeline to stop for %v : %v - backfill pipeline may be executing out of date backfills", changedSpecId, err)
 					return err
 				}
+				//fmt.Printf("NEIL DEBUG request backfill 1 namespace mappings %v vs %v active?\n", oldNamespaceMappings, newNamespaceMappings, newSpec.ReplicationSpec().Settings.Active)
 				err = b.pipelineMgr.RequestBackfill(changedSpecId)
 				if err != nil {
 					b.logger.Errorf("Unable to request backfill pipeline to start for %v : %v - may require manual restart of pipeline", changedSpecId, err)
@@ -1653,6 +1661,7 @@ func (b *BackfillMgr) DelBackfillForVB(topic string, vbno uint16) error {
 		b.logger.Errorf("Unable to request backfill pipeline to stop for %v : %v - backfill for VB %v may occur", topic, err, vbno)
 		return err
 	}
+	fmt.Printf("NEIL DEBUG request backfill 3\n")
 	err = b.pipelineMgr.RequestBackfill(topic)
 	if err != nil {
 		b.logger.Errorf("Unable to request backfill pipeline to start for %v : %v - may require manual restart of pipeline", topic, err)
@@ -1730,16 +1739,13 @@ func (b *BackfillMgr) MergeIncomingPeerNodesBackfill(topic string, peerResponses
 			continue
 		}
 
-		//fmt.Printf("NEIL DEBUG shaMap before loading into vbTaskMap: %v\n", shaMap)
 		vbTaskMap := (*bucketMapPayload)[srcBucketName].GetBackfillVBTasks()
-		//fmt.Printf("NEIL DEBUG vbTaskMap from payload: %v\n", vbTaskMap)
 		err = vbTaskMap.LoadFromMappingsShaMap(shaMap)
 		if err != nil {
 			errMap[fmt.Sprintf("%v_%v", topic, nodeName)] = fmt.Errorf("nodeRespData LoadFromMappingsShaMap err %v", err)
 			continue
 		}
 
-		//fmt.Printf("NEIL DEBUG vbTaskMap: %v\n", vbTaskMap)
 		backfillSpec := metadata.NewBackfillReplicationSpec(topic, backfillMappingDoc.SpecInternalId, vbTaskMap, spec)
 		b.logger.Infof("Replication %v received peer node backfill replication: %v", topic, backfillSpec)
 

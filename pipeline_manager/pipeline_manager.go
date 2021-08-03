@@ -986,7 +986,8 @@ func (pipelineMgr *PipelineManager) StartBackfillPipeline(topic string) base.Err
 	// (DCP will let Backfill Request Handler will know when each VB is done so the top task for the vb is removed)
 	// And if there are more VBTasks, then another new pipeline will be launched start to handle the next sets of tasks
 	bpCustomSettingMap := make(map[string]interface{})
-	clonedTaskMap := backfillSpec.VBTasksMap.Clone()
+	clonedTaskMap := backfillSpec.VBTasksMap.CloneWithSubsetVBs(mainPipelineVbs)
+	//clonedTaskMap := backfillSpec.VBTasksMap.Clone()
 	bpCustomSettingMap[parts.DCP_VBTasksMap] = clonedTaskMap
 	rep_status.SetCustomSettings(bpCustomSettingMap)
 
