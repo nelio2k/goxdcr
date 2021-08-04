@@ -174,12 +174,19 @@ func (p *pipelineSvcWrapper) UpdateSettings(settings metadata.ReplicationSetting
 	peerBackfillInfo, exists := settings[peerToPeer.MergeBackfillKey].(peerToPeer.PeersVBMasterCheckRespMap)
 	if topicExists && exists {
 		err := p.backfillMgr.MergeIncomingPeerNodesBackfill(topic, peerBackfillInfo)
+		// Handle NoBackfillNeeded
 		if err != nil {
 			errMap[peerToPeer.MergeBackfillKey] = err
 		}
 	}
 
 	if len(errMap) > 0 {
+		if len(errMap) == 1 {
+			// Only need to return one error as said error from the caller should require no context
+			for _, retErr := range errMap {
+				return retErr
+			}
+		}
 		return fmt.Errorf(base.FlattenErrorMap(errMap))
 	} else {
 		return nil
@@ -1750,17 +1757,45 @@ func (b *BackfillMgr) MergeIncomingPeerNodesBackfill(topic string, peerResponses
 		b.logger.Infof("Replication %v received peer node backfill replication: %v", topic, backfillSpec)
 
 		mergeReq := internalPeerBackfillTaskMergeReq{
+			nodeName:     nodeName,
 			backfillSpec: backfillSpec,
 		}
 		err = handler.HandleBackfillRequest(mergeReq)
 		if err != nil {
-			err = fmt.Errorf("node %v backfill merge request was unable to be merged - %v", nodeName, err)
-			b.logger.Errorf(err.Error())
+			b.logger.Errorf(fmt.Sprintf("node %v backfill merge request was unable to be merged - %v", nodeName, err))
 			errMap[nodeName] = err
 		}
 	}
+
 	if len(errMap) > 0 {
-		return fmt.Errorf(base.FlattenErrorMap(errMap))
+		// Unable to merge errors are a bit tricky
+		// 1. If all nodes are unable to merge because of errorPeerVBTasksAlreadyContained
+		//    Then it should be a no-op. Return an overall error that says nothing to be done
+		// 2. If a subset of node was unable to merge because of errorPeerVBTasksAlreadyContained but some are merged
+		//    successfully, then the pipeline should keep going and the nodes that already had contained should be silent
+		// 3. If some node had errorPeerVBTasksAlreadyContained errors and some do not, return the whole errors and try again
+
+		var backfillAlreadyMergedCnt int
+		var nilErrCnt int
+		for _, checkErr := range errMap {
+			if checkErr != nil && checkErr == errorPeerVBTasksAlreadyContained {
+				backfillAlreadyMergedCnt++
+			} else if checkErr == nil {
+				nilErrCnt++
+			}
+		}
+		if backfillAlreadyMergedCnt == len(errMap) {
+			// Case 1 No-Op
+			b.logger.Infof("All backfill info from peer nodes have already been merged or performed. No backfill is needed")
+			return base.ErrorNoBackfillNeeded
+		} else if backfillAlreadyMergedCnt+nilErrCnt == len(errMap) {
+			// Case 2 - be silent
+			b.logger.Infof("Some peer nodes have already been merged or performed. Raise backfill regardless")
+			return nil
+		} else {
+			// Case 3 - return everything
+			return fmt.Errorf(base.FlattenErrorMap(errMap))
+		}
 	} else {
 		return nil
 	}

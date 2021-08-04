@@ -29,6 +29,7 @@ import (
 var errorStopped error = fmt.Errorf("BackfillReqHandler is stopping")
 var errorSyncDel error = fmt.Errorf("Synchronous deletion took place")
 var errorVbAlreadyDone error = fmt.Errorf("VBDone from DCP already called")
+var errorPeerVBTasksAlreadyContained = fmt.Errorf("PeerNode VBTaskMap is already merged")
 
 type PersistType int
 
@@ -91,6 +92,10 @@ type BackfillRequestHandler struct {
 
 	sourceUnsubscribeFuncMtx sync.Mutex
 	sourceUnsubscribeFunc    func()
+
+	// TODO - need to GC
+	lastMergedMtx sync.RWMutex
+	lastMergedMap map[string]*metadata.VBTasksMapType
 }
 
 type SeqnosGetter func() (map[uint16]uint64, error)
@@ -127,6 +132,7 @@ func NewCollectionBackfillRequestHandler(logger *log.CommonLogger, replId string
 		getCompleteReq:               getCompleteReq,
 		sourceBucketTopologyCh:       make(chan service_def.SourceNotification, base.BucketTopologyWatcherChanLen),
 		replicationSpecSvc:           replicationSpecSvc,
+		lastMergedMap:                map[string]*metadata.VBTasksMapType{},
 	}
 }
 
@@ -1086,14 +1092,55 @@ func (b *BackfillRequestHandler) handlePeerNodesBackfillMerge(reqAndResp ReqAndR
 			b.spec.InternalId, peerNodesReq.backfillSpec.InternalId)
 	}
 
+	// The request sent to a peer node will cause it to respond with NotMyVBs for the VBs that we're interested in
+	// Thus, if the NotMyVBs data did not change since last known, do not merge it
+	// Chances are that we already have merged it already and the VBTaskMap for these VBs are empty, which is correct
+	err := b.checkIfDataChanged(peerNodesReq)
+	if err != nil {
+		return err
+	}
+
 	//fmt.Printf("NEIL DEBUG before merging %v\n", b.cachedBackfillSpec.PrintFirstTaskRange())
-	err := b.updateBackfillSpec(reqAndResp.PersistResponse, peerNodesReq.backfillSpec.VBTasksMap, nil, nil, false)
+	err = b.updateBackfillSpec(reqAndResp.PersistResponse, peerNodesReq.backfillSpec.VBTasksMap, nil, nil, false)
 	if err != nil {
 		b.logger.Errorf(err.Error())
 		return err
 	}
 	//fmt.Printf("NEIL DEBUG after merging %v\n", b.cachedBackfillSpec.PrintFirstTaskRange())
+
+	if err == nil {
+		b.recordRequestAsMerged(peerNodesReq)
+	}
 	return err
+}
+
+// Returns nil if the request needs to be merged
+func (b *BackfillRequestHandler) checkIfDataChanged(req internalPeerBackfillTaskMergeReq) error {
+	if req.backfillSpec == nil || req.backfillSpec.VBTasksMap.IsNil() {
+		return fmt.Errorf("Nil backfill spec for checkingDataChanged")
+	}
+	b.lastMergedMtx.RLock()
+	defer b.lastMergedMtx.RUnlock()
+
+	lastVBMTasks, exists := b.lastMergedMap[req.nodeName]
+	if !exists {
+		return nil
+	}
+
+	// Use contains because there's a chance that a peer node will have undergone GC and cleaned out certain tasks
+	// If we compare using SameAs, then there's a chance a false diff could show up
+	if !lastVBMTasks.Contains(req.backfillSpec.VBTasksMap) {
+		return nil
+	}
+
+	return errorPeerVBTasksAlreadyContained
+}
+
+func (b *BackfillRequestHandler) recordRequestAsMerged(req internalPeerBackfillTaskMergeReq) {
+	b.lastMergedMtx.Lock()
+	defer b.lastMergedMtx.Unlock()
+
+	b.lastMergedMap[req.nodeName] = req.backfillSpec.VBTasksMap.Clone()
 }
 
 type internalDelBackfillReq struct {
@@ -1108,5 +1155,6 @@ type internalVBDiffBackfillReq struct {
 }
 
 type internalPeerBackfillTaskMergeReq struct {
+	nodeName     string
 	backfillSpec *metadata.BackfillReplicationSpec
 }

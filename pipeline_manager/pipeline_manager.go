@@ -464,7 +464,7 @@ func (pipelineMgr *PipelineManager) StartPipeline(topic string) base.ErrorMap {
 		pipelineMgr.logger.Errorf("Failed to start the pipeline %v", p.InstanceId())
 	} else {
 		backfillSpec, _ := pipelineMgr.backfillReplSvc.BackfillReplSpec(topic)
-		fmt.Printf("NEIL DEBUG backfillSpec pulled: %v\n", backfillSpec)
+		//fmt.Printf("NEIL DEBUG backfillSpec pulled: %v\n", backfillSpec)
 		if backfillSpec != nil {
 			// Has backfill pipeline waiting
 			backfillStartQueueErr := pipelineMgr.StartBackfill(topic)
@@ -1532,6 +1532,8 @@ func backfillStartSuccessful(retErrMap base.ErrorMap, logger *log.CommonLogger, 
 			logger.Infof("Replication %v backfill pipeline is not starting because there is currently no backfill spec", pipelineName)
 		} else if retErrMap.HasError(ErrorBackfillSpecHasNoVBTasks) {
 			logger.Infof("Replication %v's backfill spec does has no tasks to run", pipelineName)
+		} else if len(retErrMap) == 1 && retErrMap.HasError(base.ErrorNoBackfillNeeded) {
+			logger.Infof("Replication %v backfill pipeline is not starting because backfill tasks have all been done", pipelineName)
 		} else {
 			successful = false
 		}

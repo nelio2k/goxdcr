@@ -169,22 +169,7 @@ func (b *BackfillReplicationSpec) MergeNewTasks(vbTasksMap *VBTasksMapType, skip
 // When traffic is bursty, it's possible that multiple routers will be raising the same task
 // Returns true if incoming taskmap duplicates a portion of current spec
 func (b *BackfillReplicationSpec) Contains(vbTasksMap *VBTasksMapType) bool {
-	b.VBTasksMap.mutex.RLock()
-	defer b.VBTasksMap.mutex.RUnlock()
-	for vb, newTasks := range vbTasksMap.VBTasksMap {
-		currentTasks, exists, unlockFunc := b.VBTasksMap.Get(vb, false)
-		if !exists {
-			unlockFunc()
-			return false
-		}
-
-		if !currentTasks.Contains(newTasks) {
-			unlockFunc()
-			return false
-		}
-		unlockFunc()
-	}
-	return true
+	return b.VBTasksMap.Contains(vbTasksMap)
 }
 
 func (b *BackfillReplicationSpec) SameSpecGeneric(other GenericSpecification) bool {
@@ -771,6 +756,25 @@ func (v *VBTasksMapType) FilterBasedOnVBs(vbsList []uint16) *VBTasksMapType {
 		filteredMap.VBTasksMap[vbno] = tasks
 	}
 	return filteredMap
+}
+
+func (v *VBTasksMapType) Contains(vbTasksMap *VBTasksMapType) bool {
+	v.mutex.RLock()
+	defer v.mutex.RUnlock()
+	for vb, newTasks := range vbTasksMap.VBTasksMap {
+		currentTasks, exists, unlockFunc := v.Get(vb, false)
+		if !exists {
+			unlockFunc()
+			return false
+		}
+
+		if !currentTasks.Contains(newTasks) {
+			unlockFunc()
+			return false
+		}
+		unlockFunc()
+	}
+	return true
 }
 
 // Backfill tasks are ordered list of backfill jobs, and to be handled in sequence

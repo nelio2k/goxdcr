@@ -26,6 +26,7 @@ var ErrorKey = "Error"
 
 const PipelineContextStart = "genericPipeline.context.Start"
 const PipelinePartStart = "genericPipeline.startPartsWithTimeout"
+const MergeCkptFuncKey = "genericPipeline.mergeCkptFunc"
 
 // In certain scenarios, e.g., incorrect bucket password, a large number of parts
 // may return error when starting. limit the number of errors we track and log
@@ -271,10 +272,17 @@ func (genericPipeline *GenericPipeline) Start(settings metadata.ReplicationSetti
 
 		err = genericPipeline.mergeCkptFunc(genericPipeline, resp)
 		if err != nil {
-			errMap["genericPipeline.mergeCkptFunc"] = err
+			errMap[MergeCkptFuncKey] = err
 		}
 
-		if len(errMap) > 0 {
+		if len(errMap) == 1 && errMap.HasError(base.ErrorNoBackfillNeeded) {
+			if genericPipeline.Type() == common.MainPipeline {
+				// Main pipeline should continue to execute
+				genericPipeline.logger.Infof("Pipeline %v will continue to run because the only error is %v",
+					genericPipeline.Topic(), base.ErrorNoBackfillNeeded)
+				errMap = nil
+			}
+		} else if len(errMap) > 0 {
 			return errMap
 		}
 	}
