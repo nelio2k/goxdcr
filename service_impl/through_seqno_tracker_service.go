@@ -1098,6 +1098,7 @@ func (tsTracker *ThroughSeqnoTrackerSvc) bgScanForThroughSeqno() {
 	totalScanTime := time.Duration(base.XmemMaxRetry) * base.XmemMaxRetryInterval
 	killTimer := time.NewTimer(totalScanTime)
 	periodicScanner := time.NewTicker(5 * time.Second /* TODO make this configurable*/)
+	logPrinter := time.NewTicker(10 * time.Second) // Make this 30 seconds and configurable
 
 	defer killTimer.Stop()
 	defer periodicScanner.Stop()
@@ -1115,6 +1116,9 @@ func (tsTracker *ThroughSeqnoTrackerSvc) bgScanForThroughSeqno() {
 				tsTracker.Id(), total, totalDone, waitingOnVbs)
 			tsTracker.handleGeneralError(err)
 			return
+		case <-logPrinter.C:
+			total, totalDone, waitingOn := tsTracker.bgScanForDoneVBs()
+			tsTracker.Logger().Infof("%v bg scanner: total %v totalDone %v waitingOnVBs %v", total, totalDone, waitingOn)
 		case <-periodicScanner.C:
 			var doneLists []uint16
 			throughSeqnos := tsTracker.GetThroughSeqnos()

@@ -245,10 +245,6 @@ func (ckpt_svc *CheckpointsService) UpsertCheckpoints(replicationId string, spec
 	ckpt_svc.logger.Debugf("Persisting checkpoint record=%v for vbno=%v replication=%v\n", ckpt_record, vbno, replicationId)
 	var size int
 
-	mtx := ckpt_svc.getStopTheWorldMtx(replicationId)
-	mtx.RLock()
-	defer mtx.RUnlock()
-
 	if ckpt_record == nil {
 		return size, errors.New("nil checkpoint record")
 	}
@@ -266,6 +262,10 @@ func (ckpt_svc *CheckpointsService) UpsertCheckpoints(replicationId string, spec
 	if !added {
 		ckpt_svc.logger.Debug("the ckpt record to be added is the same as the current ckpt record in the ckpt doc. no-op.")
 	} else {
+		mtx := ckpt_svc.getStopTheWorldMtx(replicationId)
+		mtx.RLock()
+		defer mtx.RUnlock()
+
 		ckpt_json, err := json.Marshal(ckpt_doc)
 		if err != nil {
 			return size, err
@@ -290,11 +290,6 @@ func (ckpt_svc *CheckpointsService) UpsertCheckpoints(replicationId string, spec
 
 // Upserting Checkpoint doc requires a "stop-the-world" situation where refcount needs to be re-initialized
 func (ckpt_svc *CheckpointsService) UpsertCheckpointsDoc(replicationId string, ckptDocs map[uint16]*metadata.CheckpointsDoc, internalId string) (bool, error) {
-
-	mtx := ckpt_svc.getStopTheWorldMtx(replicationId)
-	mtx.Lock()
-	defer mtx.Unlock()
-
 	var atLeastOneWritten bool
 
 	err := ckpt_svc.validateSpecIsValid(replicationId, internalId)
@@ -302,6 +297,9 @@ func (ckpt_svc *CheckpointsService) UpsertCheckpointsDoc(replicationId string, c
 		return false, err
 	}
 
+	mtx := ckpt_svc.getStopTheWorldMtx(replicationId)
+	mtx.Lock()
+	defer mtx.Unlock()
 	errMap := make(base.ErrorMap)
 	for vbno, ckptDoc := range ckptDocs {
 		key := ckpt_svc.getCheckpointDocKey(replicationId, vbno)
@@ -817,15 +815,14 @@ func (ckpt_svc *CheckpointsService) getStopTheWorldMtx(replId string) *sync.RWMu
 }
 
 func (ckpt_svc *CheckpointsService) UpsertBrokenMappingsDoc(replicationId string, mappingDoc *metadata.CollectionNsMappingsDoc, ckptDoc map[uint16]*metadata.CheckpointsDoc, internalId string) error {
-
-	mtx := ckpt_svc.getStopTheWorldMtx(replicationId)
-	mtx.Lock()
-	defer mtx.Unlock()
-
 	err := ckpt_svc.validateSpecIsValid(replicationId, internalId)
 	if err != nil {
 		return err
 	}
+
+	mtx := ckpt_svc.getStopTheWorldMtx(replicationId)
+	mtx.Lock()
+	defer mtx.Unlock()
 
 	return ckpt_svc.ReInitUsingMergedMappingDoc(replicationId, mappingDoc, ckptDoc, internalId)
 }

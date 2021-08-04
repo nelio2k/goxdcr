@@ -1134,20 +1134,24 @@ func (dcp *DcpNozzle) handleSystemEvent(event *mcc.UprEvent) {
 // Only ok situation dcp should receive a streamEnd is if it's a backfill
 func (dcp *DcpNozzle) vbStreamEndIsOk(vbno uint16) bool {
 	if !dcp.CollectionEnabled() {
+		fmt.Printf("NEIL DEBUG vb %v not OK because collection not enabled\n", vbno)
 		return false
 	}
 
 	if dcp.specificVBTasks.IsNil() {
+		fmt.Printf("NEIL DEBUG vb %v not OK because tasks is nil\n", vbno)
 		return false
 	}
 
 	tasks, exists, unlockFunc := dcp.specificVBTasks.Get(vbno, false)
 	defer unlockFunc()
 	if !exists {
+		fmt.Printf("NEIL DEBUG vb %v not OK because task DNE\n", vbno)
 		return false
 	}
 
 	if tasks == nil || tasks.Len() == 0 {
+		fmt.Printf("NEIL DEBUG vb %v not OK because task is nil\n", vbno)
 		return false
 	}
 

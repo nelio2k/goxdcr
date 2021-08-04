@@ -270,9 +270,12 @@ func (genericPipeline *GenericPipeline) Start(settings metadata.ReplicationSetti
 			// to prevent data loss
 		}
 
-		err = genericPipeline.mergeCkptFunc(genericPipeline, resp)
-		if err != nil {
-			errMap[MergeCkptFuncKey] = err
+		// resp is potentially nil if checkFunc failed above
+		if resp != nil {
+			err = genericPipeline.mergeCkptFunc(genericPipeline, resp)
+			if err != nil {
+				errMap[MergeCkptFuncKey] = err
+			}
 		}
 
 		if len(errMap) == 1 && errMap.HasError(base.ErrorNoBackfillNeeded) {
