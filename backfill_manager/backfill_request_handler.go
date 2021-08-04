@@ -215,36 +215,48 @@ func (b *BackfillRequestHandler) Stop(waitGrp *sync.WaitGroup, errCh chan base.C
 func (b *BackfillRequestHandler) run() {
 	batchPersistCh := make(chan bool, 1)
 	var persistTimer *time.Timer
+	var persistTimerMtx sync.Mutex
 
 	requestPersistFunc := func() {
+		persistTimerMtx.Lock()
+		defer persistTimerMtx.Unlock()
+
 		if persistTimer == nil {
-			fmt.Printf("NEIL DEBUG lauunching persistTimer\n")
 			persistTimer = time.AfterFunc(b.persistInterval, func() {
+				persistTimerMtx.Lock()
+				defer persistTimerMtx.Unlock()
+
+				persistTimer = nil
 				select {
 				case batchPersistCh <- true:
-					fmt.Printf("NEIL DEBUG persistTimer firing\n")
 				default:
 					// Already needed to persist
 				}
 			})
-		} else {
-			persistTimer.Reset(b.persistInterval)
 		}
 	}
 
 	cancelPersistFunc := func() {
 		var caughtInTime bool
+
+		persistTimerMtx.Lock()
 		if persistTimer != nil {
 			caughtInTime = persistTimer.Stop()
-			if !caughtInTime {
-				fmt.Printf("NEIL DEBUG cancelPersistFunc not caught in time\n")
-			}
+			//if !caughtInTime {
+			//	fmt.Printf("NEIL DEBUG cancelPersistFunc not caught in time\n")
+			//}
 			persistTimer = nil
 		}
+		persistTimerMtx.Unlock()
+
 		if !caughtInTime {
+		caughtLoop:
 			for {
 				select {
 				case <-batchPersistCh:
+					b.logger.Infof("NEIL DEBUG persistTimer cancelPersistFunc not caught in time")
+				default:
+					break caughtLoop
 				}
 			}
 		}
@@ -252,9 +264,11 @@ func (b *BackfillRequestHandler) run() {
 		// When cancelling, need to remove any potential batches
 		select {
 		case <-batchPersistCh:
-			fmt.Printf("NEIL DEBUG cancelPersistFunc retrieved batchCh\n")
+			b.logger.Infof("NEIL DEBUG persistTimer cancelPersistFunc")
+			//fmt.Printf("NEIL DEBUG cancelPersistFunc retrieved batchCh\n")
 		default:
-			fmt.Printf("NEIL DEBUG cancelPersistFunc did Not retrieved batchCh\n")
+			b.logger.Infof("NEIL DEBUG persistTimer cancelPersistFunc alreadyCancelled")
+			//fmt.Printf("NEIL DEBUG cancelPersistFunc did Not retrieved batchCh\n")
 		}
 	}
 
@@ -275,13 +289,13 @@ func (b *BackfillRequestHandler) run() {
 			switch reflect.TypeOf(reqAndResp.Request) {
 			case reflect.TypeOf(metadata.CollectionNamespaceMapping{}):
 				err := b.handleBackfillRequestInternal(reqAndResp)
-				b.handlePersist(reqAndResp, err, requestPersistFunc)
+				b.handlePersist(reqAndResp, err, requestPersistFunc, cancelPersistFunc)
 			case reflect.TypeOf(metadata.CollectionNamespaceMappingsDiffPair{}):
 				err := b.handleBackfillRequestDiffPair(reqAndResp)
-				b.handlePersist(reqAndResp, err, requestPersistFunc)
+				b.handlePersist(reqAndResp, err, requestPersistFunc, cancelPersistFunc)
 			case reflect.TypeOf(internalDelBackfillReq{}):
 				err := b.handleSpecialDelBackfill(reqAndResp)
-				b.handlePersist(reqAndResp, err, requestPersistFunc)
+				b.handlePersist(reqAndResp, err, requestPersistFunc, cancelPersistFunc)
 			case reflect.TypeOf(internalVBDiffBackfillReq{}):
 				internalReq := reqAndResp.Request.(internalVBDiffBackfillReq)
 				var addErr error
@@ -295,7 +309,7 @@ func (b *BackfillRequestHandler) run() {
 						panic(fmt.Sprintf("Unknown type %v", reflect.TypeOf(internalReq.req)))
 					}
 				}
-				b.handlePersist(reqAndResp, addErr, requestPersistFunc)
+				b.handlePersist(reqAndResp, addErr, requestPersistFunc, cancelPersistFunc)
 				if len(internalReq.removedVBsList) > 0 {
 					for _, vb := range internalReq.removedVBsList {
 						delReq := internalDelBackfillReq{
@@ -307,7 +321,7 @@ func (b *BackfillRequestHandler) run() {
 				}
 			case reflect.TypeOf(internalPeerBackfillTaskMergeReq{}):
 				err := b.handlePeerNodesBackfillMerge(reqAndResp)
-				b.handlePersist(reqAndResp, err, requestPersistFunc)
+				b.handlePersist(reqAndResp, err, requestPersistFunc, cancelPersistFunc)
 			case nil:
 				// This is when stop() is called and the channel is closed
 			default:
@@ -317,18 +331,19 @@ func (b *BackfillRequestHandler) run() {
 			}
 		case reqAndResp := <-b.doneTaskCh:
 			handleErr := b.handleVBDone(reqAndResp)
-			reqAndResp.HandleResponse <- handleErr
-			if handleErr == nil {
-				requestPersistFunc()
-				// Actual persistence will return to PersistResp
-			} else if handleErr == errorSyncDel {
-				// Handling this VB has led to completion of the backfill spec
-				// The spec has been synchronously deleted, and err returned to persistResponse
-				cancelPersistFunc()
-			} else {
-				// Erroneous state, no persist will take place for this request
-				close(reqAndResp.PersistResponse)
-			}
+			b.handlePersist(reqAndResp, handleErr, requestPersistFunc, cancelPersistFunc)
+			//reqAndResp.HandleResponse <- handleErr
+			//if handleErr == nil {
+			//	requestPersistFunc()
+			//	// Actual persistence will return to PersistResp
+			//} else if handleErr == errorSyncDel {
+			//	// Handling this VB has led to completion of the backfill spec
+			//	// The spec has been synchronously deleted, and err returned to persistResponse
+			//	cancelPersistFunc()
+			//} else {
+			//	// Erroneous state, no persist will take place for this request
+			//	close(reqAndResp.PersistResponse)
+			//}
 		case <-batchPersistCh:
 			if atomic.LoadUint32(&needCoolDown) == 1 {
 				batchPersistCh <- true
@@ -337,6 +352,7 @@ func (b *BackfillRequestHandler) run() {
 			// No more incoming requests - done bursting handling, do a single metakv operation
 			select {
 			case persistType := <-b.persistenceNeededCh:
+				fmt.Printf("NEIL DEBUG retrieve persistence got type %v\n", persistType)
 				err := b.metaKvOp(persistType)
 				atomic.StoreUint32(&needCoolDown, 1)
 				go func() {
@@ -352,6 +368,8 @@ func (b *BackfillRequestHandler) run() {
 					respCh <- err
 				}
 				b.queuedResps = b.queuedResps[:0]
+			default:
+				break
 			}
 		case notification := <-b.sourceBucketTopologyCh:
 			oldVBsList, err := b.getVBs()
@@ -374,11 +392,15 @@ func (b *BackfillRequestHandler) run() {
 	}
 }
 
-func (b *BackfillRequestHandler) handlePersist(reqAndResp ReqAndResp, err error, requestPersistFunc func()) {
+func (b *BackfillRequestHandler) handlePersist(reqAndResp ReqAndResp, err error, requestPersistFunc func(), cancelPersistFunc func()) {
 	reqAndResp.HandleResponse <- err
 	if err == nil {
 		requestPersistFunc()
 		// Actual persistence will return to PersistResp
+	} else if err == errorSyncDel {
+		// Handling this VB has led to completion of the backfill spec
+		// The spec has been synchronously deleted, and err returned to persistResponse
+		cancelPersistFunc()
 	} else {
 		close(reqAndResp.PersistResponse)
 	}
@@ -694,7 +716,6 @@ func (b *BackfillRequestHandler) handleVBDone(reqAndResp ReqAndResp) error {
 	var hasMoreTasks bool
 	if backfillDone {
 		hasMoreTasks = b.cachedBackfillSpec.VBTasksMap.ContainsAtLeastOneTask()
-		fmt.Printf("NEIL DEBUG vbsDoneNotifier has more task: %v\n", hasMoreTasks)
 		b.vbsDoneNotifier(hasMoreTasks)
 	}
 
@@ -949,6 +970,7 @@ func (b *BackfillRequestHandler) handleBackfillRequestDiffPair(resp ReqAndResp) 
 			// odd situation - fixed mapping when there is nothing broken
 			// This could happen to a cleanly started pipeline and explicit mapping was removed
 			// Use the same return path as delOp - to bypass any actual metakv op
+			b.requestPersistence(DelOp, resp.PersistResponse)
 			return errorSyncDel
 		} else if b.cachedBackfillSpec.VBTasksMap.Len() == 0 {
 			// The whole spec is now deleted because of the pairRO.Removed

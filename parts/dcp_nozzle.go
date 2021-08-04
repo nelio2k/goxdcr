@@ -1011,8 +1011,8 @@ func (dcp *DcpNozzle) processData() (err error) {
 						dcp.vbHandshakeMap[vbno].processSuccessResponse(m.Opaque)
 						// Check for corner case - where streamReq seqno will be the same as seqend Seqno
 						endSeqnoCheck := dcp.endSeqnoForDcp[vbno].GetSeqno()
-						fmt.Printf("NEIL DEBUG vb %v endSeqnoCheck %v and successSeqno %v\n",
-							vbno, endSeqnoCheck, m.Seqno)
+						//fmt.Printf("NEIL DEBUG vb %v endSeqnoCheck %v and successSeqno %v\n",
+						//	vbno, endSeqnoCheck, m.Seqno)
 						if endSeqnoCheck > 0 && endSeqnoCheck == m.Seqno {
 							err = dcp.handleStreamEnd(vbno)
 							if err != nil {
@@ -1134,24 +1134,24 @@ func (dcp *DcpNozzle) handleSystemEvent(event *mcc.UprEvent) {
 // Only ok situation dcp should receive a streamEnd is if it's a backfill
 func (dcp *DcpNozzle) vbStreamEndIsOk(vbno uint16) bool {
 	if !dcp.CollectionEnabled() {
-		fmt.Printf("NEIL DEBUG vb %v not OK because collection not enabled\n", vbno)
+		//fmt.Printf("NEIL DEBUG vb %v not OK because collection not enabled\n", vbno)
 		return false
 	}
 
 	if dcp.specificVBTasks.IsNil() {
-		fmt.Printf("NEIL DEBUG vb %v not OK because tasks is nil\n", vbno)
+		//fmt.Printf("NEIL DEBUG vb %v not OK because tasks is nil\n", vbno)
 		return false
 	}
 
 	tasks, exists, unlockFunc := dcp.specificVBTasks.Get(vbno, false)
 	defer unlockFunc()
 	if !exists {
-		fmt.Printf("NEIL DEBUG vb %v not OK because task DNE\n", vbno)
+		//fmt.Printf("NEIL DEBUG vb %v not OK because task DNE\n", vbno)
 		return false
 	}
 
 	if tasks == nil || tasks.Len() == 0 {
-		fmt.Printf("NEIL DEBUG vb %v not OK because task is nil\n", vbno)
+		//fmt.Printf("NEIL DEBUG vb %v not OK because task is nil\n", vbno)
 		return false
 	}
 
@@ -1358,7 +1358,7 @@ func (dcp *DcpNozzle) startUprStreams_internal(streams_to_start []uint16) error 
 			debugNotStartedVBs = append(debugNotStartedVBs, vbno)
 		}
 	}
-	dcp.Logger().Infof("NEIL DEBUG startUprStreams_internal with vbs %v notStarted: %v\n", streams_to_start, debugNotStartedVBs)
+	//dcp.Logger().Infof("NEIL DEBUG startUprStreams_internal with vbs %v notStarted: %v\n", streams_to_start, debugNotStartedVBs)
 	return nil
 }
 
