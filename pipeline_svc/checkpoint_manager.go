@@ -2293,6 +2293,11 @@ func (ckmgr *CheckpointManager) MergePeerNodesCkptInfo(genericResponse interface
 // 2. Once invalid ckpts are filtered out, they need to be sorted
 // 3. Sort first by source side
 func (ckmgr *CheckpointManager) mergeNodesToVBMasterCheckResp(respMap peerToPeer.PeersVBMasterCheckRespMap) error {
+	if len(respMap) == 0 {
+		// nothing to merge
+		return nil
+	}
+
 	var needToGetFailoverLogs bool
 	combinedSrcManifests := make(metadata.ManifestsCache)
 	combinedTgtManifests := make(metadata.ManifestsCache)
