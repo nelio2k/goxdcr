@@ -264,19 +264,17 @@ func TestBackfillReqHandlerCreateReqThenMarkDone(t *testing.T) {
 	// Test cool down period is active
 	startTime := time.Now()
 
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
 
 	// Doing another handle will result in a set
 	// Change requestMapping to avoid errorDuplicate
 	requestMapping.AddSingleMapping(dummyNs, dummyNs)
 	assert.Nil(rh.HandleBackfillRequest(requestMapping))
 
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
 
 	// Two bursty, concurrent add requests results in a single add
 	assert.Equal(1, addCount)
-	// One later set request should result in a single set
-	assert.Equal(1, setCount)
 
 	// Pretend backfill pipeline started
 	assert.Nil(rh.Attach(backfillPipeline))

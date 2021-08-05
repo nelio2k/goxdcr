@@ -402,7 +402,7 @@ func (b *BackfillMgr) createBackfillRequestHandler(spec *metadata.ReplicationSpe
 			b.logger.Errorf("Unable to clean up backfill pipeline checkpoint %v - %v", replId, err)
 		}
 		if startNewTask {
-			fmt.Printf("NEIL DEBUG request backfill 2\n")
+			//fmt.Printf("NEIL DEBUG request backfill 2\n")
 			err = b.pipelineMgr.RequestBackfill(replId)
 			if err != nil {
 				b.logger.Errorf("Unable to request backfill pipeline %v - %v", replId, err)
@@ -500,7 +500,7 @@ func (b *BackfillMgr) backfillReplSpecChangeHandlerCallback(changedSpecId string
 		// Requesting a backfill pipeline means that a pipeline will start and for the top task in each VBTasksMap
 		// will be sent to DCP to be run and backfilled
 		// Once all the VB Task's top task is done, then the backfill pipeline will be considered finished
-		fmt.Printf("NEIL DEBUG request backfill 0\n")
+		//fmt.Printf("NEIL DEBUG request backfill 0\n")
 		err := b.pipelineMgr.RequestBackfill(changedSpecId)
 		if err != nil {
 			b.logger.Errorf("Unable to request backfill for %v", changedSpecId)
@@ -1668,7 +1668,7 @@ func (b *BackfillMgr) DelBackfillForVB(topic string, vbno uint16) error {
 		b.logger.Errorf("Unable to request backfill pipeline to stop for %v : %v - backfill for VB %v may occur", topic, err, vbno)
 		return err
 	}
-	fmt.Printf("NEIL DEBUG request backfill 3\n")
+	//fmt.Printf("NEIL DEBUG request backfill 3\n")
 	err = b.pipelineMgr.RequestBackfill(topic)
 	if err != nil {
 		b.logger.Errorf("Unable to request backfill pipeline to start for %v : %v - may require manual restart of pipeline", topic, err)
