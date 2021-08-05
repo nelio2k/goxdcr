@@ -225,13 +225,14 @@ func (b *BackfillRequestHandler) run() {
 			persistTimer = time.AfterFunc(b.persistInterval, func() {
 				persistTimerMtx.Lock()
 				defer persistTimerMtx.Unlock()
-
 				persistTimer = nil
-				select {
-				case batchPersistCh <- true:
-					fmt.Printf("NEIL DEBUG persistTimer fired sent true\n")
-				default:
-					// Already needed to persist
+				if len(b.persistenceNeededCh) > 0 && len(batchPersistCh) == 0 {
+					select {
+					case batchPersistCh <- true:
+						fmt.Printf("NEIL DEBUG persistTimer fired sent true\n")
+					default:
+						// Already needed to persist
+					}
 				}
 			})
 		}
