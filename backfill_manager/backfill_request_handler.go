@@ -229,6 +229,7 @@ func (b *BackfillRequestHandler) run() {
 				persistTimer = nil
 				select {
 				case batchPersistCh <- true:
+					fmt.Printf("NEIL DEBUG persistTimer fired sent true\n")
 				default:
 					// Already needed to persist
 				}
@@ -242,9 +243,11 @@ func (b *BackfillRequestHandler) run() {
 		persistTimerMtx.Lock()
 		if persistTimer != nil {
 			caughtInTime = persistTimer.Stop()
-			//if !caughtInTime {
-			//	fmt.Printf("NEIL DEBUG cancelPersistFunc not caught in time\n")
-			//}
+			if !caughtInTime {
+				fmt.Printf("NEIL DEBUG cancelPersistFunc not caught in time\n")
+			} else {
+				fmt.Printf("NEIL DEBUG cancelPersistFunc caught in time\n")
+			}
 			persistTimer = nil
 		}
 		persistTimerMtx.Unlock()
@@ -289,9 +292,11 @@ func (b *BackfillRequestHandler) run() {
 			switch reflect.TypeOf(reqAndResp.Request) {
 			case reflect.TypeOf(metadata.CollectionNamespaceMapping{}):
 				err := b.handleBackfillRequestInternal(reqAndResp)
+				b.logger.Infof("NEIL DEBUG request persist type 0 with err %v\n", err)
 				b.handlePersist(reqAndResp, err, requestPersistFunc, cancelPersistFunc)
 			case reflect.TypeOf(metadata.CollectionNamespaceMappingsDiffPair{}):
 				err := b.handleBackfillRequestDiffPair(reqAndResp)
+				b.logger.Infof("NEIL DEBUG request persist type 1\n")
 				b.handlePersist(reqAndResp, err, requestPersistFunc, cancelPersistFunc)
 			case reflect.TypeOf(internalDelBackfillReq{}):
 				err := b.handleSpecialDelBackfill(reqAndResp)
@@ -368,8 +373,9 @@ func (b *BackfillRequestHandler) run() {
 					respCh <- err
 				}
 				b.queuedResps = b.queuedResps[:0]
-			default:
-				break
+				//default:
+				//	fmt.Printf("NEIL DEBUG persistence skipped\n")
+				//	break
 			}
 		case notification := <-b.sourceBucketTopologyCh:
 			oldVBsList, err := b.getVBs()
@@ -541,6 +547,7 @@ func (b *BackfillRequestHandler) updateBackfillSpec(persistResponse chan error, 
 		if reqRO != nil && seqnosMap != nil {
 			b.logNewBackfillMsg(reqRO, seqnosMap)
 		}
+		fmt.Printf("NEIL DEBUG requesting addOp 3\n")
 		err := b.requestPersistence(AddOp, persistResponse)
 		if err != nil {
 			b.logger.Errorf("requestPersistence (add) err %v", err)
@@ -556,6 +563,7 @@ func (b *BackfillRequestHandler) updateBackfillSpec(persistResponse chan error, 
 		} else if b.cachedBackfillSpec.Contains(vbTasksMap) {
 			// already handled - redundant request
 			// Just request persistence to ensure synchronization
+			fmt.Printf("NEIL DEBUG requesting setOp 3\n")
 			err := b.requestPersistence(SetOp, persistResponse)
 			if err != nil {
 				b.logger.Errorf("requestPersistence err %v", err)
@@ -567,6 +575,7 @@ func (b *BackfillRequestHandler) updateBackfillSpec(persistResponse chan error, 
 		shouldSkipFirst := b.figureOutIfCkptExists(reqRO, seqnosMap)
 
 		b.cachedBackfillSpec.MergeNewTasks(vbTasksMap, shouldSkipFirst)
+		fmt.Printf("NEIL DEBUG requesting setOp 3a\n")
 		err := b.requestPersistence(SetOp, persistResponse)
 		if err != nil {
 			b.logger.Errorf("requestPersistence err %v", err)
@@ -622,8 +631,10 @@ func (b *BackfillRequestHandler) requestPersistence(op PersistType, resp chan er
 	if op == AddOp || op == SetOp {
 		select {
 		case b.persistenceNeededCh <- op:
+			fmt.Printf("NEIL DEBUG queued persistentNeeded for %v\n", op)
 			// Got op to persist
 		default:
+			fmt.Printf("NEIL DEBUG piggyBacked persistentNeeded for %v\n", op)
 			// Piggy back off of previous above request
 		}
 		b.queuedResps = append(b.queuedResps, resp)
@@ -631,6 +642,7 @@ func (b *BackfillRequestHandler) requestPersistence(op PersistType, resp chan er
 		// Clear any previous ops
 		select {
 		case <-b.persistenceNeededCh:
+			fmt.Printf("NEIL DEBUG cleared persistentNeeded for %v\n", op)
 		// cleared
 		default:
 			// nothing
@@ -727,6 +739,7 @@ func (b *BackfillRequestHandler) handleVBDone(reqAndResp ReqAndResp) error {
 		// At this point, there is no more tasks in the backfill spec
 		// This is only possible if all the tasks are done
 		// We must delete the spec here before a new one can be added
+		fmt.Printf("NEIL DEBUG requesting delOp 2\n")
 		delErr := b.requestPersistence(DelOp, reqAndResp.PersistResponse)
 		if delErr == nil {
 			err = errorSyncDel
@@ -734,6 +747,7 @@ func (b *BackfillRequestHandler) handleVBDone(reqAndResp ReqAndResp) error {
 			err = delErr
 		}
 	} else {
+		fmt.Printf("NEIL DEBUG requesting setOp 2\n")
 		b.requestPersistence(SetOp, reqAndResp.PersistResponse)
 	}
 	return err
@@ -877,8 +891,10 @@ func (b *BackfillRequestHandler) ProcessEvent(event *common.Event) error {
 		// It's either backfillMap or ExplicitPair
 		var err error
 		if len(routingInfo.BackfillMap) > 0 {
+			b.logger.Infof("NEIL DEBUG handling backfillMap %v\n", routingInfo.BackfillMap)
 			err = b.HandleBackfillRequest(routingInfo.BackfillMap)
 		} else if len(routingInfo.ExplicitBackfillMap.Added) > 0 || len(routingInfo.ExplicitBackfillMap.Removed) > 0 {
+			b.logger.Infof("NEIL DEBUG handling ExplicitBackfillMap %v\n", routingInfo.ExplicitBackfillMap)
 			err = b.HandleBackfillRequest(routingInfo.ExplicitBackfillMap)
 		} else {
 			err = base.ErrorInvalidInput
@@ -970,10 +986,12 @@ func (b *BackfillRequestHandler) handleBackfillRequestDiffPair(resp ReqAndResp) 
 			// odd situation - fixed mapping when there is nothing broken
 			// This could happen to a cleanly started pipeline and explicit mapping was removed
 			// Use the same return path as delOp - to bypass any actual metakv op
+			fmt.Printf("NEIL DEBUG requesting delOp 1\n")
 			b.requestPersistence(DelOp, resp.PersistResponse)
 			return errorSyncDel
 		} else if b.cachedBackfillSpec.VBTasksMap.Len() == 0 {
 			// The whole spec is now deleted because of the pairRO.Removed
+			fmt.Printf("NEIL DEBUG requesting delOp 1a\n")
 			delErr := b.requestPersistence(DelOp, resp.PersistResponse)
 			if delErr == nil {
 				return errorSyncDel
@@ -981,6 +999,7 @@ func (b *BackfillRequestHandler) handleBackfillRequestDiffPair(resp ReqAndResp) 
 				return delErr
 			}
 		} else {
+			fmt.Printf("NEIL DEBUG requesting setOp 1\n")
 			b.requestPersistence(SetOp, resp.PersistResponse)
 			return nil
 		}
@@ -1004,7 +1023,7 @@ func (b *BackfillRequestHandler) getMaxSeqnosMapToBackfill() (map[uint16]uint64,
 	// 3. Compare 1 vs 2, use the max() of each to be the end point of the backfill
 	tSeqnos, tSeqnoErr := b.getThroughSeqno()
 	ckptSeqnos, ckptSeqnosErr := b.mainpipelineCkptSeqnosGetter()
-	//fmt.Printf("NEIL DEBUG getSeqno err %v - get ckptsenqo err %v\n", tSeqnoErr, ckptSeqnosErr)
+	fmt.Printf("NEIL DEBUG getSeqno err %v - get ckptsenqo err %v\n", tSeqnoErr, ckptSeqnosErr)
 
 	maxSeqnos := make(map[uint16]uint64)
 	var newVBsList []uint16
@@ -1066,11 +1085,13 @@ func (b *BackfillRequestHandler) handleSpecialDelBackfill(reqAndResp ReqAndResp)
 		delete(b.cachedBackfillSpec.VBTasksMap.VBTasksMap, req.vbno)
 		b.cachedBackfillSpec.VBTasksMap.GetLock().Unlock()
 
+		fmt.Printf("NEIL DEBUG requesting setOp 4\n")
 		return b.requestPersistence(SetOp, reqAndResp.PersistResponse)
 	} else {
 		b.logger.Infof("%v - handling delete all backfill request", b.id)
 		b.delOpBackfillId = b.id
 		b.cachedBackfillSpec = nil
+		fmt.Printf("NEIL DEBUG requesting delOp 4\n")
 		delErr := b.requestPersistence(DelOp, reqAndResp.PersistResponse)
 		if delErr == nil {
 			return errorSyncDel
