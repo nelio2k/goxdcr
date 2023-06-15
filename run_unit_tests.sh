@@ -20,6 +20,7 @@ declare -a outputs
 DIRS_WITH_UT=(
 base
 base/filter
+ccrMetadata
 backfill_manager
 factory
 peerToPeer
