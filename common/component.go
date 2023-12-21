@@ -92,6 +92,13 @@ const (
 	DataSentHitGuardrail ComponentEventType = iota
 	// When target KV returned a status code that this XDCR does not understand
 	DataSentFailedUnknownStatus ComponentEventType = iota
+	// When mobile is active, source _sync XATTR is removed
+	SourceSyncXattrRemoved ComponentEventType = iota
+	// When mobile is active, target _sync XATTR is preserved if it exists
+	TargetSyncXattrPreserved ComponentEventType = iota
+	HlvUpdated               ComponentEventType = iota
+	HlvPruned                ComponentEventType = iota
+	HlvPrunedAtMerge         ComponentEventType = iota
 )
 
 func (c ComponentEventType) IsOutNozzleThroughSeqnoRelated() bool {

@@ -1331,12 +1331,13 @@ func (xmem *XmemNozzle) batchSetMetaWithRetry(batch *dataBatch, numOfRetry int) 
 				//lost on conflict resolution on source side
 				// this still counts as data sent
 				additionalInfo := DataFailedCRSourceEventAdditional{Seqno: item.Seqno,
-					Opcode:      encodeOpCode(item.Req, xmem.batch.setMetaXattrOptions),
-					IsExpirySet: (binary.BigEndian.Uint32(item.Req.Extras[4:8]) != 0),
-					VBucket:     item.Req.VBucket,
-					ManifestId:  item.GetManifestId(),
-					Cloned:      item.Cloned,
-					CloneSyncCh: item.ClonedSyncCh,
+					Opcode:         encodeOpCode(item.Req, xmem.batch.setMetaXattrOptions),
+					IsExpirySet:    (binary.BigEndian.Uint32(item.Req.Extras[4:8]) != 0),
+					VBucket:        item.Req.VBucket,
+					ManifestId:     item.GetManifestId(),
+					Cloned:         item.Cloned,
+					CloneSyncCh:    item.ClonedSyncCh,
+					ImportMutation: item.ImportMutation,
 				}
 				xmem.RaiseEvent(common.NewEvent(common.DataFailedCRSource, nil, xmem, nil, additionalInfo))
 				xmem.recycleDataObj(item)
@@ -1779,8 +1780,7 @@ func (xmem *XmemNozzle) batchGet(get_map base.McRequestMap, getSpecWithHlv, getS
 				noRep_map[uniqueKey] = RetryTargetLocked
 				delete(get_map, uniqueKey)
 			} else if ok && base.IsSuccessGetResponse(resp.Resp) {
-				var res base.ConflictResult
-				res, err = xmem.conflict_resolver(wrappedReq, resp.Resp, resp.Specs, xmem.sourceBucketId, xmem.targetBucketId, xmem.xattrEnabled, xmem.uncompressBody, xmem.Logger())
+				res, err := xmem.conflict_resolver(wrappedReq, resp.Resp, resp.Specs, xmem.sourceBucketId, xmem.targetBucketId, xmem.xattrEnabled, xmem.uncompressBody, xmem.Logger())
 				if err != nil {
 					// Log the error. We will retry
 					xmem.Logger().Errorf("%v conflict_resolver: '%v'", xmem.Id(), err)
@@ -1788,6 +1788,8 @@ func (xmem *XmemNozzle) batchGet(get_map base.McRequestMap, getSpecWithHlv, getS
 				}
 				switch res {
 				case base.SendToTarget:
+					// Import mutations sent will be counted when we send since we will get a more accurate count then.
+					// If target document does not exist, we only parse for importCas at send time.
 					sendLookupMap[uniqueKey] = resp
 				case base.Skip:
 					noRep_map[uniqueKey] = NotSendFailedCR
@@ -1986,15 +1988,20 @@ func (xmem *XmemNozzle) updateSystemXattrForTarget(wrappedReq *base.WrappedMCReq
 		}
 
 		if crMeta.NeedToUpdateHlv(meta, xmem.config.vbMaxCas[req.VBucket], time.Duration(atomic.LoadUint32(&xmem.config.hlvPruningWindowSec))*time.Second) {
-			_, err = crMeta.ConstructXattrFromHlvForSetMeta(meta, time.Duration(atomic.LoadUint32(&xmem.config.hlvPruningWindowSec))*time.Second, xattrComposer)
+			_, pruned, err := crMeta.ConstructXattrFromHlvForSetMeta(meta, time.Duration(atomic.LoadUint32(&xmem.config.hlvPruningWindowSec))*time.Second, xattrComposer)
 			if err != nil {
 				return err
 			}
 			hlvUpdated = true
+			xmem.RaiseEvent(common.NewEvent(common.HlvUpdated, nil, xmem, nil, nil))
+			if pruned {
+				xmem.RaiseEvent(common.NewEvent(common.HlvPruned, nil, xmem, nil, nil))
+			}
 		}
 	}
 	if setOpt.preserveSync && len(targetSyncVal) > 0 {
 		xattrComposer.WriteKV([]byte(base.XATTR_MOBILE), targetSyncVal)
+		xmem.RaiseEvent(common.NewEvent(common.TargetSyncXattrPreserved, nil, xmem, nil, nil))
 	}
 
 	if req.DataType&mcc.XattrDataType > 0 {
@@ -2019,6 +2026,7 @@ func (xmem *XmemNozzle) updateSystemXattrForTarget(wrappedReq *base.WrappedMCReq
 			case base.XATTR_MOBILE:
 				if setOpt.preserveSync {
 					// Skip the source _sync value
+					xmem.RaiseEvent(common.NewEvent(common.SourceSyncXattrRemoved, nil, xmem, nil, nil))
 					continue
 				}
 			case base.XATTR_IMPORTCAS:
@@ -2602,6 +2610,7 @@ func (xmem *XmemNozzle) receiveResponse(finch chan bool, waitGrp *sync.WaitGroup
 						ManifestId:          manifestId,
 						FailedTargetCR:      base.IsEExistsError(response.Status),
 						UncompressedReqSize: req.Size() - wrappedReq.GetBodySize() + wrappedReq.GetUncompressedBodySize(),
+						ImportMutation:      wrappedReq.ImportMutation,
 						Cloned:              wrappedReq.Cloned,
 						CloneSyncCh:         wrappedReq.ClonedSyncCh,
 					}

@@ -159,6 +159,7 @@ func (doc *SourceDocument) GetMetadata(uncompressFunc base.UncompressFunc) (*CRM
 		docMeta.Cas = cvCas
 		docMeta.RevSeq = 0
 	}
+	doc.req.ImportMutation = meta.isImport
 	// The docMeta.Cas below represents the last mutation that's not import mutation.
 	meta.hlv, err = hlv.NewHLV(doc.source, docMeta.Cas, cvCas, cvSrc, cvVer, pvMap, mvMap)
 	if err != nil {
@@ -454,23 +455,23 @@ func NeedToUpdateHlv(meta *CRMetadata, vbMaxCas uint64, pruningWindow time.Durat
 
 // This routine construct XATTR _vv:{...} based on meta. The constructed XATTRs includes updates for
 // new change (meta.cas > meta.ver) and pruning in PV
-func ConstructXattrFromHlvForSetMeta(meta *CRMetadata, pruningWindow time.Duration, xattrComposer *base.XattrComposer) (int, error) {
+func ConstructXattrFromHlvForSetMeta(meta *CRMetadata, pruningWindow time.Duration, xattrComposer *base.XattrComposer) (int, bool, error) {
 	if meta == nil {
-		return 0, fmt.Errorf("Metadata cannot be nil")
+		return 0, false, fmt.Errorf("Metadata cannot be nil")
 	}
 	err := xattrComposer.StartRawMode()
 	if err != nil {
-		return -1, err
+		return -1, false, err
 	}
 
 	err = xattrComposer.RawWriteKey([]byte(base.XATTR_HLV))
 	if err != nil {
-		return -1, err
+		return -1, false, err
 	}
 
 	body, pos, err := xattrComposer.RawHijackValue()
 	if err != nil {
-		return -1, err
+		return -1, false, err
 	}
 
 	pruneFunc := base.GetHLVPruneFunction(meta.GetDocumentMetadata().Cas, pruningWindow)
@@ -480,15 +481,16 @@ func ConstructXattrFromHlvForSetMeta(meta *CRMetadata, pruningWindow time.Durati
 	if len(mv) > 0 {
 		// This is not the first since we have cv before this
 		body, *pos = base.WriteJsonRawMsg(body, []byte(HLV_MV_FIELD), *pos, base.WriteJsonKey, len([]byte(HLV_MV_FIELD)), false)
-		*pos = VersionMapToBytes(mv, body, *pos, nil)
+		*pos, _ = VersionMapToBytes(mv, body, *pos, nil)
 	}
 	// Format PV
 	pv := meta.GetHLV().GetPV()
+	var pruned bool
 	if len(pv) > 0 {
 		startPos := *pos
 		body, *pos = base.WriteJsonRawMsg(body, []byte(HLV_PV_FIELD), *pos, base.WriteJsonKey, len([]byte(HLV_PV_FIELD)), false)
 		afterKeyPos := *pos
-		*pos = VersionMapToBytes(pv, body, *pos, &pruneFunc)
+		*pos, pruned = VersionMapToBytes(pv, body, *pos, &pruneFunc)
 		if *pos == afterKeyPos {
 			// Did not add PV, need to back of and remove the PV key
 			*pos = startPos
@@ -497,7 +499,8 @@ func ConstructXattrFromHlvForSetMeta(meta *CRMetadata, pruningWindow time.Durati
 	body[*pos] = '}'
 	*pos++
 
-	return xattrComposer.CommitRawKVPair()
+	*pos, err = xattrComposer.CommitRawKVPair()
+	return *pos, pruned, err
 }
 
 type ConflictParams struct {
@@ -523,9 +526,10 @@ type MergeResultNotifier interface {
 	NotifyMergeResult(input *ConflictParams, mergeResult interface{}, mergeError error)
 }
 
-func VersionMapToBytes(vMap hlv.VersionsMap, body []byte, pos int, pruneFunction *base.PruningFunc) int {
+func VersionMapToBytes(vMap hlv.VersionsMap, body []byte, pos int, pruneFunction *base.PruningFunc) (int, bool) {
 	startPos := pos
 	first := true
+	pruned := false
 	for key, cas := range vMap {
 		if (pruneFunction == nil) || ((*pruneFunction)(cas) == false) {
 			// Not pruned.
@@ -533,15 +537,17 @@ func VersionMapToBytes(vMap hlv.VersionsMap, body []byte, pos int, pruneFunction
 			body, pos = base.WriteJsonRawMsg(body, []byte(key), pos, base.WriteJsonKey, len(key), first /*firstKey*/)
 			body, pos = base.WriteJsonRawMsg(body, value, pos, base.WriteJsonValue, len(value), false /*firstKey*/)
 			first = false
+		} else {
+			pruned = true
 		}
 	}
 	if first {
 		// We haven't added anything
-		return startPos
+		return startPos, pruned
 	}
 	body[pos] = '}'
 	pos++
-	return pos
+	return pos, pruned
 }
 
 // {"cvCas":...,"src":...,"ver":...
