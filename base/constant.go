@@ -555,8 +555,6 @@ const (
 	MergeFailedEventListener             = "MergeFailedEventListener"
 	SrcSyncXattrRemovedEventListener     = "SourceSyncXattrRemovedEventListener"
 	TgtSyncXattrPreservedEventListener   = "TargetSyncXattrPreservedEventListenr"
-	ImportMutationsSkippedEventListener  = "ImportMutationsSkippedEventListener"
-	ImportMutationsSentEventListener     = "ImportMutationsSentEventListener"
 	HlvUpdatedEventListener              = "HlvUpdatedEventListener"
 	HlvPrunedEventListener               = "HlvPrunedEventListener"
 	HlvPrunedAtMergeEventListener        = "HlvPrunedAtMergeEventListener"
