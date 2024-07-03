@@ -2297,3 +2297,17 @@ func CheckIfHostnameIsAlternate(externalInfoGetter ExternalMgmtHostAndPortGetter
 
 	return false, nil
 }
+
+// ParseReplicationId parses the replication id string into its components
+func ParseReplicationId(id string) (targetUUID string, sourceBucket string, targetBucket string, err error) {
+	parts := strings.Split(id, KeyPartsDelimiter)
+	if len(parts) != 3 {
+		err = fmt.Errorf("Invalid replication id: %v", id)
+		return
+	}
+
+	targetUUID = parts[0]
+	sourceBucket = parts[1]
+	targetBucket = parts[2]
+	return
+}
