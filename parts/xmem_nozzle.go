@@ -84,7 +84,7 @@ var ErrorXmemIsStuck = errors.New("Xmem is stuck")
 
 var ErrorBufferInvalidState = errors.New("xmem buffer is in invalid state")
 
-type ConflictResolver func(req *base.WrappedMCRequest, resp *mc.MCResponse, specs []base.SubdocLookupPathSpec, sourceId, targetId hlv.DocumentSourceId, xattrEnabled bool, uncompressFunc base.UncompressFunc, logger *log.CommonLogger) (base.ConflictResult, error)
+type ConflictResolver func(req *base.WrappedMCRequest, resp *mc.MCResponse, specs []base.SubdocLookupPathSpec, sourceId, targetId hlv.DocumentSourceId, xattrEnabled bool, uncompressFunc base.UncompressFunc, logger *log.CommonLogger) (crMeta.ConflictResolutionResult, error)
 
 var GetMetaClientName = "client_getMeta"
 var SetMetaClientName = "client_setMeta"
@@ -1902,17 +1902,17 @@ func (xmem *XmemNozzle) batchGet(get_map base.McRequestMap) (noRep_map map[strin
 					continue
 				}
 				switch res {
-				case base.SendToTarget:
+				case crMeta.CRSendToTarget:
 					// Import mutations sent will be counted when we send since we will get a more accurate count then.
 					// If target document does not exist, we only parse for importCas at send time.
 					err := sendLookupMap.registerLookup(uniqueKey, resp)
 					if err != nil {
 						xmem.Logger().Warnf("For unique-key %v%s%v, error registering lookup for SendToTarget response, err=%v", base.UdTagBegin, uniqueKey, base.UdTagEnd, err)
 					}
-				case base.Skip:
+				case crMeta.CRSkip:
 					noRep_map[uniqueKey] = NotSendFailedCR
 					respToGc[resp.Resp] = true
-				case base.Merge:
+				case crMeta.CRMerge:
 					noRep_map[uniqueKey] = NotSendMerge
 					conflictMap[uniqueKey] = wrappedReq
 					err := mergeLookupMap.registerLookup(uniqueKey, resp)
@@ -1920,7 +1920,7 @@ func (xmem *XmemNozzle) batchGet(get_map base.McRequestMap) (noRep_map map[strin
 						xmem.Logger().Warnf("For unique-key %v%s%v, error registering lookup for Merge response, err=%v", base.UdTagBegin, uniqueKey, base.UdTagEnd, err)
 					}
 					// TODO: recycle response after merge
-				case base.SetBackToSource:
+				case crMeta.CRSetBackToSource:
 					noRep_map[uniqueKey] = NotSendSetback
 					conflictMap[uniqueKey] = wrappedReq
 					err := mergeLookupMap.registerLookup(uniqueKey, resp)
