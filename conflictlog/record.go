@@ -12,19 +12,21 @@ type Conflict interface {
 // DocInfo is the subset of the information about a doc needed for
 // conflict logging
 type DocInfo struct {
-	Id         string
-	BucketUUID string
-	IsDeleted  bool
-	Collection string
-	Scope      string
+	Id         string `json:"id"`
+	BucketUUID string `json:"bucketUUID"`
+	IsDeleted  bool   `json:"isDeleted"`
+	Collection string `json:"collection"`
+	Scope      string `json:"scope"`
 }
 
 // ConflictRecord has the all the details of the detected conflict
 // which are needed to be persisted
 type ConflictRecord struct {
-	ReplicationId string
-	Source        DocInfo
-	Target        DocInfo
+	Id            string  `json:"id"`
+	DocId         string  `json:"docId"`
+	ReplicationId string  `json:"replId"`
+	Source        DocInfo `json:"source"`
+	Target        DocInfo `json:"target"`
 }
 
 func (r *ConflictRecord) Scope() string {

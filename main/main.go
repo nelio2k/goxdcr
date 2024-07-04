@@ -13,11 +13,13 @@ package main
 import (
 	"flag"
 	"fmt"
-	"github.com/couchbase/goxdcr/peerToPeer"
-	"github.com/couchbase/goxdcr/streamApiWatcher"
 	"os"
 	"runtime"
 	"time"
+
+	"github.com/couchbase/goxdcr/conflictlog"
+	"github.com/couchbase/goxdcr/peerToPeer"
+	"github.com/couchbase/goxdcr/streamApiWatcher"
 
 	base "github.com/couchbase/goxdcr/base"
 	log "github.com/couchbase/goxdcr/log"
@@ -147,6 +149,8 @@ func main() {
 	}
 
 	host := top_svc.GetLocalHostName()
+
+	conflictlog.InitManager(log.DefaultLoggerContext, top_svc)
 
 	metakv_svc, err := metadata_svc.NewMetaKVMetadataSvc(nil, utils, false /*readOnly*/)
 	if err != nil {
