@@ -1504,7 +1504,7 @@ func (xmem *XmemNozzle) getConflictDetector(source_cr_mode base.ConflictResoluti
 	switch source_cr_mode {
 	case base.CRMode_Custom:
 		xmem.Logger().Infof("Use DetectConflictWithHLV for conflict resolution.")
-		ret = crMeta.DetectConflictWithHLV
+		ret = crMeta.ResolveConflictByHlv
 	case base.CRMode_RevId:
 		xmem.Logger().Infof("Use ResolveConflictByRevSeq for conflict resolution.")
 		ret = crMeta.ResolveConflictByRevSeq

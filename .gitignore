@@ -37,3 +37,4 @@ tools/testScripts/vagrant/*.deb
 tools/testScripts/vagrant/.vagrant
 tools/testScripts/vagrant/data
 
+build/

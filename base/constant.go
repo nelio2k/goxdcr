@@ -633,35 +633,6 @@ const (
 	ConflictResolutionType_Custom = "custom"
 )
 
-// Return values from conflict detection
-// When detecting/resolving conflicts between source and target document, all action are taken
-// when the source cluster has larger CAS.
-type ConflictResult uint32
-
-const (
-	SendToTarget    ConflictResult = iota // Souce wins
-	Skip            ConflictResult = iota // Target wins
-	Merge           ConflictResult = iota // Conflict
-	SetBackToSource ConflictResult = iota // Source has larger CAS but target wins. This can happen when target MV wins
-	Error           ConflictResult = iota // We have an error detecting conflict. This should not happen.
-)
-
-func (cr ConflictResult) String() string {
-	switch cr {
-	case SendToTarget:
-		return "SendToTarget"
-	case Skip:
-		return "Skip"
-	case Merge:
-		return "Merge"
-	case SetBackToSource:
-		return "SetBackToSource"
-	case Error:
-		return "Error"
-	}
-	return "Unknown"
-}
-
 const EOFString = "EOF"
 
 // flag for memcached to enable lww to lww bucket replication

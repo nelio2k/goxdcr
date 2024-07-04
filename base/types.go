@@ -2818,7 +2818,7 @@ type DocumentMetadata struct {
 }
 
 func (doc_meta DocumentMetadata) String() string {
-	return fmt.Sprintf("[key=%s; revSeq=%v;cas=%v;flags=%v;expiry=%v;deletion=%v:datatype=%v]", doc_meta.Key, doc_meta.RevSeq, doc_meta.Cas, doc_meta.Flags, doc_meta.Expiry, doc_meta.Deletion, doc_meta.DataType)
+	return fmt.Sprintf("[key=%v%s%v; revSeq=%v;cas=%v;flags=%v;expiry=%v;deletion=%v:datatype=%v]", UdTagBegin, doc_meta.Key, UdTagEnd, doc_meta.RevSeq, doc_meta.Cas, doc_meta.Flags, doc_meta.Expiry, doc_meta.Deletion, doc_meta.DataType)
 }
 
 func (doc_meta *DocumentMetadata) Clone() *DocumentMetadata {
