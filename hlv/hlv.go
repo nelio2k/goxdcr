@@ -316,7 +316,7 @@ func (h *HLV) String() string {
 	if h == nil {
 		return ""
 	}
-	return fmt.Sprintf("{cvCAS: %v, cv: {%v,%v}, pv: %v, mv: %v}", h.cvCAS, h.cv.source, h.cv.version, h.pv, h.mv)
+	return fmt.Sprintf("{cvCAS:%v,cv:{%v,%v},pv:%v,mv:%v}", h.cvCAS, h.cv.source, h.cv.version, h.pv, h.mv)
 }
 
 // Bytes required when formatting the map to XATTR

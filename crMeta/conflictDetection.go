@@ -68,6 +68,12 @@ func DetectConflict(source *CRMetadata, target *CRMetadata) (ConflictDetectionRe
 	return CDConflict, nil
 }
 
+// Given source mutation and target doc response,
+// Peform conflict detection if:
+// 1. Conflict resolution type is CCR.
+// 2. Conflict logging feature is turned on.
+// Returns conflict detection result if performed,
+// also returns the source and target document metadata for subsequent conflict resolution.
 func DetectConflictIfNeeded(req *base.WrappedMCRequest, resp *mc.MCResponse, specs []base.SubdocLookupPathSpec, sourceId, targetId hlv.DocumentSourceId,
 	xattrEnabled bool, uncompressFunc base.UncompressFunc, logger *log.CommonLogger) (ConflictDetectionResult, base.DocumentMetadata, base.DocumentMetadata, error) {
 
@@ -87,7 +93,10 @@ func DetectConflictIfNeeded(req *base.WrappedMCRequest, resp *mc.MCResponse, spe
 		sourceDocMeta = base.DecodeSetMetaReq(req.Req)
 		targetDocMeta, err = base.DecodeGetMetaResp(req.Req.Key, resp, xattrEnabled)
 		if err != nil {
-			err = fmt.Errorf("error decoding GET_META response for key=%v%s%v, respBody=%v%v%v", base.UdTagBegin, req.Req.Key, base.UdTagEnd, base.UdTagBegin, resp.Body, base.UdTagEnd)
+			err = fmt.Errorf("error decoding GET_META response for key=%v%s%v, respBody=%v%v%v, xattrEnabled=%v",
+				base.UdTagBegin, req.Req.Key, base.UdTagEnd,
+				base.UdTagBegin, resp.Body, base.UdTagEnd,
+				xattrEnabled)
 			return CDError, sourceDocMeta, targetDocMeta, err
 		}
 
@@ -95,7 +104,10 @@ func DetectConflictIfNeeded(req *base.WrappedMCRequest, resp *mc.MCResponse, spe
 	}
 
 	if resp.Opcode != mc.SUBDOC_MULTI_LOOKUP {
-		err = fmt.Errorf("unknown response %v for CR, for key=%v%s%v, req=%v%s%v, reqBody=%v%v%v", resp.Opcode, base.UdTagBegin, req.Req.Key, base.UdTagEnd, base.UdTagBegin, req.Req, base.UdTagEnd, base.UdTagBegin, req.Req.Body, base.UdTagEnd)
+		err = fmt.Errorf("unknown response %v for CR, for key=%v%s%v, req=%v%s%v, reqBody=%v%v%v", resp.Opcode,
+			base.UdTagBegin, req.Req.Key, base.UdTagEnd,
+			base.UdTagBegin, req.Req, base.UdTagEnd,
+			base.UdTagBegin, req.Req.Body, base.UdTagEnd)
 		return CDError, sourceDocMeta, targetDocMeta, err
 	}
 
@@ -103,7 +115,10 @@ func DetectConflictIfNeeded(req *base.WrappedMCRequest, resp *mc.MCResponse, spe
 	sourceDoc = NewSourceDocument(req, sourceId)
 	sourceMeta, err = sourceDoc.GetMetadata(uncompressFunc)
 	if err != nil {
-		err = fmt.Errorf("error decoding source mutation for key=%v%s%v, req=%v%s%v, reqBody=%v%v%v", base.UdTagBegin, req.Req.Key, base.UdTagEnd, base.UdTagBegin, req.Req, base.UdTagEnd, base.UdTagBegin, req.Req.Body, base.UdTagEnd)
+		err = fmt.Errorf("error decoding source mutation for key=%v%s%v, req=%v%s%v, reqBody=%v%v%v",
+			base.UdTagBegin, req.Req.Key, base.UdTagEnd,
+			base.UdTagBegin, req.Req, base.UdTagEnd,
+			base.UdTagBegin, req.Req.Body, base.UdTagEnd)
 		return CDError, sourceDocMeta, targetDocMeta, err
 	}
 	sourceDocMeta = *sourceMeta.docMeta
@@ -113,14 +128,18 @@ func DetectConflictIfNeeded(req *base.WrappedMCRequest, resp *mc.MCResponse, spe
 	if err == base.ErrorDocumentNotFound {
 		return CDNone, sourceDocMeta, targetDocMeta, err
 	} else if err != nil {
-		err = fmt.Errorf("error creating target document for key=%v%s%v, respBody=%v%v%v", base.UdTagBegin, req.Req.Key, base.UdTagEnd, base.UdTagBegin, resp.Body, base.UdTagEnd)
+		err = fmt.Errorf("error creating target document for key=%v%s%v, respBody=%v, resp=%s, specs=%v, xattrEnabled=%v",
+			base.UdTagBegin, req.Req.Key, base.UdTagEnd,
+			resp.Body, resp.Status, specs, xattrEnabled)
 		return CDError, sourceDocMeta, targetDocMeta, err
 	}
 	targetMeta, err = targetDoc.GetMetadata()
 	if err == base.ErrorDocumentNotFound {
 		return CDNone, sourceDocMeta, targetDocMeta, err
 	} else if err != nil {
-		err = fmt.Errorf("error decoding target SUBDOC_MULTI_LOOKUP response for key=%v%s%v, respBody=%v%v%v", base.UdTagBegin, req.Req.Key, base.UdTagEnd, base.UdTagBegin, resp.Body, base.UdTagEnd)
+		err = fmt.Errorf("error decoding target SUBDOC_MULTI_LOOKUP response for key=%v%s%v, respBody=%v, resp=%s, specs=%v, xattrEnabled=%v",
+			base.UdTagBegin, req.Req.Key, base.UdTagEnd,
+			resp.Body, resp.Status, specs, xattrEnabled)
 		return CDError, sourceDocMeta, targetDocMeta, err
 	}
 	targetDocMeta = *targetMeta.docMeta
@@ -133,18 +152,20 @@ func DetectConflictIfNeeded(req *base.WrappedMCRequest, resp *mc.MCResponse, spe
 	if true /* TODO: Only detect conflict if (a) conflict logging is on. (b) CCR conflict mode. */ {
 		cdResult, err = DetectConflict(sourceMeta, targetMeta)
 		if err != nil {
-			err = fmt.Errorf("error detecting conflict key=%v%s%v, sourceMeta=%s, targetMeta=%s", base.UdTagBegin, req.Req.Key, base.UdTagEnd, sourceMeta, targetMeta)
+			err = fmt.Errorf("error detecting conflict key=%v%s%v, sourceMeta=%s, targetMeta=%s",
+				base.UdTagBegin, req.Req.Key, base.UdTagEnd,
+				sourceMeta, targetMeta)
 			return CDError, sourceDocMeta, targetDocMeta, err
 		}
 	}
 
-	logger.Debugf("req=%v%s%v, reqBody=%v%v%v, resp=%v%s%v, respBody=%v%v%v, sourceMeta=%s, targetMeta=%s, cdRes=%v",
-		base.UdTagBegin, req.Req, base.UdTagEnd,
-		base.UdTagBegin, req.Req.Body, base.UdTagEnd,
-		base.UdTagBegin, resp, base.UdTagEnd,
-		base.UdTagBegin, resp.Body, base.UdTagEnd,
-		sourceMeta, targetMeta, cdResult,
-	)
+	if logger.GetLogLevel() >= log.LogLevelDebug {
+		logger.Debugf("req=%v%s%v,reqBody=%v%v%v,resp=%s,respBody=%v,sourceMeta=%s,targetMeta=%s,cdRes=%v",
+			base.UdTagBegin, req.Req, base.UdTagEnd,
+			base.UdTagBegin, req.Req.Body, base.UdTagEnd,
+			resp.Status, resp.Body, sourceMeta, targetMeta, cdResult,
+		)
+	}
 
 	return cdResult, sourceDocMeta, targetDocMeta, nil
 }

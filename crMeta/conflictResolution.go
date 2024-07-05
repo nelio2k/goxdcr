@@ -200,7 +200,7 @@ func ResolveConflictByHlv(req *base.WrappedMCRequest, resp *mc.MCResponse, specs
 		fmt.Errorf("bad value for CCR, req=%v%s%v, reqBody=%v%v%v, resp=%v%s%v, respBody=%v%v%v, cdRes=%v",
 			base.UdTagBegin, req.Req, base.UdTagEnd,
 			base.UdTagBegin, req.Req.Body, base.UdTagEnd,
-			base.UdTagBegin, resp, base.UdTagEnd,
+			base.UdTagBegin, *resp, base.UdTagEnd,
 			base.UdTagBegin, resp.Body, base.UdTagEnd,
 			cdResult,
 		)

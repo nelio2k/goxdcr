@@ -2146,27 +2146,27 @@ func (xmem *XmemNozzle) updateSystemXattrForTarget(wrappedReq *base.WrappedMCReq
 	}
 
 	var updateHLV bool
-	var sourceDocMeta *crMeta.CRMetadata
+	var sourceMeta *crMeta.CRMetadata
 
 	if wrappedReq.HLVModeOptions.SendHlv {
 		sourceDoc := crMeta.NewSourceDocument(wrappedReq, xmem.sourceActorId)
-		sourceDocMeta, err = sourceDoc.GetMetadata(xmem.uncompressBody)
+		sourceMeta, err = sourceDoc.GetMetadata(xmem.uncompressBody)
 		if err != nil {
 			return err
 		}
 
-		updateHLV = crMeta.NeedToUpdateHlv(sourceDocMeta, xmem.config.vbHlvMaxCas[wrappedReq.Req.VBucket], time.Duration(atomic.LoadUint32(&xmem.config.hlvPruningWindowSec))*time.Second)
+		updateHLV = crMeta.NeedToUpdateHlv(sourceMeta, xmem.config.vbHlvMaxCas[wrappedReq.Req.VBucket], time.Duration(atomic.LoadUint32(&xmem.config.hlvPruningWindowSec))*time.Second)
 	}
 
 	if wrappedReq.IsSubdocOp() {
-		return xmem.updateSystemXattrForSubdocOp(wrappedReq, lookup, sourceDocMeta, updateHLV)
+		return xmem.updateSystemXattrForSubdocOp(wrappedReq, lookup, sourceMeta, updateHLV)
 	} else {
-		return xmem.updateSystemXattrForMetaOp(wrappedReq, lookup, sourceDocMeta, updateHLV)
+		return xmem.updateSystemXattrForMetaOp(wrappedReq, lookup, sourceMeta, updateHLV)
 	}
 }
 
 // will update the system xattr to replicate when using the *_WITH_META commands.
-func (xmem *XmemNozzle) updateSystemXattrForMetaOp(wrappedReq *base.WrappedMCRequest, lookup *base.SubdocLookupResponse, sourceDocMeta *crMeta.CRMetadata, updateHLV bool) (err error) {
+func (xmem *XmemNozzle) updateSystemXattrForMetaOp(wrappedReq *base.WrappedMCRequest, lookup *base.SubdocLookupResponse, sourceMeta *crMeta.CRMetadata, updateHLV bool) (err error) {
 	// Now we need to update HLV xattr either because of new changes or because we have to prune
 	// The max increase in body length is adding 2 uint32 and _vv\x00{"cvCas":"0x...","src":"<clusterId>","ver":"0x..."}\x00
 
@@ -2213,9 +2213,13 @@ func (xmem *XmemNozzle) updateSystemXattrForMetaOp(wrappedReq *base.WrappedMCReq
 	xattrComposer := base.NewXattrComposer(newbody)
 
 	if updateHLV {
-		_, pruned, err := crMeta.ConstructXattrFromHlvForSetMeta(sourceDocMeta, time.Duration(atomic.LoadUint32(&xmem.config.hlvPruningWindowSec))*time.Second, xattrComposer)
+		_, pruned, err := crMeta.ConstructXattrFromHlvForSetMeta(sourceMeta, time.Duration(atomic.LoadUint32(&xmem.config.hlvPruningWindowSec))*time.Second, xattrComposer)
 		if err != nil {
-			err = fmt.Errorf("error decoding source mutation for key=%v%s%v, req=%v%v%v, reqBody=%v%v%v in updateSystemXattrForTarget", base.UdTagBegin, req.Key, base.UdTagEnd, base.UdTagBegin, req, base.UdTagEnd, base.UdTagBegin, req.Body, base.UdTagEnd)
+			err = fmt.Errorf("error decoding source mutation for key=%v%s%v, req=%v%v%v, reqBody=%v%v%v, sourceMeta=%s in updateSystemXattrForTarget",
+				base.UdTagBegin, req.Key, base.UdTagEnd,
+				base.UdTagBegin, req, base.UdTagEnd,
+				base.UdTagBegin, req.Body, base.UdTagEnd,
+				sourceMeta)
 			return err
 		}
 
@@ -2234,7 +2238,7 @@ func (xmem *XmemNozzle) updateSystemXattrForMetaOp(wrappedReq *base.WrappedMCReq
 	}
 
 	// decide to preserve or not preserve source xattrs before replicating to target
-	_, err = xmem.preserveSourceXattrs(wrappedReq, sourceDocMeta, updateHLV, xattrComposer.WriteKV)
+	_, err = xmem.preserveSourceXattrs(wrappedReq, sourceMeta, updateHLV, xattrComposer.WriteKV)
 	if err != nil {
 		return err
 	}

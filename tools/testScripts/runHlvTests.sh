@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# Copyright 2019-Present Couchbase, Inc.
+# Copyright 2024-Present Couchbase, Inc.
 #
 # Use of this software is governed by the Business Source License included in
 # the file licenses/BSL-Couchbase.txt.  As of the Change Date specified in that
@@ -8,7 +8,7 @@
 # will be governed by the Apache License, Version 2.0, included in the file
 # licenses/APL2.txt.
 
-testCasesDirectory="miscTests"
+testCasesDirectory="hlvTestcases"
 
 # main logic all exist elsewhere
 . ./commonTestRunner.shlib
