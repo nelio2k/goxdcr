@@ -114,6 +114,8 @@ const (
 
 	CASDriftThresholdSecsKey          = base.CASDriftThresholdSecsKey
 	PreCheckCasDriftThresholdHoursKey = base.PreCheckCasDriftThresholdHoursKey
+
+	ConflictLoggingKey = base.ConflictLoggingKey
 )
 
 // keys to facilitate redaction of replication settings map
@@ -244,6 +246,8 @@ var TargetTopologyLogFrequencyConfig = &SettingsConfig{base.TargetTopologyLogFre
 var CasDriftThresholdSecsConfig = &SettingsConfig{100, &Range{0, math.MaxInt}}
 var PreCheckCasDriftThresholdHoursConfig = &SettingsConfig{8760 /*1 year*/, &Range{0, math.MaxInt}}
 
+var ConflictLoggingConfig = &SettingsConfig{base.ConflictLoggingMappingInput{}, nil}
+
 // Note that any keys that are in the MultiValueMap should not belong here
 // Read How MultiValueMap is parsed in code for more details
 var ReplicationSettingsConfigMap = map[string]*SettingsConfig{
@@ -299,6 +303,7 @@ var ReplicationSettingsConfigMap = map[string]*SettingsConfig{
 	TargetTopologyLogFreqKey:             TargetTopologyLogFrequencyConfig,
 	CASDriftThresholdSecsKey:             CasDriftThresholdSecsConfig,
 	PreCheckCasDriftThresholdHoursKey:    PreCheckCasDriftThresholdHoursConfig,
+	ConflictLoggingKey:                   ConflictLoggingConfig,
 }
 
 // Adding values in this struct is deprecated - use ReplicationSettings.Settings.Values instead
@@ -1116,6 +1121,16 @@ func (s *ReplicationSettings) GetPreCheckCasDriftThreshold() uint32 {
 	return uint32(hrsInt)
 }
 
+func (s *ReplicationSettings) GetConflictLoggingMapping() base.ConflictLoggingMappingInput {
+	val, _ := s.GetSettingValueOrDefaultValue(ConflictLoggingKey)
+	if val == nil {
+		return base.ConflictLoggingMappingInput{}
+	}
+
+	mapping := val.(map[string]interface{})
+	return mapping
+}
+
 type ReplicationSettingsMap map[string]interface{}
 
 type redactDictType int
@@ -1290,11 +1305,6 @@ func ValidateAndConvertReplicationSettingsValue(key, value, errorKey string, isE
 		if err = nonCAPIOnlyFeature(convertedValue.(base.FilterExpDelType), base.FilterExpDelNone, isCapi); err != nil {
 			return
 		}
-	case CollectionsMgtMultiKey:
-		convertedValue, err = ValidateAndConvertSettingsValue(key, value, ReplicationSettingsConfigMap)
-		if err != nil {
-			return
-		}
 	case CollectionsMappingRulesKey:
 		convertedValue, err = ValidateAndConvertStringToMappingRuleType(value)
 		if err != nil {
@@ -1305,13 +1315,12 @@ func ValidateAndConvertReplicationSettingsValue(key, value, errorKey string, isE
 		if err != nil {
 			return
 		}
-	case DismissEventKey:
-		convertedValue, err = ValidateAndConvertSettingsValue(key, value, ReplicationSettingsConfigMap)
-		if err != nil {
-			return
-		}
 	case MobileCompatibleKey:
 		if convertedValue, err = base.MobileCompatibilityStringToTypeConverter(value); err != nil {
+			return
+		}
+	case ConflictLoggingKey:
+		if convertedValue, err = base.ValidateAndConvertJsonMapToConflictLoggingMapping(value); err != nil {
 			return
 		}
 	default:

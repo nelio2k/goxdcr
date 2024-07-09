@@ -11,11 +11,13 @@ package parts
 
 import (
 	"errors"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	mc "github.com/couchbase/gomemcached"
 	"github.com/couchbase/goxdcr/base"
+	"github.com/couchbase/goxdcr/conflictlog"
 	"github.com/couchbase/goxdcr/log"
 	"github.com/couchbase/goxdcr/metadata"
 )
@@ -55,6 +57,7 @@ const (
 	HLV_ENABLE         = "hlvEnable"
 	HLV_MAX_CAS        = "hlv_vb_max_cas"
 	MOBILE_COMPATBILE  = base.MobileCompatibleKey
+	CONFLICT_LOGGING   = base.ConflictLoggingKey
 )
 
 type NeedSendStatus int
@@ -105,6 +108,11 @@ type baseConfig struct {
 
 	devMainSendDelay     uint32
 	devBackfillSendDelay uint32
+
+	// conflict logging feature data-structures
+	conflictLoggingEnabled bool
+	conflictLoggingRules   *conflictlog.Rules // will be nil if conflictLoggingEnabled is false.
+	conflictLoggingMtx     sync.RWMutex
 }
 
 // We determine the "commit" time as the time we hear back from the target, for statistics purposes

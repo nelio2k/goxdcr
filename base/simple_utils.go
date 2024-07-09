@@ -2311,3 +2311,15 @@ func ParseReplicationId(id string) (targetUUID string, sourceBucket string, targ
 	targetBucket = parts[2]
 	return
 }
+
+// given "[scope].[collection]", the string will be split to "[scope]" and "[collection]"
+func SeparateScopeCollection(scopeCol string) (scope string, collection string) {
+	scopeColArr := strings.Split(scopeCol, ".")
+	if len(scopeColArr) > 0 {
+		scope = scopeColArr[0]
+	}
+	if len(scopeColArr) > 1 {
+		collection = scopeColArr[1]
+	}
+	return
+}

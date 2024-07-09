@@ -875,6 +875,11 @@ func (xdcrf *XDCRFactory) constructUpdateSettingsForXmemNozzle(pipeline common.P
 	if ok {
 		xmemSettings[parts.MobileCompatible] = mobile
 	}
+	conflictLoggingMap, ok := settings[metadata.ConflictLoggingKey]
+	if ok {
+		xmemSettings[parts.ConflictLogging] = conflictLoggingMap
+	}
+
 	return xmemSettings
 }
 
@@ -1118,8 +1123,10 @@ func (xdcrf *XDCRFactory) constructSettingsForXmemNozzle(pipeline common.Pipelin
 	if val, ok := settings[base.VersionPruningWindowHrsKey]; ok {
 		xmemSettings[base.VersionPruningWindowHrsKey] = val
 	}
-	return xmemSettings, nil
 
+	xmemSettings[base.ConflictLoggingKey] = metadata.GetSettingFromSettingsMap(settings, metadata.ConflictLoggingKey, base.ConflictLoggingMappingInput{})
+
+	return xmemSettings, nil
 }
 
 func (xdcrf *XDCRFactory) constructSettingsForCapiNozzle(pipeline common.Pipeline, settings metadata.ReplicationSettingsMap) (map[string]interface{}, error) {

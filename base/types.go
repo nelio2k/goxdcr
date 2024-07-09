@@ -3016,3 +3016,217 @@ func ComposeRequestForSubdocMutation(specs []SubdocMutationPathSpec, source *mc.
 }
 
 type ExternalMgmtHostAndPortGetter func(map[string]interface{}, bool) (string, int, error)
+
+// conflict logging json input mapping from user, before converting to "Rules"
+type ConflictLoggingMappingInput map[string]interface{}
+
+// ignores unrecognised keys from comparision
+func EqualMaps(clm1, clm2 map[string]interface{}, recognisedKeys []string) bool {
+	if clm1 == nil || clm2 == nil {
+		return clm1 == nil && clm2 == nil
+	}
+
+	for _, key := range recognisedKeys {
+		val1, ok1 := clm1[key]
+		val2, ok2 := clm2[key]
+		if ok1 != ok2 {
+			return false
+		}
+
+		valStr1, ok1 := val1.(string)
+		valStr2, ok2 := val2.(string)
+		if ok1 != ok2 || valStr1 != valStr2 {
+			return false
+		}
+	}
+
+	return true
+}
+
+// ignores unrecognised keys from comparision
+func (clm ConflictLoggingMappingInput) SameAs(other interface{}) bool {
+	if clm == nil || other == nil {
+		return clm == nil && other == nil
+	}
+
+	otherClm, ok := other.(map[string]interface{})
+	if !ok {
+		return false
+	}
+
+	if clm == nil || otherClm == nil {
+		return clm == nil && otherClm == nil
+	}
+
+	if len(clm) != len(otherClm) {
+		return false
+	}
+
+	// only mandatory keys recognised by conflict logging feature.
+	keys := []string{
+		CLBucketKey, CLCollectionKey,
+	}
+
+	same := EqualMaps(clm, otherClm, keys)
+	if !same {
+		return false
+	}
+
+	// special logging rules - optional.
+	loggingRules1, ok1 := clm[CLLoggingRulesKey]
+	loggingRules2, ok2 := otherClm[CLLoggingRulesKey]
+	if ok1 != ok2 {
+		return false
+	}
+
+	rules1, ok1 := loggingRules1.(map[string]interface{})
+	rules2, ok2 := loggingRules2.(map[string]interface{})
+	if ok1 != ok2 || !EqualMaps(rules1, rules2, keys) {
+		return false
+	}
+
+	return true
+}
+
+// "bucket" and "collection" keys should be present and non-empty.
+// Other keys are ignored from validation and parsing.
+// collection values should be of format [scope].[collection].
+// clm should be not nil or non-empty.
+func ParseOneConflictLoggingRule(rule map[string]interface{}) (bucketOut, scopeOut, collectionOut string, err error) {
+	bucketVal, ok := rule[CLBucketKey]
+	if !ok {
+		err = fmt.Errorf("no %v in %v", CLBucketKey, rule)
+		return
+	}
+
+	bucketName, ok := bucketVal.(string)
+	if !ok {
+		err = fmt.Errorf("%v is not string in %v. It is %v", CLBucketKey, rule, bucketVal)
+		return
+	}
+
+	if bucketName == "" {
+		err = fmt.Errorf("%v is empty in %v", CLBucketKey, rule)
+		return
+	}
+
+	collectionVal, ok := rule[CLCollectionKey]
+	if !ok {
+		err = fmt.Errorf("no %v in %v", CLCollectionKey, rule)
+		return
+	}
+
+	collection, ok := collectionVal.(string)
+	if !ok {
+		err = fmt.Errorf("%v is not string in %v. It is %v", CLCollectionKey, rule, collectionVal)
+		return
+	}
+
+	if collection == "" {
+		err = fmt.Errorf("%v is empty in %v", CLCollectionKey, rule)
+		return
+	}
+
+	scopeName, collectionName := SeparateScopeCollection(collection)
+	if scopeName == "" {
+		err = fmt.Errorf("%v should be of type [scope].[collection], empty [scope] in %v", CLCollectionKey, rule)
+		return
+	}
+	if collectionName == "" {
+		err = fmt.Errorf("%v should be of type [scope].[collection], empty [collection] in %v", CLCollectionKey, rule)
+		return
+	}
+
+	bucketOut = bucketName
+	scopeOut = scopeName
+	collectionOut = collectionName
+
+	return
+}
+
+func (clm ConflictLoggingMappingInput) ValidateConflictLoggingMapValues() error {
+	if clm == nil {
+		return fmt.Errorf("nil conflict logging map %v", clm)
+	}
+
+	if len(clm) == 0 {
+		// turn off
+		return nil
+	}
+
+	// validate minimal requirements to turn conflict logging feature
+	_, _, _, err := ParseOneConflictLoggingRule(clm)
+	if err != nil {
+		return err
+	}
+
+	// optional input of "loggingRules"
+	loggingRulesIn, ok := clm[CLLoggingRulesKey]
+	if !ok {
+		// loggingRules not present - ok
+		return nil
+	}
+
+	loggingRules, ok := loggingRulesIn.(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("%v in %v is not of type map[string]interface{}. Should be a json object, but is %v", CLLoggingRulesKey, clm, loggingRulesIn)
+	}
+
+	for source, target := range loggingRules {
+		if source == "" {
+			// should not be empty.
+			// Note that this need not always be of format "[scope].[collection]".
+			// Can just be "[scope]", with not [collection], unlike target.
+			return fmt.Errorf("empty source key %v -> %v logging rule, in %v", source, target, loggingRules)
+		}
+
+		targetMap, ok := target.(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("target value %v should be of type string in %v -> %v logging rule in %v", target, source, target, loggingRules)
+		}
+
+		if len(targetMap) == 0 {
+			// could be {} or nil, which are both valid
+			continue
+		}
+
+		_, _, _, err := ParseOneConflictLoggingRule(targetMap)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func ValidateAndConvertJsonMapToConflictLoggingMapping(value string) (ConflictLoggingMappingInput, error) {
+	if value == "null" || value == "nil" {
+		// "nil" is not a accepted value. {} is the smallest input.
+		return nil, fmt.Errorf("null or nil conflict logging mapping not accepted")
+	}
+
+	// Check for duplicated keys
+	res, err := JsonStringReEncodeTest(value)
+	if err != nil {
+		return nil, err
+	}
+	if !res {
+		return nil, ErrorJSONReEncodeFailed
+	}
+
+	// Because adv filtering won't work if space is removed - jsonMap should be the original version
+	jsonMap, err := ValidateAndConvertStringToJsonType(value)
+	if err != nil {
+		return nil, err
+	}
+
+	conflictLoggingMap := ConflictLoggingMappingInput(jsonMap)
+
+	// validate if input is valid
+	err = conflictLoggingMap.ValidateConflictLoggingMapValues()
+	if err != nil {
+		return nil, err
+	}
+
+	return conflictLoggingMap, nil
+}

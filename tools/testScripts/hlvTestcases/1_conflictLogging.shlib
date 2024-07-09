@@ -17,11 +17,26 @@ CLUSTER_NAME_BUCKET_MAP=(["C1"]=${cluster1BucketsArr[@]} ["C2"]=${cluster2Bucket
 # Bucket properties
 declare -A BucketProperty=(["ramQuotaMB"]=100 ["CompressionMode"]="Active")
 insertPropertyIntoBucketNamePropertyMap "B1" BucketProperty
-insertPropertyIntoBucketNamePropertyMap "B2" BucketProperty
+insertPropertyIntoBucketNamePropertyMap "B2" BucketProperty # conflict bucket for C1.B1
 insertPropertyIntoBucketNamePropertyMap "B3" BucketProperty
-insertPropertyIntoBucketNamePropertyMap "B4" BucketProperty
+insertPropertyIntoBucketNamePropertyMap "B4" BucketProperty # conflict bucket for C2.B2
 
-declare -A BucketReplProperties=(["replicationType"]="continuous" ["checkpointInterval"]=60 ["statsInterval"]=500 ["filterBinary"]=true)
+conflictLoggingMap1="{\"bucket\":\"B3\", \"collection\": \"_default._default\", \"loggingRules\": {\"S1.col1\": {\"bucket\":\"B3\", \"collection\": \"S1.col1\"}}}"
+declare -A BucketReplProperties1=(["replicationType"]="continuous" ["checkpointInterval"]=60 ["statsInterval"]=500 ["filterBinary"]=true ["conflictLogging"]=$conflictLoggingMap1)
+
+conflictLoggingMap2="{\"bucket\":\"B4\", \"collection\": \"_default._default\", \"loggingRules\": {\"S1.col1\": {\"bucket\":\"B4\", \"collection\": \"S1.col1\"}}}"
+declare -A BucketReplProperties2=(["replicationType"]="continuous" ["checkpointInterval"]=60 ["statsInterval"]=500 ["filterBinary"]=true ["conflictLogging"]=$conflictLoggingMap1)
+
+# Each bucket with S1.col1 and S1.col1 -> S1.col2 will be the special loggingRule
+# Bucket -> Scopes
+# -----------------
+declare -a scope1Arr=("S1")
+BUCKET_NAME_SCOPE_MAP=(["B1"]=${scope1Arr[@]} ["B2"]=${scope1Arr[@]} ["B3"]=${scope1Arr[@]} ["B4"]=${scope1Arr[@]})
+
+# Scopes -> Collections
+# ----------------------
+declare -a collection1Arr=("col1")
+SCOPE_NAME_COLLECTION_MAP=(["S1"]=${collection1Arr[@]})
 
 function waitForChangesLeft0ForTopology {
 	waitForChangesLeft0 "C1" "B1" "C2" "B2"
@@ -44,9 +59,9 @@ function testReplicationWithConflictLogging {
 	setCrossClusterVersioningForBucket "C2" "B2"
 
 	echo "Replication C1.B1 -> C2.B2"
-	createBucketReplication "C1" "B1" "C2" "B2" BucketReplProperties
+	createBucketReplication "C1" "B1" "C2" "B2" BucketReplProperties1
 	echo "Replication C2.B2 -> C1.B1"
-	createBucketReplication "C2" "B2" "C1" "B1" BucketReplProperties
+	createBucketReplication "C2" "B2" "C1" "B1" BucketReplProperties2
 
 	# Insert
 	writeJSONDocument "C1" "B1" "doc1" '{"foo":"bar"}'
@@ -63,15 +78,29 @@ function testReplicationWithConflictLogging {
 	waitForChangesLeft0ForTopology
 	grepForAbnormalities
 
-	echo runCbWorkloadGenBucket "C1" "B1"
-	runCbWorkloadGenBucket "C1" "B1" &
-	echo runCbWorkloadGenBucket "C1" "B1" 10000 "common"
-	runCbWorkloadGenBucket "C1" "B1" 10000 "common" &
+	numItems=10000
+	CBWORKLOAD_COLLECTION_NUM_ITEMS=$numItems
 
-	echo runCbWorkloadGenBucket "C2" "B2"
+	echo runCbWorkloadGenBucket _default._default "C1" "B1"
+	runCbWorkloadGenBucket "C1" "B1" &
+	echo runCbWorkloadGenBucket _default._default "C1" "B1" $numItems "common"
+	runCbWorkloadGenBucket "C1" "B1" $numItems "common" &
+
+	echo runCbWorkloadGenCollection "C1" "B1" "S1" "col1"
+	runCbWorkloadGenCollection "C1" "B1" "S1" "col1" &
+	echo runCbWorkloadGenCollection "C1" "B1" "S1" "col1" "common"
+	runCbWorkloadGenCollection "C1" "B1" "S1" "col1" "common" &
+
+
+	echo runCbWorkloadGenBucket _default._default "C2" "B2"
 	runCbWorkloadGenBucket "C2" "B2" &
-	echo runCbWorkloadGenBucket "C2" "B2" 10000 "common"
-	runCbWorkloadGenBucket "C2" "B2" 10000 "common" &
+	echo runCbWorkloadGenBucket _default._default "C2" "B2" $numItems "common"
+	runCbWorkloadGenBucket "C2" "B2" $numItems "common" &
+
+	echo runCbWorkloadGenCollection "C2" "B2" "S1" "col1"
+	runCbWorkloadGenCollection "C2" "B2" "S1" "col1" &
+	echo runCbWorkloadGenCollection "C2" "B2" "S1" "col1" "common"
+	runCbWorkloadGenCollection "C2" "B2" "S1" "col1" "common" &
 
 	echo "sleeping 10 seconds for cbworkloadgen to finish"
 	sleep 10
@@ -85,6 +114,8 @@ function testReplicationWithConflictLogging {
 	grepForAbnormalities
 
 	verifyPromStats
+
+	# TODO - check if conflict count in the conflict buckets is non-zero
 }
 
 function runTestCase {

@@ -364,6 +364,7 @@ var ErrorSubdocLookupPathNotFound = errors.New("SUBDOC_MULTI_LOOKUP does not inc
 var ErrorUnexpectedSubdocOp = errors.New("Unexpected subdoc op was observed")
 var ErrorCasPoisoningDetected = errors.New("Document CAS is stamped with a time beyond allowable drift threshold")
 var ErrorHostNameEmpty = errors.New("Hostname is empty")
+var ErrorConflictLoggingInputInvalid = errors.New("conflict logging input json object should either contain nothing (considered to turn off) or should compulsory contain \"bucket\" and \"collection\" keys")
 
 func GetBackfillFatalDataLossError(specId string) error {
 	return fmt.Errorf("%v experienced fatal error when trying to create backfill request. To prevent data loss, the pipeline must restream from the beginning", specId)
@@ -1498,6 +1499,21 @@ const (
 var (
 	MobileDocPrefixSync    = []byte("_sync:")
 	MobileDocPrefixSyncAtt = []byte("_sync:att")
+)
+
+// Conflict logging replication setting and associated keys
+// It will look like the following:
+//
+//	"conflictLogging": {
+//				"bucket": "bucketname"
+//				"collection": "[scope].[collection]"
+//				"loggingRules": { ... }
+//		}
+const (
+	ConflictLoggingKey string = "conflictLogging"
+	CLBucketKey        string = "bucket"
+	CLCollectionKey    string = "collection"
+	CLLoggingRulesKey  string = "loggingRules"
 )
 
 // Required for conflict resolution

@@ -69,13 +69,13 @@ func DetectConflict(source *CRMetadata, target *CRMetadata) (ConflictDetectionRe
 }
 
 // Given source mutation and target doc response,
-// Peform conflict detection if:
+// Peform conflict detection (needToDetectConflict is true) if:
 // 1. Conflict resolution type is CCR.
 // 2. Conflict logging feature is turned on.
 // Returns conflict detection result if performed,
 // also returns the source and target document metadata for subsequent conflict resolution.
 func DetectConflictIfNeeded(req *base.WrappedMCRequest, resp *mc.MCResponse, specs []base.SubdocLookupPathSpec, sourceId, targetId hlv.DocumentSourceId,
-	xattrEnabled bool, uncompressFunc base.UncompressFunc, logger *log.CommonLogger) (ConflictDetectionResult, base.DocumentMetadata, base.DocumentMetadata, error) {
+	xattrEnabled, needToDetectConflict bool, uncompressFunc base.UncompressFunc, logger *log.CommonLogger) (ConflictDetectionResult, base.DocumentMetadata, base.DocumentMetadata, error) {
 
 	// source dcp mutation as "source document"
 	var sourceDoc *SourceDocument
@@ -149,7 +149,7 @@ func DetectConflictIfNeeded(req *base.WrappedMCRequest, resp *mc.MCResponse, spe
 
 	// perform conflict detection if needed
 	var cdResult ConflictDetectionResult
-	if true /* TODO: Only detect conflict if (a) conflict logging is on. (b) CCR conflict mode. */ {
+	if needToDetectConflict {
 		cdResult, err = DetectConflict(sourceMeta, targetMeta)
 		if err != nil {
 			err = fmt.Errorf("error detecting conflict key=%v%s%v, sourceMeta=%s, targetMeta=%s",
