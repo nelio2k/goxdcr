@@ -1480,6 +1480,11 @@ var ActiveTxnRecordRegexp *regexp.Regexp = regexp.MustCompile(fmt.Sprintf("%v%v%
 
 const TransactionXattrKey = "txn"
 
+const (
+	ConflictLoggingXattrKey string = "_xdcr_conflict"
+	ConflictLoggingXattrVal string = "true"
+)
+
 const BackfillPipelineTopicPrefix = "backfill_"
 
 const MobileCompatibleKey = "mobile"
