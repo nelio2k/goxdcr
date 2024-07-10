@@ -17,6 +17,9 @@ type DocInfo struct {
 	IsDeleted  bool   `json:"isDeleted"`
 	Collection string `json:"collection"`
 	Scope      string `json:"scope"`
+
+	// Body of the doc. Note: it will not be serialized to json
+	Body []byte
 }
 
 // ConflictRecord has the all the details of the detected conflict

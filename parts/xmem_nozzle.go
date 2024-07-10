@@ -625,7 +625,7 @@ func (config *xmemConfig) updateConflictLoggingSettings(settings metadata.Replic
 			config.logger.Errorf("Error converting %v to rules, ingnoring the input. err=%v. enabled=%v, rules=%s", conflictLoggingMap, err, config.conflictLoggingEnabled, config.conflictLoggingRules)
 			return
 		}
-		newRules = &newRulesVal
+		newRules = newRulesVal
 	}
 
 	config.conflictLoggingMtx.Lock()

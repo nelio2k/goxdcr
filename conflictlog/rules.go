@@ -35,7 +35,7 @@ type Rules struct {
 // base.ParseOneConflictLoggingRule would have already been called in ValidateAndConvertJsonMapToConflictLoggingMapping too.
 // So at this point, we shouldnt not get any error.
 // jsonMapping should not be nil or {}. Such values needs to be handled explicitly by the caller.
-func NewRules(jsonMapping base.ConflictLoggingMappingInput) (rules Rules, err error) {
+func NewRules(jsonMapping base.ConflictLoggingMappingInput) (rules *Rules, err error) {
 	if len(jsonMapping) == 0 {
 		// Nil is not a valid input
 		// {} is a valid input, but represent conflict logging is turned off - no rules can be generated
@@ -48,6 +48,8 @@ func NewRules(jsonMapping base.ConflictLoggingMappingInput) (rules Rules, err er
 	if err != nil {
 		return
 	}
+
+	rules = &Rules{}
 
 	rules.Target = NewTarget(
 		targetBucketName,

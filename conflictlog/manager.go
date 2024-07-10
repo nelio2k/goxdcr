@@ -2,7 +2,6 @@ package conflictlog
 
 import (
 	"github.com/couchbase/goxdcr/log"
-	"github.com/couchbase/goxdcr/service_def"
 )
 
 const (
@@ -18,6 +17,10 @@ type Manager interface {
 	NewLogger(logger *log.CommonLogger, replId string, opts ...LoggerOpt) (l Logger, err error)
 }
 
+type MemcachedAddrGetter interface {
+	MyMemcachedAddr() (string, error)
+}
+
 // GetManager returns the global conflict manager
 func GetManager() (Manager, error) {
 	if manager == nil {
@@ -28,25 +31,40 @@ func GetManager() (Manager, error) {
 }
 
 // InitManager intializes global conflict manager
-func InitManager(loggerCtx *log.LoggerContext, xdcrTopoSvc service_def.XDCRCompTopologySvc) Manager {
-	manager = &managerImpl{
-		logger:      log.NewLogger(ConflictManagerLoggerName, loggerCtx),
-		xdcrTopoSvc: xdcrTopoSvc,
+func InitManager(loggerCtx *log.LoggerContext, memdAddrGetter MemcachedAddrGetter) Manager {
+	logger := log.NewLogger(ConflictManagerLoggerName, loggerCtx)
+
+	logger.Info("intializing conflict manager")
+
+	impl := &managerImpl{
+		logger:         logger,
+		memdAddrGetter: memdAddrGetter,
 	}
-	return manager
+
+	logger.Info("creating conflict manager writer pool")
+	impl.writerPool = newWriterPool(impl.newWriter)
+
+	return impl
 }
 
 // managerImpl implements conflict manager
 type managerImpl struct {
-	logger      *log.CommonLogger
-	xdcrTopoSvc service_def.XDCRCompTopologySvc
+	logger         *log.CommonLogger
+	memdAddrGetter MemcachedAddrGetter
+	writerPool     *writerPool
 }
 
 func (m *managerImpl) NewLogger(logger *log.CommonLogger, replId string, opts ...LoggerOpt) (l Logger, err error) {
-	l, err = newLoggerImpl(logger, replId, opts...)
+
+	l, err = newLoggerImpl(logger, replId, m.writerPool, opts...)
 	if err != nil {
 		return
 	}
 
 	return
+}
+
+func (m *managerImpl) newWriter(bucketName string) (w Writer, err error) {
+	m.logger.Infof("creating new conflict writer bucket=%s", bucketName)
+	return newGocbConn(m.logger, m.memdAddrGetter, bucketName)
 }
