@@ -98,10 +98,8 @@ func newLoggerImpl(logger *log.CommonLogger, replId string, writerPool *writerPo
 	return
 }
 
-func (l *loggerImpl) Log(c *ConflictRecord) (h Handle, err error) {
-	l.logger.Infof("logging conflict record replId=%s sourceKey=%s", l.replId, c.Source.Id)
-
-	ackCh := make(chan error)
+func (l *loggerImpl) log(c *ConflictRecord) (ackCh chan error, err error) {
+	ackCh = make(chan error)
 	req := logRequest{
 		conflictRec: c,
 		ackCh:       ackCh,
@@ -118,6 +116,14 @@ func (l *loggerImpl) Log(c *ConflictRecord) (h Handle, err error) {
 	if err != nil {
 		return
 	}
+
+	return
+}
+
+func (l *loggerImpl) Log(c *ConflictRecord) (h Handle, err error) {
+	l.logger.Infof("logging conflict record replId=%s sourceKey=%s", l.replId, c.Source.Id)
+
+	ackCh, err := l.log(c)
 
 	h = logReqHandle{
 		ackCh: ackCh,
@@ -150,6 +156,8 @@ func (l *loggerImpl) UpdateWorkerCount(newCount int) {
 			l.shutdownCh <- true
 		}
 	}
+
+	l.workerCount = newCount
 }
 
 func (l *loggerImpl) UpdateRules(r *Rules) (err error) {
@@ -180,15 +188,20 @@ func (l *loggerImpl) worker() {
 	}
 }
 
-func (l *loggerImpl) processReq(req logRequest) (err error) {
-	// copy the pointer for rules and from this point, the rules can can
-	// be updated but the old rules will be used for this request
-	var rules *Rules
-	l.rulesLock.Lock()
-	rules = l.rules
-	l.rulesLock.Unlock()
+func (l *loggerImpl) getTarget(rec *ConflictRecord) (t Target, err error) {
+	l.rulesLock.RLock()
+	defer l.rulesLock.RUnlock()
 
-	target, err := l.mapper.Map(rules, req.conflictRec)
+	t, err = l.mapper.Map(l.rules, rec)
+	if err != nil {
+		return
+	}
+
+	return
+}
+
+func (l *loggerImpl) processReq(req logRequest) (err error) {
+	target, err := l.getTarget(req.conflictRec)
 	if err != nil {
 		return
 	}

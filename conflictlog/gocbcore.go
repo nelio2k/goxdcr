@@ -65,6 +65,9 @@ func (conn *gocbCoreConn) setupAgent() (err error) {
 		Auth:       auth,
 		BucketName: conn.bucketName,
 		UserAgent:  ConflictWriterUserAgent,
+
+		// use KvPoolSize=1 to ensure only one connection is created by the agent
+		KvPoolSize: 1,
 	}
 
 	conn.agent, err = gocbcore.CreateAgent(config)
