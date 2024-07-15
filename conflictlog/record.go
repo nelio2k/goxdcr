@@ -39,12 +39,40 @@ type DocInfo struct {
 	Datatype    uint8  `json:"datatype"`
 	Xattrs      Xattrs `json:"xattrs"`
 
-	// Note: The following will not be serialized to json
-	Body   []byte
-	Vbno   uint16
-	Seqno  uint64
-	VbUUID uint64
-	// IsSource bool // If true, Body above will contain xattrs.
+	// Note: The following are considered "Extras" and will not be serialized to json
+	body   []byte // document body.
+	vbno   uint16
+	seqno  uint64
+	vbUUID uint64
+}
+
+// set the attributes that are not serialised into json.
+func (d *DocInfo) SetExtras(body []byte, vbno uint16, seqno, vbUUID uint64) {
+	if d == nil {
+		return
+	}
+	d.body = body
+	d.vbno = vbno
+	d.seqno = seqno
+	d.vbUUID = vbUUID
+}
+
+// Get document body.
+func (d *DocInfo) GetDocBody() []byte {
+	if d == nil {
+		return nil
+	}
+	return d.body
+}
+
+func (d *DocInfo) String() string {
+	if d == nil {
+		return "{}"
+	}
+
+	return fmt.Sprintf("{id=%s,node=%s,bucket=%s,cluster=%s,deleted=%v,collection=%s,scope=%s,expiry=%v,flags=%v,cas=%v,revId=%v,datatype=%v,vb=%v,seqno=%v,vbuuid=%v,xattrs=%s}",
+		d.Id, d.NodeId, d.BucketUUID, d.ClusterUUID, d.IsDeleted, d.Collection, d.Scope, d.Expiry, d.Flags,
+		d.Cas, d.RevSeqno, d.Datatype, d.vbno, d.seqno, d.vbUUID, &d.Xattrs)
 }
 
 // xattrs to be logged.
@@ -63,24 +91,14 @@ func (x *Xattrs) String() string {
 	return fmt.Sprintf("{Hlv=%s,Sync=%s,Mou=%s}", x.Hlv, x.Sync, x.Mou)
 }
 
-func (d *DocInfo) String() string {
-	if d == nil {
-		return "{}"
-	}
-
-	return fmt.Sprintf("{id=%s,node=%s,bucket=%s,cluster=%s,deleted=%v,collection=%s,scope=%s,expiry=%v,flags=%v,cas=%v,revId=%v,datatype=%v,vb=%v,seqno=%v,vbuuid=%v,xattrs=%s}",
-		d.Id, d.NodeId, d.BucketUUID, d.ClusterUUID, d.IsDeleted, d.Collection, d.Scope, d.Expiry, d.Flags,
-		d.Cas, d.RevSeqno, d.Datatype, d.Vbno, d.Seqno, d.VbUUID, &d.Xattrs)
-}
-
 // ConflictRecord has the all the details of the detected conflict
 // which are needed to be persisted
 type ConflictRecord struct {
-	Id            string  `json:"id"`
-	DocId         string  `json:"docId"`
-	ReplicationId string  `json:"replId"`
-	Source        DocInfo `json:"source"`
-	Target        DocInfo `json:"target"`
+	Id            string `json:"id"`
+	DocId         string `json:"docId"`
+	ReplicationId string `json:"replId"`
+	Source        DocInfo
+	Target        DocInfo
 }
 
 func (r *ConflictRecord) Scope() string {
@@ -134,8 +152,8 @@ func (r *ConflictRecord) PopulateData(replicationId string) {
 func (r *ConflictRecord) GenerateUniqHash() string {
 	uniqKey := []byte(
 		fmt.Sprintf("%s_%v_%v_%v_%s_%v_%v_%v",
-			r.Source.BucketUUID, r.Source.Vbno, r.Source.Seqno, r.Source.VbUUID,
-			r.Target.BucketUUID, r.Target.Vbno, r.Target.Seqno, r.Target.VbUUID,
+			r.Source.BucketUUID, r.Source.vbno, r.Source.seqno, r.Source.vbUUID,
+			r.Target.BucketUUID, r.Target.vbno, r.Target.seqno, r.Target.vbUUID,
 		))
 
 	sha256Hash := sha256.Sum256(uniqKey)

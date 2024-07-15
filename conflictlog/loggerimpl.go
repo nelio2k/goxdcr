@@ -1,10 +1,15 @@
 package conflictlog
 
 import (
+	"fmt"
 	"sync"
 
 	"github.com/couchbase/goxdcr/base"
 	"github.com/couchbase/goxdcr/log"
+)
+
+const (
+	ConflictLoggerName string = "conflictLogger"
 )
 
 const DefaultLogCapacity = 5
@@ -32,6 +37,8 @@ type loggerImpl struct {
 	logCh      chan logRequest
 	finch      chan bool
 	shutdownCh chan bool
+
+	closed bool
 }
 
 type logRequest struct {
@@ -100,7 +107,7 @@ func newLoggerImpl(logger *log.CommonLogger, replId string, writerPool *writerPo
 }
 
 func (l *loggerImpl) log(c *ConflictRecord) (ackCh chan error, err error) {
-	ackCh = make(chan error)
+	ackCh = make(chan error, 1)
 	req := logRequest{
 		conflictRec: c,
 		ackCh:       ackCh,
@@ -134,7 +141,14 @@ func (l *loggerImpl) Log(c *ConflictRecord) (h base.ConflictLoggerHandle, err er
 }
 
 func (l *loggerImpl) Close() (err error) {
-	close(l.finch)
+	l.loggerLock.Lock()
+	defer l.loggerLock.Unlock()
+
+	if !l.closed {
+		l.closed = true
+		close(l.finch)
+	}
+
 	return
 }
 
@@ -162,9 +176,14 @@ func (l *loggerImpl) UpdateWorkerCount(newCount int) {
 }
 
 func (l *loggerImpl) UpdateRules(r *Rules) (err error) {
-	err = r.Validate()
-	if err != nil {
-		return
+	defer l.logger.Infof("Logger got the updated rules %s", r)
+
+	if r != nil {
+		// r is nil, meaning conflict logging is off.
+		err = r.Validate()
+		if err != nil {
+			return
+		}
 	}
 
 	l.rulesLock.Lock()
@@ -184,6 +203,7 @@ func (l *loggerImpl) worker() {
 			return
 		case req := <-l.logCh:
 			err := l.processReq(req)
+			// swi
 			req.ackCh <- err
 		}
 	}
@@ -202,6 +222,9 @@ func (l *loggerImpl) getTarget(rec *ConflictRecord) (t Target, err error) {
 }
 
 func (l *loggerImpl) processReq(req logRequest) (err error) {
+
+	req.conflictRec.PopulateData(l.replId)
+
 	target, err := l.getTarget(req.conflictRec)
 	if err != nil {
 		return
@@ -216,7 +239,36 @@ func (l *loggerImpl) processReq(req logRequest) (err error) {
 		l.writerPool.release(w)
 	}()
 
-	err = w.SetMetaObj(req.conflictRec.Id, req.conflictRec)
+	// CRD.
+	err1 := w.SetMetaObj(req.conflictRec.Id, req.conflictRec)
+	if err1 != nil {
+		if err != nil {
+			err = err1
+		} else {
+			err = fmt.Errorf("%v, %v", err, err1)
+		}
+	}
+
+	// Source document.
+	err2 := w.SetMetaObj(req.conflictRec.Source.Id, req.conflictRec.Source.GetDocBody())
+	if err2 != nil {
+		if err != nil {
+			err = err2
+		} else {
+			err = fmt.Errorf("%v, %v", err, err2)
+		}
+	}
+
+	// Target document.
+	err3 := w.SetMetaObj(req.conflictRec.Target.Id, req.conflictRec.Target.GetDocBody())
+	if err3 != nil {
+		if err != nil {
+			err = err3
+		} else {
+			err = fmt.Errorf("%v, %v", err, err3)
+		}
+	}
+
 	return
 }
 

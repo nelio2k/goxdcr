@@ -844,7 +844,7 @@ func getMcStatusFromGuardrailIdx(idx int) mc.Status {
 	return mc.Status(int(mc.BUCKET_RESIDENT_RATIO_TOO_LOW) + idx)
 }
 
-func NewXmemNozzle(id string, remoteClusterSvc service_def.RemoteClusterSvc, sourceBucketUuid string, targetClusterUuid string, topic string, connPoolNamePrefix string, connPoolConnSize int, connectString string, sourceBucketName string, targetBucketName string, targetBucketUuid string, username string, password string, source_cr_mode base.ConflictResolutionMode, logger_context *log.LoggerContext, utilsIn utilities.UtilsIface, vbList []uint16, eventsProducer common.PipelineEventsProducer, sourceClusterUUID string, sourceHostname string) *XmemNozzle {
+func NewXmemNozzle(id string, remoteClusterSvc service_def.RemoteClusterSvc, sourceBucketUuid string, targetClusterUuid string, topic string, connPoolNamePrefix string, connPoolConnSize int, connectString string, sourceBucketName string, targetBucketName string, targetBucketUuid string, username string, password string, source_cr_mode base.ConflictResolutionMode, logger_context *log.LoggerContext, utilsIn utilities.UtilsIface, vbList []uint16, eventsProducer common.PipelineEventsProducer, sourceClusterUUID string, sourceHostname string, conflictLogger conflictlog.Logger) *XmemNozzle {
 
 	part := NewAbstractPartWithLogger(id, log.NewLogger("XmemNozzle", logger_context))
 
@@ -885,6 +885,7 @@ func NewXmemNozzle(id string, remoteClusterSvc service_def.RemoteClusterSvc, sou
 		nonTempErrsSeen:     make(map[uint16]mc.Status),
 		mcRequestPool:       base.NewMCRequestPool(id, nil),
 		sourceClusterUuid:   sourceClusterUUID,
+		conflictLogger:      conflictLogger,
 	}
 
 	xmem.last_ten_batches_size = []uint32{0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
@@ -900,16 +901,6 @@ func NewXmemNozzle(id string, remoteClusterSvc service_def.RemoteClusterSvc, sou
 	xmem.config.connPoolSize = connPoolConnSize
 	xmem.config.sourceHostname = sourceHostname
 	xmem.config.targetHostname = base.GetHostName(connectString)
-
-	// SUMUKH TODO - change to conflict bucket logger.
-	xmem.conflictLogger = conflictlog.NewFileLogger(
-		log.NewLogger("ConflictLogger", logger_context),
-		metadata.ReplicationId(sourceBucketName, targetClusterUuid, targetBucketName),
-		func(o *conflictlog.LoggerOptions) {
-			o.SetMapper(conflictlog.NewConflictMapper(xmem.Logger()))
-			o.SetLogQueueCap(1000)
-		},
-	)
 
 	return xmem
 }
@@ -2018,10 +2009,6 @@ func (xmem *XmemNozzle) log(wrappedReq *base.WrappedMCRequest, resp *base.Subdoc
 			Cas:         sourceDoc.Cas,
 			RevSeqno:    sourceDoc.RevSeq,
 			IsDeleted:   sourceDoc.Deletion,
-			Vbno:        wrappedReq.Req.VBucket,
-			Seqno:       sourceDoc.Seqno,
-			VbUUID:      sourceDoc.VbUUID,
-			Body:        sourceBodyClone,
 			Xattrs: conflictlog.Xattrs{
 				Hlv:  sourceHlv,
 				Sync: sourceSync,
@@ -2041,10 +2028,6 @@ func (xmem *XmemNozzle) log(wrappedReq *base.WrappedMCRequest, resp *base.Subdoc
 			Cas:         targetDoc.Cas,
 			RevSeqno:    targetDoc.RevSeq,
 			IsDeleted:   targetDoc.Deletion,
-			Vbno:        wrappedReq.Req.VBucket,
-			Seqno:       targetDoc.Seqno,
-			VbUUID:      targetDoc.VbUUID,
-			Body:        targetBodyClone,
 			Xattrs: conflictlog.Xattrs{
 				Hlv:  targetHlvClone,
 				Sync: targetSyncClone,
@@ -2052,6 +2035,9 @@ func (xmem *XmemNozzle) log(wrappedReq *base.WrappedMCRequest, resp *base.Subdoc
 			},
 		},
 	}
+
+	conflictRecord.Source.SetExtras(sourceBodyClone, wrappedReq.Req.VBucket, sourceDoc.Seqno, sourceDoc.VbUUID)
+	conflictRecord.Target.SetExtras(targetBodyClone, wrappedReq.Req.VBucket, targetDoc.Seqno, targetDoc.VbUUID)
 
 	loggerWait, err := xmem.conflictLogger.Log(&conflictRecord)
 	if err != nil {

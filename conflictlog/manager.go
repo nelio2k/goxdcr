@@ -31,7 +31,7 @@ func GetManager() (Manager, error) {
 }
 
 // InitManager intializes global conflict manager
-func InitManager(loggerCtx *log.LoggerContext, memdAddrGetter MemcachedAddrGetter) Manager {
+func InitManager(loggerCtx *log.LoggerContext, memdAddrGetter MemcachedAddrGetter) {
 	logger := log.NewLogger(ConflictManagerLoggerName, loggerCtx)
 
 	logger.Info("intializing conflict manager")
@@ -44,7 +44,7 @@ func InitManager(loggerCtx *log.LoggerContext, memdAddrGetter MemcachedAddrGette
 	logger.Info("creating conflict manager writer pool")
 	impl.writerPool = newWriterPool(impl.newWriter)
 
-	return impl
+	manager = impl
 }
 
 // managerImpl implements conflict manager
