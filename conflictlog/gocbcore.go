@@ -115,11 +115,11 @@ func (conn *gocbCoreConn) SetMeta(key string, body []byte, dataType uint8) (err 
 func (conn *gocbCoreConn) SetMetaObj(key string, val interface{}) (err error) {
 	conn.logger.Infof("set: key=%s", key)
 
-	_, isDocBody := val.([]byte)
+	docBody, isDocBody := val.([]byte)
 
 	var body []byte
 	if isDocBody {
-		body = val.([]byte)
+		body = docBody
 	} else {
 		body, err = json.Marshal(val)
 		if err != nil {
