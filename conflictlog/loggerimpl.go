@@ -38,6 +38,8 @@ type loggerImpl struct {
 	finch      chan bool
 	shutdownCh chan bool
 
+	// Logger can be shared between different nozzles,
+	// hence it should be closed by only one of them when the pipeline is stopping.
 	closed bool
 }
 
@@ -242,7 +244,7 @@ func (l *loggerImpl) processReq(req logRequest) (err error) {
 	// CRD.
 	err1 := w.SetMetaObj(req.conflictRec.Id, req.conflictRec)
 	if err1 != nil {
-		if err != nil {
+		if err == nil {
 			err = err1
 		} else {
 			err = fmt.Errorf("%v, %v", err, err1)
@@ -252,7 +254,7 @@ func (l *loggerImpl) processReq(req logRequest) (err error) {
 	// Source document.
 	err2 := w.SetMetaObj(req.conflictRec.Source.Id, req.conflictRec.Source.GetDocBody())
 	if err2 != nil {
-		if err != nil {
+		if err == nil {
 			err = err2
 		} else {
 			err = fmt.Errorf("%v, %v", err, err2)
@@ -262,7 +264,7 @@ func (l *loggerImpl) processReq(req logRequest) (err error) {
 	// Target document.
 	err3 := w.SetMetaObj(req.conflictRec.Target.Id, req.conflictRec.Target.GetDocBody())
 	if err3 != nil {
-		if err != nil {
+		if err == nil {
 			err = err3
 		} else {
 			err = fmt.Errorf("%v, %v", err, err3)
