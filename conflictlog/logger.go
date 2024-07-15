@@ -14,6 +14,7 @@ type Logger interface {
 	// the conflict to the target conflict bucket
 	UpdateRules(*Rules) error
 
+	// Closes the logger. Hence forth the logger will error out
 	Close() error
 }
 

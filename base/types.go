@@ -3291,6 +3291,11 @@ func ValidateAndConvertJsonMapToConflictLoggingMapping(value string) (ConflictLo
 	return conflictLoggingMap, nil
 }
 
+// Handle is returned for every conflict logging request.
+// The handle allows it caller to wait on the logging to complete (or error out)
 type ConflictLoggerHandle interface {
+	// Wait allows caller to complete the conflict logging
+	// The finch is the caller's finch. If the caller
+	// wants to exit early then the Wait will unblock as well
 	Wait(finch chan bool) error
 }
