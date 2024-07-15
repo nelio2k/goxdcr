@@ -47,6 +47,10 @@ func (cdr ConflictDetectionResult) String() string {
 	return "Unknown"
 }
 
+func (cdr ConflictDetectionResult) IsConflict() bool {
+	return cdr == CDConflict
+}
+
 // Detect conflict by using source and target HLVs.
 func DetectConflict(source *CRMetadata, target *CRMetadata) (ConflictDetectionResult, error) {
 	sourceHLV := source.GetHLV()
@@ -90,7 +94,7 @@ func DetectConflictIfNeeded(req *base.WrappedMCRequest, resp *mc.MCResponse, spe
 	if resp.Opcode == base.GET_WITH_META {
 		// non-hlv based replications
 		// No conflict detection required
-		sourceDocMeta = base.DecodeSetMetaReq(req.Req)
+		sourceDocMeta = base.DecodeSetMetaReq(req)
 		targetDocMeta, err = base.DecodeGetMetaResp(req.Req.Key, resp, xattrEnabled)
 		if err != nil {
 			err = fmt.Errorf("error decoding GET_META response for key=%v%s%v, respBody=%v%v%v, xattrEnabled=%v",

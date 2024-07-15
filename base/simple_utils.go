@@ -1222,6 +1222,25 @@ func Uint64ToBase64(u64 uint64) []byte {
 }
 
 // This routine expect prefix 0x since this is included in KV macro expansion.
+// Should be of even length.
+func HexBigEndianToUint64(hexBE []byte) (uint64, error) {
+	if len(hexBE) <= 2 {
+		return 0, fmt.Errorf("hex big endian input value %s is too short. Leading 0x is expected", hexBE)
+	}
+	if hexBE[0] != '0' || hexBE[1] != 'x' {
+		return 0, fmt.Errorf("incorrect hex big endian input %s", hexBE)
+	}
+
+	decoded := make([]byte, MaxHexDecodedLength)
+	_, err := hex.Decode(decoded, hexBE[2:])
+	if err != nil {
+		return 0, err
+	}
+	res := binary.BigEndian.Uint64(decoded)
+	return res, nil
+}
+
+// This routine expect prefix 0x since this is included in KV macro expansion.
 func HexLittleEndianToUint64(hexLE []byte) (uint64, error) {
 	if len(hexLE) <= 2 {
 		return 0, fmt.Errorf("hex input value %s is too short. Leading 0x is expected", hexLE)
@@ -2075,21 +2094,23 @@ func (h *HighSeqnoAndVbUuidMap) Diff(prev HighSeqnoAndVbUuidMap) HighSeqnoAndVbU
 	}
 	return diffMap
 }
-func DecodeSetMetaReq(req *mc.MCRequest) DocumentMetadata {
+func DecodeSetMetaReq(req *WrappedMCRequest) DocumentMetadata {
 	ret := DocumentMetadata{}
-	ret.Key = req.Key
-	ret.Flags = binary.BigEndian.Uint32(req.Extras[0:4])
-	ret.Expiry = binary.BigEndian.Uint32(req.Extras[4:8])
-	ret.RevSeq = binary.BigEndian.Uint64(req.Extras[8:16])
-	ret.Cas = req.Cas
-	ret.Deletion = (req.Opcode == DELETE_WITH_META)
-	ret.DataType = req.DataType
+	ret.Key = req.Req.Key
+	ret.Flags = binary.BigEndian.Uint32(req.Req.Extras[0:4])
+	ret.Expiry = binary.BigEndian.Uint32(req.Req.Extras[4:8])
+	ret.RevSeq = binary.BigEndian.Uint64(req.Req.Extras[8:16])
+	ret.Cas = req.Req.Cas
+	ret.Deletion = (req.Req.Opcode == DELETE_WITH_META)
+	ret.DataType = req.Req.DataType
+	ret.Seqno = req.Seqno
+	ret.VbUUID = req.VbUUID
 
 	return ret
 }
 
 func DecodeGetMetaResp(key []byte, resp *mc.MCResponse, xattrEnabled bool) (DocumentMetadata, error) {
-	ret := DocumentMetadata{}
+	ret := DocumentMetadata{} // Seqno and Vbuuid will be 0.
 	ret.Key = key
 	extras := resp.Extras
 	ret.Deletion = (binary.BigEndian.Uint32(extras[0:4]) != 0)
@@ -2099,7 +2120,7 @@ func DecodeGetMetaResp(key []byte, resp *mc.MCResponse, xattrEnabled bool) (Docu
 	ret.Cas = resp.Cas
 	if xattrEnabled {
 		if len(extras) < 20 {
-			return ret, fmt.Errorf("Received unexpected getMeta response, which does not include data type in extras. extras=%v", extras)
+			return ret, fmt.Errorf("received unexpected getMeta response, which does not include data type in extras. extras=%v", extras)
 		}
 		ret.DataType = extras[20]
 	} else {
@@ -2112,18 +2133,14 @@ func DecodeSubDocResp(key []byte, lookupResp *SubdocLookupResponse) (DocumentMet
 	specs := lookupResp.Specs
 	resp := lookupResp.Resp
 	body := resp.Body
-	if IsSuccessGetResponse(resp) == false {
-		return DocumentMetadata{}, fmt.Errorf("Cannot decode subdoc lookup response because the lookup failed with status %v", resp.Status)
+	if !IsSuccessGetResponse(resp) {
+		return DocumentMetadata{}, fmt.Errorf("cannot decode subdoc lookup response because the lookup failed with status %v", resp.Status)
 	}
 	pos := 0
 	docMeta := DocumentMetadata{
 		Key:      key,
-		RevSeq:   0,
 		Cas:      resp.Cas,
-		Flags:    0,
-		Expiry:   0,
 		Deletion: IsDeletedSubdocLookupResponse(resp),
-		DataType: 0,
 	}
 	for i := 0; i < len(specs); i++ {
 		spec := specs[i]
@@ -2164,6 +2181,16 @@ func DecodeSubDocResp(key []byte, lookupResp *SubdocLookupResponse) (DocumentMet
 			case VXATTR_FLAGS:
 				if flag, err := strconv.ParseUint(value, 10, 32); err == nil {
 					docMeta.Flags = uint32(flag)
+				}
+			case VXATTR_SEQNO:
+				// 64 bits hex string with 0x prefix
+				if seqno, err := HexBigEndianToUint64(body[pos+1 : pos+xattrlen-1]); err == nil {
+					docMeta.Seqno = seqno
+				}
+			case VXATTR_VBUUID:
+				// 64 bits hex string with 0x prefix
+				if vbuuid, err := HexBigEndianToUint64(body[pos+1 : pos+xattrlen-1]); err == nil {
+					docMeta.VbUUID = vbuuid
 				}
 			}
 		}

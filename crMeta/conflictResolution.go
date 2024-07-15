@@ -53,26 +53,25 @@ func (cr ConflictResolutionResult) String() string {
 // Optionally peforms conflict detection if conflict logging is enabled for the replication i.e. logConflict is true.
 // Parses Hlv and other needed xattrs in mobile mode.
 func ResolveConflictByCAS(req *base.WrappedMCRequest, resp *mc.MCResponse, specs []base.SubdocLookupPathSpec, sourceId, targetId hlv.DocumentSourceId,
-	xattrEnabled, logConflict bool, uncompressFunc base.UncompressFunc, logger *log.CommonLogger) (ConflictResolutionResult, error) {
+	xattrEnabled, logConflict bool, uncompressFunc base.UncompressFunc, logger *log.CommonLogger) (ConflictDetectionResult, ConflictResolutionResult, error) {
 
 	// No target document, replicate the source document.
 	if resp.Status == mc.KEY_ENOENT {
-		return CRSendToTarget, nil
+		return CDWin, CRSendToTarget, nil
 	}
 
 	// Conflict Detection if conflict logging feature is enabled.
-	cdRes, sourceDocMeta, targetDocMeta, err :=
+	CDResult, sourceDocMeta, targetDocMeta, err :=
 		DetectConflictIfNeeded(req, resp, specs, sourceId, targetId, xattrEnabled, logConflict, uncompressFunc, logger)
 	if err == base.ErrorDocumentNotFound {
-		return CRSendToTarget, nil
+		return CDWin, CRSendToTarget, nil
 	} else if err != nil {
-		return CRError, err
+		return CDError, CRError, err
 	}
 
-	// TODO: Pass the cdRes downstream
-	logger.Infof("SUMUKH DEBUG key=%s, cdRes=%v, logConflict=%v", req.Req.Key, cdRes, logConflict)
-
-	// Conflict Resolution using document CAS.
+	// Winner decided on document CAS.
+	// If conflict logging is in use,
+	// manual conflict resolution needs to be done, based on conflicts logged if needed.
 	sourceWin := true
 	if targetDocMeta.Cas > sourceDocMeta.Cas {
 		sourceWin = false
@@ -80,8 +79,8 @@ func ResolveConflictByCAS(req *base.WrappedMCRequest, resp *mc.MCResponse, specs
 		if targetDocMeta.RevSeq > sourceDocMeta.RevSeq {
 			sourceWin = false
 		} else if targetDocMeta.RevSeq == sourceDocMeta.RevSeq {
-			//if the outgoing mutation is deletion and its revSeq and cas are the
-			//same as the target side document, it would lose the conflict resolution
+			// if the outgoing mutation is deletion and its revSeq and cas are the
+			// same as the target side document, it would lose the conflict resolution
 			if sourceDocMeta.Deletion || (targetDocMeta.Expiry > sourceDocMeta.Expiry) {
 				sourceWin = false
 			} else if targetDocMeta.Expiry == sourceDocMeta.Expiry {
@@ -94,9 +93,9 @@ func ResolveConflictByCAS(req *base.WrappedMCRequest, resp *mc.MCResponse, specs
 		}
 	}
 	if sourceWin {
-		return CRSendToTarget, nil
+		return CDResult, CRSendToTarget, nil
 	} else {
-		return CRSkip, nil
+		return CDResult, CRSkip, nil
 	}
 }
 
@@ -104,26 +103,25 @@ func ResolveConflictByCAS(req *base.WrappedMCRequest, resp *mc.MCResponse, specs
 // Optionally peforms conflict detection if conflict logging is enabled for the replication i.e. logConflict is true.
 // Parses Hlv and other needed xattrs in mobile mode.
 func ResolveConflictByRevSeq(req *base.WrappedMCRequest, resp *mc.MCResponse, specs []base.SubdocLookupPathSpec, sourceId, targetId hlv.DocumentSourceId,
-	xattrEnabled, logConflict bool, uncompressFunc base.UncompressFunc, logger *log.CommonLogger) (ConflictResolutionResult, error) {
+	xattrEnabled, logConflict bool, uncompressFunc base.UncompressFunc, logger *log.CommonLogger) (ConflictDetectionResult, ConflictResolutionResult, error) {
 
 	// No target document, replicate the source document
 	if resp.Status == mc.KEY_ENOENT {
-		return CRSendToTarget, nil
+		return CDWin, CRSendToTarget, nil
 	}
 
 	// Conflict Detection if conflict logging feature is enabled.
-	cdRes, sourceDocMeta, targetDocMeta, err :=
+	CDResult, sourceDocMeta, targetDocMeta, err :=
 		DetectConflictIfNeeded(req, resp, specs, sourceId, targetId, xattrEnabled, logConflict, uncompressFunc, logger)
 	if err == base.ErrorDocumentNotFound {
-		return CRSendToTarget, nil
+		return CDWin, CRSendToTarget, nil
 	} else if err != nil {
-		return CRError, err
+		return CDError, CRError, err
 	}
 
-	// TODO: Pass the cdRes downstream
-	logger.Infof("SUMUKH DEBUG key=%s, cdRes=%v, logConflict=%v", req.Req.Key, cdRes, logConflict)
-
-	// Conflict resolution using document RevSeqNo.
+	// Winner decided on document RevSeqNo.
+	// If conflict logging is in use,
+	// manual conflict resolution needs to be done, based on conflicts logged if needed.
 	sourceWin := true
 	if targetDocMeta.RevSeq > sourceDocMeta.RevSeq {
 		sourceWin = false
@@ -145,9 +143,9 @@ func ResolveConflictByRevSeq(req *base.WrappedMCRequest, resp *mc.MCResponse, sp
 		}
 	}
 	if sourceWin {
-		return CRSendToTarget, nil
+		return CDResult, CRSendToTarget, nil
 	} else {
-		return CRSkip, nil
+		return CDResult, CRSkip, nil
 	}
 }
 
@@ -155,53 +153,53 @@ func ResolveConflictByRevSeq(req *base.WrappedMCRequest, resp *mc.MCResponse, sp
 // Always peforms conflict detection irrepective of the value of logConflict.
 // Always parses Hlv and resolves conflict using hlv.
 func ResolveConflictByHlv(req *base.WrappedMCRequest, resp *mc.MCResponse, specs []base.SubdocLookupPathSpec, sourceId, targetId hlv.DocumentSourceId,
-	xattrEnabled, logConflict bool, uncompressFunc base.UncompressFunc, logger *log.CommonLogger) (ConflictResolutionResult, error) {
+	xattrEnabled, logConflict bool, uncompressFunc base.UncompressFunc, logger *log.CommonLogger) (ConflictDetectionResult, ConflictResolutionResult, error) {
 
 	// No target document, replicate the source document.
 	if resp.Status == mc.KEY_ENOENT {
-		return CRSendToTarget, nil
+		return CDWin, CRSendToTarget, nil
 	}
 
 	// Conflict Detection is always performed in CCR.
-	cdResult, sourceDocMeta, targetDocMeta, err :=
+	CDResult, sourceDocMeta, targetDocMeta, err :=
 		DetectConflictIfNeeded(req, resp, specs, sourceId, targetId, xattrEnabled, true, uncompressFunc, logger)
 	if err == base.ErrorDocumentNotFound {
-		return CRSendToTarget, nil
+		return CDWin, CRSendToTarget, nil
 	} else if err != nil {
-		return CRError, err
+		return CDError, CRError, err
 	}
 
 	// Conflict Resolution using HLV.
 	if sourceDocMeta.Cas < targetDocMeta.Cas {
 		// We can only replicate from larger CAS to smaller.
-		return CRSkip, nil
+		return CDResult, CRSkip, nil
 	}
-	switch cdResult {
+	switch CDResult {
 	case CDWin:
-		return CRSendToTarget, nil
+		return CDResult, CRSendToTarget, nil
 	case CDLose:
 		if sourceDocMeta.Cas > targetDocMeta.Cas {
-			return CRSetBackToSource, nil
+			return CDResult, CRSetBackToSource, nil
 		} else {
-			return CRSkip, nil
+			return CDResult, CRSkip, nil
 		}
 	case CDConflict:
-		return CRMerge, nil
+		return CDResult, CRMerge, nil
 	case CDEqual:
 		if sourceDocMeta.Cas > targetDocMeta.Cas {
 			// When HLV says equal because they contain each other, if source Cas is larger, we want to send so the CAS will converge.
-			return CRSendToTarget, nil
+			return CDResult, CRSendToTarget, nil
 		} else {
-			return CRSkip, nil
+			return CDResult, CRSkip, nil
 		}
 	}
 
-	return CRError,
+	return CDResult, CRError,
 		fmt.Errorf("bad value for CCR, req=%v%s%v, reqBody=%v%v%v, resp=%v%s%v, respBody=%v%v%v, cdRes=%v",
 			base.UdTagBegin, req.Req, base.UdTagEnd,
 			base.UdTagBegin, req.Req.Body, base.UdTagEnd,
-			base.UdTagBegin, *resp, base.UdTagEnd,
+			base.UdTagBegin, resp.Status, base.UdTagEnd,
 			base.UdTagBegin, resp.Body, base.UdTagEnd,
-			cdResult,
+			CDResult,
 		)
 }

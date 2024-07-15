@@ -1534,6 +1534,8 @@ const (
 	VXATTR_FLAGS    = "$document.flags"
 	VXATTR_EXPIRY   = "$document.exptime"
 	VXATTR_DATATYPE = "$document.datatype"
+	VXATTR_VBUUID   = "$document.vbucket_uuid"
+	VXATTR_SEQNO    = "$document.seqno"
 	// The leading "_" indicates a system XATTR
 	XATTR_MOBILE = "_sync"
 	// This is the HLV XATTR name.

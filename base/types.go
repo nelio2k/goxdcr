@@ -29,6 +29,7 @@ import (
 	"github.com/couchbase/gomemcached"
 	mc "github.com/couchbase/gomemcached"
 	mcc "github.com/couchbase/gomemcached/client"
+	"github.com/couchbase/goxdcr/log"
 	"github.com/google/uuid"
 )
 
@@ -716,6 +717,7 @@ type TargetCollectionInfo struct {
 // Remember to reset the field values for recycling in MCRequestPool.cleanReq
 type WrappedMCRequest struct {
 	Seqno                      uint64
+	VbUUID                     uint64
 	Req                        *gomemcached.MCRequest
 	Start_time                 time.Time
 	UniqueKey                  string
@@ -723,6 +725,8 @@ type WrappedMCRequest struct {
 	SrcColNamespaceMtx         sync.RWMutex
 	ColInfo                    *TargetCollectionInfo
 	ColInfoMtx                 sync.RWMutex
+	TgtColNamespace            *CollectionNamespace
+	TgtColNamespaceMtx         sync.RWMutex
 	SlicesToBeReleasedByXmem   [][]byte
 	SlicesToBeReleasedByRouter [][]byte
 	SlicesToBeReleasedMtx      sync.Mutex
@@ -747,6 +751,30 @@ type WrappedMCRequest struct {
 	// In the mobile mode, we might have to recompose _mou before replicating
 	// This stores the re-composed _mou to replicate, nil if it doesn't exist or the new mou would be empty
 	MouAfterProcessing []byte
+}
+
+// If conflict logging is in progress, wait for it to complete.
+func (req *WrappedMCRequest) WaitForConflictLogging(finCh chan bool, logger *log.CommonLogger) {
+	if req == nil {
+		return
+	}
+
+	if req.HLVModeOptions.ConflictLoggerWait != nil {
+		err := req.HLVModeOptions.ConflictLoggerWait.Wait(finCh)
+		if err != nil {
+			logger.Errorf("Error during conflict logging to finish, key=%v%s%v, err=%v",
+				UdTagBegin, req.Req.Key, UdTagEnd,
+				err,
+			)
+		}
+	}
+}
+
+func (req *WrappedMCRequest) LogConflicts() bool {
+	if req == nil {
+		return false
+	}
+	return req.HLVModeOptions.ConflictLoggingEnabled
 }
 
 // set the intent to use subdoc command
@@ -1849,11 +1877,12 @@ func (xfi *CCRXattrFieldIterator) Next() (key, value []byte, err error) {
 }
 
 type SubdocSpecOption struct {
-	IncludeHlv        bool // Get target HLV only for CCR
-	IncludeMobileSync bool // Get target _sync if we need to preserve target _sync
-	IncludeImportCas  bool // Include target importCas if enableCrossClusterVersioning.
-	IncludeBody       bool // Get the target body for merge
-	IncludeVXattr     bool // Get the target document metadata as Virtual so we can perform CR and format target HLV
+	IncludeHlv            bool // Get target HLV only for CCR
+	IncludeMobileSync     bool // Get target _sync if we need to preserve target _sync
+	IncludeImportCas      bool // Include target importCas if enableCrossClusterVersioning.
+	IncludeBody           bool // Get the target body for merge
+	IncludeVXattr         bool // Get the target document metadata as Virtual so we can perform CR and format target HLV
+	ConfictLoggingEnabled bool // Get VbUUID and seqno of target doc as a virtual xattr, needed for conflict logging
 }
 
 func ComposeSpecForSubdocGet(option SubdocSpecOption) (specs []SubdocLookupPathSpec) {
@@ -1873,6 +1902,9 @@ func ComposeSpecForSubdocGet(option SubdocSpecOption) (specs []SubdocLookupPathS
 	if option.IncludeVXattr {
 		specLen = specLen + 4
 	}
+	if option.ConfictLoggingEnabled {
+		specLen = specLen + 2
+	}
 	if specLen == 0 {
 		return
 	}
@@ -1884,9 +1916,10 @@ func ComposeSpecForSubdocGet(option SubdocSpecOption) (specs []SubdocLookupPathS
 		// $document.flags
 		spec = SubdocLookupPathSpec{gomemcached.SUBDOC_GET, gomemcached.SUBDOC_FLAG_XATTR_PATH, []byte(VXATTR_FLAGS)}
 		specs = append(specs, spec)
+		// $document.exptime
 		spec = SubdocLookupPathSpec{gomemcached.SUBDOC_GET, gomemcached.SUBDOC_FLAG_XATTR_PATH, []byte(VXATTR_EXPIRY)}
 		specs = append(specs, spec)
-		// $document.datatype.
+		// $document.datatype
 		spec = SubdocLookupPathSpec{gomemcached.SUBDOC_GET, gomemcached.SUBDOC_FLAG_XATTR_PATH, []byte(VXATTR_DATATYPE)}
 		specs = append(specs, spec)
 	}
@@ -1907,6 +1940,15 @@ func ComposeSpecForSubdocGet(option SubdocSpecOption) (specs []SubdocLookupPathS
 		specs = append(specs, spec)
 
 		spec = SubdocLookupPathSpec{gomemcached.SUBDOC_GET, gomemcached.SUBDOC_FLAG_XATTR_PATH, []byte(XATTR_PREVIOUSREV)}
+		specs = append(specs, spec)
+	}
+	if option.ConfictLoggingEnabled {
+		// Target doc seqno and VBUUID as needed for conflict logging.
+		// $document.vbucket_uuid
+		spec := SubdocLookupPathSpec{gomemcached.SUBDOC_GET, gomemcached.SUBDOC_FLAG_XATTR_PATH, []byte(VXATTR_VBUUID)}
+		specs = append(specs, spec)
+		// $document.seqno
+		spec = SubdocLookupPathSpec{gomemcached.SUBDOC_GET, gomemcached.SUBDOC_FLAG_XATTR_PATH, []byte(VXATTR_SEQNO)}
 		specs = append(specs, spec)
 	}
 	if option.IncludeBody {
@@ -2815,10 +2857,17 @@ type DocumentMetadata struct {
 	Deletion bool   // Existence of tombstone
 	DataType uint8  // item data type
 	Opcode   gomemcached.CommandCode
+	// Note that the following will be not set for target doc retrieved using GET_META.
+	Seqno  uint64
+	VbUUID uint64
 }
 
 func (doc_meta DocumentMetadata) String() string {
-	return fmt.Sprintf("[key=%v%s%v;revSeq=%v;cas=%v;flags=%v;expiry=%v;deletion=%v;datatype=%v]", UdTagBegin, doc_meta.Key, UdTagEnd, doc_meta.RevSeq, doc_meta.Cas, doc_meta.Flags, doc_meta.Expiry, doc_meta.Deletion, doc_meta.DataType)
+	return fmt.Sprintf("[key=%v%s%v;revSeq=%v;cas=%v;flags=%v;expiry=%v;deletion=%v;datatype=%v]",
+		UdTagBegin, doc_meta.Key, UdTagEnd,
+		doc_meta.RevSeq, doc_meta.Cas, doc_meta.Flags,
+		doc_meta.Expiry, doc_meta.Deletion, doc_meta.DataType,
+	)
 }
 
 func (doc_meta *DocumentMetadata) Clone() *DocumentMetadata {
@@ -2876,6 +2925,13 @@ type HLVModeOptions struct {
 	SendHlv      bool   // Pack the HLV and send in setWithMeta
 	PreserveSync bool   // Preserve target _sync XATTR and send it in setWithMeta.
 	ActualCas    uint64 // copy of Req.Cas, which can be used if Req.Cas is set to 0
+
+	// Conflict logging options
+	ConflictLoggingEnabled bool
+	// ConflictLoggingRules   *conflictlog.Rules
+	// Handle to wait for conflict logging in progress for this request.
+	// It has a value of nil if conflict logging is not in progress.
+	ConflictLoggerWait ConflictLoggerHandle
 }
 
 // These options are explicitly set when SubdocOp != NotSubdoc
@@ -3088,7 +3144,8 @@ func (clm ConflictLoggingMappingInput) SameAs(other interface{}) bool {
 	return true
 }
 
-// "bucket" and "collection" keys should be present and non-empty.
+// "bucket" key should be present and non-empty.
+// "collection" key is optional and if not present, _default._default is implied.
 // Other keys are ignored from validation and parsing.
 // collection values should be of format [scope].[collection].
 // clm should be not nil or non-empty.
@@ -3112,7 +3169,10 @@ func ParseOneConflictLoggingRule(rule map[string]interface{}) (bucketOut, scopeO
 
 	collectionVal, ok := rule[CLCollectionKey]
 	if !ok {
-		err = fmt.Errorf("no %v in %v", CLCollectionKey, rule)
+		// _default._default will be implied.
+		bucketOut = bucketName
+		scopeOut = DefaultScopeCollectionName
+		collectionOut = DefaultScopeCollectionName
 		return
 	}
 
@@ -3229,4 +3289,8 @@ func ValidateAndConvertJsonMapToConflictLoggingMapping(value string) (ConflictLo
 	}
 
 	return conflictLoggingMap, nil
+}
+
+type ConflictLoggerHandle interface {
+	Wait(finch chan bool) error
 }

@@ -1,18 +1,22 @@
 package conflictlog
 
 import (
+	"fmt"
 	"sync"
+	"time"
 
 	"github.com/couchbase/goxdcr/base"
 	"github.com/couchbase/goxdcr/log"
 )
 
-const DefaultLogCapacity = 5
+var _ Logger = (*fileLoggerImpl)(nil)
 
-var _ Logger = (*loggerImpl)(nil)
+var defaultWaitTimeout time.Duration = 5 * time.Second
 
-// loggerImpl implements the Logger interface
-type loggerImpl struct {
+// fileLoggerImpl implements the Logger interface.
+// Conflicts will be logged to a file.
+// Used as a POC.
+type fileLoggerImpl struct {
 	// replId is the unique replication ID
 	replId string
 
@@ -23,8 +27,7 @@ type loggerImpl struct {
 	rules     *Rules
 	rulesLock sync.RWMutex
 
-	writerPool *writerPool
-	logger     *log.CommonLogger
+	logger *log.CommonLogger
 
 	workerCount int
 	loggerLock  sync.Mutex
@@ -34,30 +37,7 @@ type loggerImpl struct {
 	shutdownCh chan bool
 }
 
-type logRequest struct {
-	conflictRec *ConflictRecord
-	ackCh       chan error
-}
-
-func WithRules(r *Rules) LoggerOpt {
-	return func(o *LoggerOptions) {
-		o.rules = r
-	}
-}
-
-func WithMapper(m Mapper) LoggerOpt {
-	return func(o *LoggerOptions) {
-		o.mapper = m
-	}
-}
-
-func WithCapacity(cap int) LoggerOpt {
-	return func(o *LoggerOptions) {
-		o.logQueueCap = cap
-	}
-}
-
-func newLoggerImpl(logger *log.CommonLogger, replId string, writerPool *writerPool, opts ...LoggerOpt) (l *loggerImpl, err error) {
+func NewFileLogger(logger *log.CommonLogger, replId string, opts ...LoggerOpt) (l *fileLoggerImpl) {
 	options := &LoggerOptions{}
 	for _, opt := range opts {
 		opt(options)
@@ -72,17 +52,17 @@ func newLoggerImpl(logger *log.CommonLogger, replId string, writerPool *writerPo
 	}
 
 	if options.mapper == nil {
+		// should not reach here in production.
 		options.mapper = NewFixedMapper(logger, Target{Bucket: "B1"})
 	}
 
 	logger.Infof("creating new conflict logger replId=%s loggerOptions=%#v", replId, options)
 
-	l = &loggerImpl{
+	l = &fileLoggerImpl{
 		logger:      logger,
 		replId:      replId,
 		rules:       options.rules,
 		rulesLock:   sync.RWMutex{},
-		writerPool:  writerPool,
 		mapper:      options.mapper,
 		workerCount: options.workerCount,
 		loggerLock:  sync.Mutex{},
@@ -99,9 +79,7 @@ func newLoggerImpl(logger *log.CommonLogger, replId string, writerPool *writerPo
 	return
 }
 
-func (l *loggerImpl) Log(c *ConflictRecord) (h base.ConflictLoggerHandle, err error) {
-	l.logger.Infof("logging conflict record replId=%s sourceKey=%s", l.replId, c.Source.Id)
-
+func (l *fileLoggerImpl) Log(c *ConflictRecord) (h base.ConflictLoggerHandle, err error) {
 	ackCh := make(chan error)
 	req := logRequest{
 		conflictRec: c,
@@ -120,19 +98,19 @@ func (l *loggerImpl) Log(c *ConflictRecord) (h base.ConflictLoggerHandle, err er
 		return
 	}
 
-	h = logReqHandle{
+	h = logReqHandleWithTimeout{
 		ackCh: ackCh,
 	}
 
 	return
 }
 
-func (l *loggerImpl) Close() (err error) {
+func (l *fileLoggerImpl) Close() (err error) {
 	close(l.finch)
 	return
 }
 
-func (l *loggerImpl) UpdateWorkerCount(newCount int) {
+func (l *fileLoggerImpl) UpdateWorkerCount(newCount int) {
 	l.logger.Infof("changing conflict logger worker count replId=%s old=%d new=%d", l.replId, l.workerCount, newCount)
 
 	l.loggerLock.Lock()
@@ -153,7 +131,11 @@ func (l *loggerImpl) UpdateWorkerCount(newCount int) {
 	}
 }
 
-func (l *loggerImpl) UpdateRules(r *Rules) (err error) {
+func (l *fileLoggerImpl) UpdateRules(r *Rules) (err error) {
+	if r == nil {
+		return
+	}
+
 	err = r.Validate()
 	if err != nil {
 		return
@@ -166,7 +148,7 @@ func (l *loggerImpl) UpdateRules(r *Rules) (err error) {
 	return
 }
 
-func (l *loggerImpl) worker() {
+func (l *fileLoggerImpl) worker() {
 	for {
 		select {
 		case <-l.finch:
@@ -176,12 +158,22 @@ func (l *loggerImpl) worker() {
 			return
 		case req := <-l.logCh:
 			err := l.processReq(req)
-			req.ackCh <- err
+
+			// if no one is waiting, log the error in goxdcr.log and proceed to not block the worker.
+			// Also close the ackCh so that if someone calls Wait later, they are not blocked too.
+			select {
+			case req.ackCh <- err:
+			default:
+				if err != nil {
+					l.logger.Errorf("Error logging %s, err=%v. No one waiting yet.", req.conflictRec, err)
+				}
+			}
+			close(req.ackCh)
 		}
 	}
 }
 
-func (l *loggerImpl) processReq(req logRequest) (err error) {
+func (l *fileLoggerImpl) processReq(req logRequest) (err error) {
 	// copy the pointer for rules and from this point, the rules can can
 	// be updated but the old rules will be used for this request
 	var rules *Rules
@@ -191,30 +183,31 @@ func (l *loggerImpl) processReq(req logRequest) (err error) {
 
 	target, err := l.mapper.Map(rules, req.conflictRec)
 	if err != nil {
+		l.logger.Errorf("Error mapping %s with rules=%s", req.conflictRec.SmallString(), rules)
 		return
 	}
 
-	w, err := l.writerPool.get(target.Bucket)
-	if err != nil {
-		return
-	}
+	req.conflictRec.PopulateData(l.replId)
 
-	defer func() {
-		l.writerPool.release(w)
-	}()
+	// Log to the goxdcr.log as POC, instead of logging/send over network to a conflict bucket
+	l.logger.Infof("Logging conflict %s, to target %s, sourceDoc=%s, targetDoc=%s",
+		req.conflictRec, target, req.conflictRec.Source.Body, req.conflictRec.Target.Body)
 
-	err = w.SetMetaObj(req.conflictRec.Id, req.conflictRec)
 	return
 }
 
-type logReqHandle struct {
+type logReqHandleWithTimeout struct {
 	ackCh chan error
 }
 
-func (h logReqHandle) Wait(finch chan bool) (err error) {
+func (h logReqHandleWithTimeout) Wait(finch chan bool) (err error) {
+	timer := time.NewTicker(defaultWaitTimeout)
+
 	select {
 	case <-finch:
 		err = ErrLogWaitAborted
+	case <-timer.C:
+		err = fmt.Errorf("timed out")
 	case err = <-h.ackCh:
 	}
 

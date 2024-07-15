@@ -511,7 +511,7 @@ func (c *CollectionsRouter) UpdateBrokenMappingsPair(brokenMappingsRO *metadata.
 }
 
 // No-Concurrent call
-func (c *CollectionsRouter) RouteReqToLatestTargetManifest(wrappedMCReq *base.WrappedMCRequest, eventForMigration *base.WrappedUprEvent) (colIds []uint32, manifestId uint64, backfillPersistHadErr bool, unmappedNamespaces metadata.CollectionNamespaceMapping, migrationColIdNsMap map[uint32]*base.CollectionNamespace, err error) {
+func (c *CollectionsRouter) RouteReqToLatestTargetManifest(wrappedMCReq *base.WrappedMCRequest, eventForMigration *base.WrappedUprEvent) (colIds []uint32, manifestId uint64, backfillPersistHadErr bool, unmappedNamespaces metadata.CollectionNamespaceMapping, migrationColIdNsMap map[uint32]*base.CollectionNamespace, targetManifest *metadata.CollectionsManifest, err error) {
 	if !c.IsRunning() {
 		err = PartStoppedError
 		return
@@ -562,6 +562,8 @@ func (c *CollectionsRouter) RouteReqToLatestTargetManifest(wrappedMCReq *base.Wr
 		err = fmt.Errorf("received nil latest target manifest")
 		return
 	}
+
+	targetManifest = latestTargetManifest
 
 	if !isImplicitMapping {
 		err = c.handleExplicitMappingUpdate(latestSourceManifest, latestTargetManifest)
@@ -1595,6 +1597,7 @@ func (router *Router) ComposeMCRequest(wrappedEvent *base.WrappedUprEvent) (*bas
 	}
 
 	wrapped_req.Seqno = event.Seqno
+	wrapped_req.VbUUID = event.VBuuid
 	wrapped_req.Start_time = time.Now()
 
 	// this means implicit routing only for now
@@ -1802,12 +1805,16 @@ func (router *Router) RouteCollection(data interface{}, partId string, origUprEv
 	var migrationColIdNamespaceMap map[uint32]*base.CollectionNamespace
 
 	collectionMode := router.collectionModes.Get()
+	var targetManifest *metadata.CollectionsManifest
 	if collectionMode.IsImplicitMapping() &&
 		(mcRequest.GetSourceCollectionNamespace() == nil || mcRequest.GetSourceCollectionNamespace().IsDefault()) {
 		colIds = append(colIds, 0)
+		mcRequest.TgtColNamespaceMtx.Lock()
+		mcRequest.TgtColNamespace = &base.DefaultCollectionNamespace
+		mcRequest.TgtColNamespaceMtx.Unlock()
 	} else {
 		var backfillPersistHadErr bool
-		colIds, manifestId, backfillPersistHadErr, unmappedNamespaces, migrationColIdNamespaceMap, err = router.collectionsRouting[partId].RouteReqToLatestTargetManifest(mcRequest, origUprEvent)
+		colIds, manifestId, backfillPersistHadErr, unmappedNamespaces, migrationColIdNamespaceMap, targetManifest, err = router.collectionsRouting[partId].RouteReqToLatestTargetManifest(mcRequest, origUprEvent)
 		// If backfillPersistHadErr is set, then it is:
 		// 1. Safe to re-raise routingUpdate, as each routingUpdate will try to persist again
 		// 2. NOT safe to ignore data - as ignoring data means throughSeqno will move forward
@@ -1841,7 +1848,7 @@ func (router *Router) RouteCollection(data interface{}, partId string, origUprEv
 		}
 	}
 
-	err = router.prepareMcRequest(colIds, mcRequest, origUprEvent, migrationColIdNamespaceMap)
+	err = router.prepareMcRequest(colIds, mcRequest, origUprEvent, migrationColIdNamespaceMap, targetManifest)
 	if err != nil {
 		return err
 	}
@@ -1853,7 +1860,7 @@ func (router *Router) RouteCollection(data interface{}, partId string, origUprEv
 // Sets up the unique Key
 // If a request is meant to replicate to >1 target collections, prepare the sibling requests as well
 // and notify throughSeqnoTracker svc that there are sibling requests coming for this given source seqno
-func (router *Router) prepareMcRequest(colIds []uint32, firstReq *base.WrappedMCRequest, origUprEvent *base.WrappedUprEvent, migrationNamespaceMap map[uint32]*base.CollectionNamespace) error {
+func (router *Router) prepareMcRequest(colIds []uint32, firstReq *base.WrappedMCRequest, origUprEvent *base.WrappedUprEvent, migrationNamespaceMap map[uint32]*base.CollectionNamespace, targetManifest *metadata.CollectionsManifest) error {
 	var err error
 	var syncCh chan bool = nil
 	numCols := len(colIds)
@@ -1890,7 +1897,7 @@ func (router *Router) prepareMcRequest(colIds []uint32, firstReq *base.WrappedMC
 		reqToProcess.ColInfo.ColIDPrefixedKeyLen = totalLen
 		reqToProcess.ColInfo.ColIDPrefixedKey, err = router.dataPool.GetByteSlice(uint64(totalLen))
 		if err != nil {
-			reqToProcess.ColInfo.ColIDPrefixedKey = make([]byte, totalLen, totalLen)
+			reqToProcess.ColInfo.ColIDPrefixedKey = make([]byte, totalLen)
 			err = nil
 		} else {
 			reqToProcess.ColInfo.ColIDPrefixedKey = reqToProcess.ColInfo.ColIDPrefixedKey[:0]
@@ -1906,6 +1913,20 @@ func (router *Router) prepareMcRequest(colIds []uint32, firstReq *base.WrappedMC
 			reqToProcess.ColInfo.TargetNamespace = migrationNamespaceMap[colId]
 		}
 		reqToProcess.ColInfoMtx.Unlock()
+
+		if targetManifest == nil {
+			continue
+		}
+
+		scopeName, collectionName, err := targetManifest.GetScopeAndCollectionName(colId)
+		if err == nil {
+			reqToProcess.TgtColNamespaceMtx.Lock()
+			reqToProcess.TgtColNamespace = &base.CollectionNamespace{
+				ScopeName:      scopeName,
+				CollectionName: collectionName,
+			}
+			reqToProcess.TgtColNamespaceMtx.Unlock()
+		}
 	}
 	if numCols > 1 {
 		firstReq.Cloned = true
@@ -2104,6 +2125,9 @@ func (router *Router) newWrappedMCRequest() (*base.WrappedMCRequest, error) {
 	newReq.SrcColNamespaceMtx.Lock()
 	newReq.SrcColNamespace = nil
 	newReq.SrcColNamespaceMtx.Unlock()
+	newReq.TgtColNamespaceMtx.Lock()
+	newReq.TgtColNamespace = nil
+	newReq.TgtColNamespaceMtx.Unlock()
 	newReq.Cloned = false
 	return newReq, nil
 }

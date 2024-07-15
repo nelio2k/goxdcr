@@ -33,7 +33,7 @@ func NewSourceDocument(req *base.WrappedMCRequest, source hlv.DocumentSourceId) 
 }
 
 func (doc *SourceDocument) GetMetadata(uncompressFunc base.UncompressFunc) (*CRMetadata, error) {
-	docMeta := base.DecodeSetMetaReq(doc.req.Req)
+	docMeta := base.DecodeSetMetaReq(doc.req)
 	cas, cvCas, cvSrc, cvVer, pvMap, mvMap, importCas, pRev, err := getHlvFromMCRequest(doc.req, uncompressFunc)
 	if err != nil {
 		return nil, err

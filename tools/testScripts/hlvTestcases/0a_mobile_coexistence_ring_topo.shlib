@@ -142,7 +142,7 @@ function runTestCase {
 	echo "============================================================================"
 	echo "Mobile coexistence test case on ring topology passed"
 	echo "============================================================================"
-	cleanupBuckets
-	cleanupBucketReplications
-	cleanupRemoteClusterRefs
+	#cleanupBucketReplications
+	#cleanupRemoteClusterRefs
+	#cleanupBuckets
 }

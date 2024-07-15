@@ -11,13 +11,11 @@ package parts
 
 import (
 	"errors"
-	"sync"
 	"sync/atomic"
 	"time"
 
 	mc "github.com/couchbase/gomemcached"
 	"github.com/couchbase/goxdcr/base"
-	"github.com/couchbase/goxdcr/conflictlog"
 	"github.com/couchbase/goxdcr/log"
 	"github.com/couchbase/goxdcr/metadata"
 )
@@ -100,6 +98,8 @@ type baseConfig struct {
 	connectStr          string
 	username            string
 	password            string
+	sourceHostname      string
+	targetHostname      string
 	hlvPruningWindowSec uint32 // Interval for pruning PV in seconds
 	crossClusterVers    bool   // Whether to send HLV when bucket is not custom CR
 	vbHlvMaxCas         map[uint16]uint64
@@ -110,9 +110,7 @@ type baseConfig struct {
 	devBackfillSendDelay uint32
 
 	// conflict logging feature data-structures
-	conflictLoggingEnabled bool
-	conflictLoggingRules   *conflictlog.Rules // will be nil if conflictLoggingEnabled is false.
-	conflictLoggingMtx     sync.RWMutex
+	conflictLoggingEnabled atomic.Bool
 }
 
 // We determine the "commit" time as the time we hear back from the target, for statistics purposes
@@ -227,12 +225,13 @@ type dataBatch struct {
 	sendLookupMap *responseLookup
 
 	// XMEM config may change but only affect the next batch
-	// At the beginning of each batch we will check the config to decide the getMeta/getSubdoc and setMeta behavior
+	// At the beginning of each batch we will check the config to decide the getMeta/getSubdoc, setMeta and conflict logging behavior.
 	// Note that these are only needed for CCR and mobile currently. The specs will be nil otherwise. If nil, getMeta will be used.
 	// These are "templated" and references in each wrapped MCRequest will be created to refer to them
-	getMetaSpecWithoutHlv []base.SubdocLookupPathSpec
-	getMetaSpecWithHlv    []base.SubdocLookupPathSpec
-	getBodySpec           []base.SubdocLookupPathSpec // This one will get document body in addition to document metadata. Used for CCR only
+	getMetaSpecWithoutHlv  []base.SubdocLookupPathSpec
+	getMetaSpecWithHlv     []base.SubdocLookupPathSpec
+	getBodySpec            []base.SubdocLookupPathSpec // This one will get document body in addition to document metadata. Used for CCR only
+	conflictLoggingEnabled bool
 
 	curCount          uint32
 	curSize           uint32
@@ -325,10 +324,12 @@ func (b *dataBatch) accumuBatch(req *base.WrappedMCRequest, classifyFunc func(re
 	var isFull bool = true
 
 	if req != nil && req.Req != nil {
-		// When this batch is established, it establishes these specs so store it to be used in case of mutation retries
+		// When this batch is established, it establishes these specs and conflict logging behaviour
+		// so store it to be used in case of mutation retries
 		req.GetMetaSpecWithoutHlv = b.getMetaSpecWithoutHlv
 		req.GetMetaSpecWithHlv = b.getMetaSpecWithHlv
 		req.GetBodySpec = b.getBodySpec
+		req.HLVModeOptions.ConflictLoggingEnabled = b.conflictLoggingEnabled
 
 		size := req.Req.Size()
 

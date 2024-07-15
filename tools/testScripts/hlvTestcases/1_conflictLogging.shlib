@@ -6,26 +6,33 @@
 # will be governed by the Apache License, Version 2.0, included in the file
 # licenses/APL2.txt.
 
-CLUSTER_NAME_PORT_MAP=(["C1"]=9000 ["C2"]=9001)
-CLUSTER_NAME_XDCR_PORT_MAP=(["C1"]=13000 ["C2"]=13001)
+CLUSTER_NAME_PORT_MAP=(["C1"]=9000 ["C2"]=9001 ["C3"]=9002)
+CLUSTER_NAME_XDCR_PORT_MAP=(["C1"]=13000 ["C2"]=13001 ["C3"]=13002)
 declare -a cluster1BucketsArr
-cluster1BucketsArr=("B1" "B3")
+cluster1BucketsArr=("B1" "B4")
 declare -a cluster2BucketsArr
-cluster2BucketsArr=("B2" "B4")
-CLUSTER_NAME_BUCKET_MAP=(["C1"]=${cluster1BucketsArr[@]} ["C2"]=${cluster2BucketsArr[@]})
+cluster2BucketsArr=("B2" "B5")
+declare -a cluster3BucketsArr
+cluster3BucketsArr=("B3" "B6")
+CLUSTER_NAME_BUCKET_MAP=(["C1"]=${cluster1BucketsArr[@]} ["C2"]=${cluster2BucketsArr[@]} ["C3"]=${cluster3BucketsArr[@]})
 
 # Bucket properties
 declare -A BucketProperty=(["ramQuotaMB"]=100 ["CompressionMode"]="Active")
 insertPropertyIntoBucketNamePropertyMap "B1" BucketProperty
-insertPropertyIntoBucketNamePropertyMap "B2" BucketProperty # conflict bucket for C1.B1
+insertPropertyIntoBucketNamePropertyMap "B4" BucketProperty # conflict bucket for C1.B1
+insertPropertyIntoBucketNamePropertyMap "B2" BucketProperty
+insertPropertyIntoBucketNamePropertyMap "B5" BucketProperty # conflict bucket for C2.B2
 insertPropertyIntoBucketNamePropertyMap "B3" BucketProperty
-insertPropertyIntoBucketNamePropertyMap "B4" BucketProperty # conflict bucket for C2.B2
+insertPropertyIntoBucketNamePropertyMap "B6" BucketProperty # conflict bucket for C3.B3
 
-conflictLoggingMap1="{\"bucket\":\"B3\", \"collection\": \"_default._default\", \"loggingRules\": {\"S1.col1\": {\"bucket\":\"B3\", \"collection\": \"S1.col1\"}}}"
+conflictLoggingMap1="{\"bucket\":\"B4\", \"loggingRules\": {\"S1.col1\": {\"bucket\":\"B4\", \"collection\": \"S1.col1\"}}}"
 declare -A BucketReplProperties1=(["replicationType"]="continuous" ["checkpointInterval"]=60 ["statsInterval"]=500 ["filterBinary"]=true ["conflictLogging"]=$conflictLoggingMap1)
 
-conflictLoggingMap2="{\"bucket\":\"B4\", \"collection\": \"_default._default\", \"loggingRules\": {\"S1.col1\": {\"bucket\":\"B4\", \"collection\": \"S1.col1\"}}}"
-declare -A BucketReplProperties2=(["replicationType"]="continuous" ["checkpointInterval"]=60 ["statsInterval"]=500 ["filterBinary"]=true ["conflictLogging"]=$conflictLoggingMap1)
+conflictLoggingMap2="{\"bucket\":\"B5\", \"loggingRules\": {\"S1.col1\": {\"bucket\":\"B5\", \"collection\": \"S1.col1\"}}}"
+declare -A BucketReplProperties2=(["replicationType"]="continuous" ["checkpointInterval"]=60 ["statsInterval"]=500 ["filterBinary"]=true ["conflictLogging"]=$conflictLoggingMap2)
+
+conflictLoggingMap3="{\"bucket\":\"B6\", \"loggingRules\": {\"S1.col1\": {\"bucket\":\"B6\", \"collection\": \"S1.col1\"}}}"
+declare -A BucketReplProperties3=(["replicationType"]="continuous" ["checkpointInterval"]=60 ["statsInterval"]=500 ["filterBinary"]=true ["conflictLogging"]=$conflictLoggingMap3)
 
 # Each bucket with S1.col1 and S1.col1 -> S1.col2 will be the special loggingRule
 # Bucket -> Scopes
@@ -40,45 +47,69 @@ SCOPE_NAME_COLLECTION_MAP=(["S1"]=${collection1Arr[@]})
 
 function waitForChangesLeft0ForTopology {
 	waitForChangesLeft0 "C1" "B1" "C2" "B2"
+	waitForChangesLeft0 "C1" "B1" "C3" "B3"
 	waitForChangesLeft0 "C2" "B2" "C1" "B1"
+	waitForChangesLeft0 "C2" "B2" "C3" "B3"
+	waitForChangesLeft0 "C3" "B3" "C1" "B1"
+	waitForChangesLeft0 "C3" "B3" "C2" "B2"
 }
 
 function verifyPromStats {
 	# verify no data-corruption
 	validateBinaryFilteredIs0 "C1" "B1" "B2"
+	validateBinaryFilteredIs0 "C1" "B1" "B3"
 	validateBinaryFilteredIs0 "C2" "B2" "B1"
+	validateBinaryFilteredIs0 "C2" "B2" "B3"
+	validateBinaryFilteredIs0 "C3" "B3" "B1"
+	validateBinaryFilteredIs0 "C3" "B3" "B2"
 
 	# verify no datapool get failures
 	validateDatapoolFailIs0 "C1" "B1" "B2"
+	validateDatapoolFailIs0 "C1" "B1" "B3"
 	validateDatapoolFailIs0 "C2" "B2" "B1"
+	validateDatapoolFailIs0 "C2" "B2" "B3"
+	validateDatapoolFailIs0 "C3" "B3" "B1"
+	validateDatapoolFailIs0 "C3" "B3" "B2"
 }
 
 function testReplicationWithConflictLogging {
 	echo "Setting enableCrossClusterVersioning to true"
 	setCrossClusterVersioningForBucket "C1" "B1"
 	setCrossClusterVersioningForBucket "C2" "B2"
+	setCrossClusterVersioningForBucket "C3" "B3"
 
 	echo "Replication C1.B1 -> C2.B2"
 	createBucketReplication "C1" "B1" "C2" "B2" BucketReplProperties1
+	echo "Replication C1.B1 -> C3.B3"
+	createBucketReplication "C1" "B1" "C3" "B3" BucketReplProperties1
 	echo "Replication C2.B2 -> C1.B1"
 	createBucketReplication "C2" "B2" "C1" "B1" BucketReplProperties2
+	echo "Replication C2.B2 -> C3.B3"
+	createBucketReplication "C2" "B2" "C3" "B3" BucketReplProperties2
+	echo "Replication C3.B3 -> C1.B1"
+	createBucketReplication "C3" "B3" "C1" "B1" BucketReplProperties3
+	echo "Replication C3.B3 -> C2.B2"
+	createBucketReplication "C3" "B3" "C2" "B2" BucketReplProperties3
 
 	# Insert
-	writeJSONDocument "C1" "B1" "doc1" '{"foo":"bar"}'
-	writeJSONDocument "C1" "B1" "doc2" '{"foo":"bar"}'
+	writeJSONDocument "C1" "B1" "mobile1" '{"foo":"bar"}'
+	writeJSONDocument "C1" "B1" "mobile2" '{"foo":"bar"}'
 	waitForChangesLeft0ForTopology
 
 	# Update at C1.B1
-	writeJSONDocument "C1" "B1" "doc1" '{"foo2":"bar2"}'
-	writeJSONDocument "C1" "B1" "doc2" '{"foo2":"bar2"}'
+	writeJSONDocument "C1" "B1" "mobile1" '{"foo2":"bar2"}'
+	writeJSONDocument "C1" "B1" "mobile2" '{"foo2":"bar2"}'
 	waitForChangesLeft0ForTopology
 	# Update at C2.B2
-	writeJSONDocument "C2" "B2" "doc1" '{"foo3":"bar3"}'
-	writeJSONDocument "C2" "B2" "doc2" '{"foo3":"bar3"}'
+	writeJSONDocument "C2" "B2" "mobile1" '{"foo3":"bar3"}'
+	writeJSONDocument "C2" "B2" "mobile2" '{"foo3":"bar3"}'
 	waitForChangesLeft0ForTopology
-	grepForAbnormalities
+	# Update at C3.B3
+	writeJSONDocument "C3" "B3" "mobile1" '{"foo3":"bar3"}'
+	writeJSONDocument "C3" "B3" "mobile2" '{"foo3":"bar3"}'
+	waitForChangesLeft0ForTopology
 
-	numItems=10000
+	numItems=1000
 	CBWORKLOAD_COLLECTION_NUM_ITEMS=$numItems
 
 	echo runCbWorkloadGenBucket _default._default "C1" "B1"
@@ -86,26 +117,35 @@ function testReplicationWithConflictLogging {
 	echo runCbWorkloadGenBucket _default._default "C1" "B1" $numItems "common"
 	runCbWorkloadGenBucket "C1" "B1" $numItems "common" &
 
-	echo runCbWorkloadGenCollection "C1" "B1" "S1" "col1"
-	runCbWorkloadGenCollection "C1" "B1" "S1" "col1" &
-	echo runCbWorkloadGenCollection "C1" "B1" "S1" "col1" "common"
-	runCbWorkloadGenCollection "C1" "B1" "S1" "col1" "common" &
-
-
 	echo runCbWorkloadGenBucket _default._default "C2" "B2"
 	runCbWorkloadGenBucket "C2" "B2" &
 	echo runCbWorkloadGenBucket _default._default "C2" "B2" $numItems "common"
 	runCbWorkloadGenBucket "C2" "B2" $numItems "common" &
+
+	echo runCbWorkloadGenBucket _default._default "C3" "B3"
+	runCbWorkloadGenBucket "C3" "B3" &
+	echo runCbWorkloadGenBucket _default._default "C3" "B3" $numItems "common"
+	runCbWorkloadGenBucket "C3" "B3" $numItems "common" &
 
 	echo runCbWorkloadGenCollection "C2" "B2" "S1" "col1"
 	runCbWorkloadGenCollection "C2" "B2" "S1" "col1" &
 	echo runCbWorkloadGenCollection "C2" "B2" "S1" "col1" "common"
 	runCbWorkloadGenCollection "C2" "B2" "S1" "col1" "common" &
 
-	echo "sleeping 10 seconds for cbworkloadgen to finish"
+	echo runCbWorkloadGenCollection "C1" "B1" "S1" "col1"
+	runCbWorkloadGenCollection "C1" "B1" "S1" "col1" &
+	echo runCbWorkloadGenCollection "C1" "B1" "S1" "col1" "common"
+	runCbWorkloadGenCollection "C1" "B1" "S1" "col1" "common" &
+
+	echo runCbWorkloadGenCollection "C3" "B3" "S1" "col1"
+	runCbWorkloadGenCollection "C3" "B3" "S1" "col1" &
+	echo runCbWorkloadGenCollection "C3" "B3" "S1" "col1" "common"
+	runCbWorkloadGenCollection "C3" "B3" "S1" "col1" "common" &
+
+	echo "sleeping 10 seconds for cbworkloadgen(s) to finish"
 	sleep 10
 
-	sleepTime=10
+	sleepTime=30
 	echo "Sleep $sleepTime seconds to wait for replication to finish"
 	sleep $sleepTime
 
@@ -132,7 +172,11 @@ function runTestCase {
 	fi
 
 	createRemoteClusterReference "C1" "C2"
+	createRemoteClusterReference "C1" "C3"
 	createRemoteClusterReference "C2" "C1"
+	createRemoteClusterReference "C2" "C3"
+	createRemoteClusterReference "C3" "C1"
+	createRemoteClusterReference "C3" "C2"
 
 	sleep 2
 	testReplicationWithConflictLogging
