@@ -288,14 +288,9 @@ func (l *loggerImpl) processReq(req logRequest) (err error) {
 		return
 	}
 
-	defer func() {
-		l.connPool.Put(target.Bucket, conn)
-	}()
-
 	err = l.writeDocs(conn, req)
-	if err != nil {
-		return
-	}
+
+	l.connPool.Put(target.Bucket, conn, err)
 
 	return
 }

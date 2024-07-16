@@ -69,7 +69,7 @@ func TestPool_GC(t *testing.T) {
 	}
 
 	for _, conn := range connList {
-		pool.Put(bucket, conn)
+		pool.Put(bucket, conn, nil)
 	}
 
 	time.Sleep(4 * time.Second)

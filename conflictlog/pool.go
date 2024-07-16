@@ -22,6 +22,19 @@ var _ ConnPool = (*connPool)(nil)
 // ConnPool defines the behaviour of a connection pool for objects/resources
 // which implements io.Closer interface. The pool should reap the unused resources by
 // calling io.Closer.Close() governed by the GC & reap interval
+//
+// Sample retry loop usage by user using the pool
+//
+//	 for i:=0; i<5; i++ {
+//			conn, err = pool.Get(bucket)
+//			... use the conn
+//			err = conn.Write()
+//			pool.Put(bucket, conn, err)
+//			if err != nil && IsErrorTransient(err) {
+//				continue
+//			}
+//			break
+//	}
 type ConnPool interface {
 	// Get returns an object from the pool. If there is none then it creates
 	// one by calling newConnFn() and returns it. It is guaranteed that either
@@ -29,8 +42,10 @@ type ConnPool interface {
 	Get(bucketName string) (conn io.Closer, err error)
 
 	// Put releases the connection back to the pool for reuse. It is caller's job
-	// to ensure that right bucket name is passed here.
-	Put(bucketName string, conn io.Closer)
+	// to ensure that right bucket name is passed here. The err != nil tells the pool
+	// that the conn is damaged. The pool appropriately should manage its internal state
+	// in response this (e.g. active Connection Count)
+	Put(bucketName string, conn io.Closer, err error)
 
 	// UpdateGCInterval updates the new GC frequency
 	// Duration <= 0 has no effect and its ignored
@@ -44,6 +59,10 @@ type ConnPool interface {
 	// created but not released back to the pool. On reaching the max connections the Get()
 	// will block. Value <= has no effect and its ignored
 	UpdateLimit(n int)
+
+	// Close reaps all the connections which are in the pool. It does not deal with connections
+	// which are not yet released back to the pool. The caller should ensure this.
+	Close() error
 }
 
 // connPool is a connection pool for any object which implements io.Closer interface
@@ -216,7 +235,13 @@ func (pool *connPool) Get(bucketName string) (conn io.Closer, err error) {
 
 // Put releases the connection back to the pool for reuse. It is caller's job
 // to ensure that right bucket name is passed here.
-func (pool *connPool) Put(bucketName string, conn io.Closer) {
+func (pool *connPool) Put(bucketName string, conn io.Closer, err error) {
+	if err != nil { // this implies damaged connection
+		// NOT IMPLEMENTED YET. As of now we ignore it and not put the damaged connection
+		// in the pool. We simply handle it as no-op and let the caller Get() new connection
+		return
+	}
+
 	pool.mu.Lock()
 	defer pool.mu.Unlock()
 
@@ -225,11 +250,12 @@ func (pool *connPool) Put(bucketName string, conn io.Closer) {
 }
 
 // Close shutsdown the GC worker and initiates a final gc with force=true
-func (pool *connPool) Close() {
+func (pool *connPool) Close() error {
 	close(pool.finch)
 
 	// use force=true to ensure all remaining connections are reaped.
 	pool.gcOnce(true)
+	return nil
 }
 
 // UpdateLimit sets the upper limit of number of active connections in the pool and
