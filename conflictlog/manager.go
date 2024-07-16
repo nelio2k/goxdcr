@@ -17,6 +17,7 @@ var _ Manager = (*managerImpl)(nil)
 // Manager defines behaviour for conflict manager
 type Manager interface {
 	NewLogger(logger *log.CommonLogger, replId string, opts ...LoggerOpt) (l Logger, err error)
+	ConnPool() ConnPool
 }
 
 type MemcachedAddrGetter interface {
@@ -64,6 +65,10 @@ func (m *managerImpl) NewLogger(logger *log.CommonLogger, replId string, opts ..
 	}
 
 	return
+}
+
+func (m *managerImpl) ConnPool() ConnPool {
+	return m.connPool
 }
 
 func (m *managerImpl) newConn(bucketName string) (w io.Closer, err error) {

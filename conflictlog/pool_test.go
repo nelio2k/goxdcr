@@ -18,7 +18,7 @@ func (conn *testConn) Close() error {
 	return nil
 }
 
-func TestPool(t *testing.T) {
+func TestPool_EmptyPool(t *testing.T) {
 	logger := log.NewLogger("testlogger", log.DefaultLoggerContext)
 
 	buckets := map[string]*int{
@@ -34,8 +34,30 @@ func TestPool(t *testing.T) {
 	}
 
 	pool := newConnPool(logger, newConnFn)
-	pool.UpdateGCInterval(2 * time.Second)
-	pool.UpdateReapInterval(5 * time.Second)
+	pool.UpdateGCInterval(1 * time.Second)
+	pool.UpdateReapInterval(2 * time.Second)
+
+	pool.Close()
+}
+
+func TestPool_GC(t *testing.T) {
+	logger := log.NewLogger("testlogger", log.DefaultLoggerContext)
+
+	buckets := map[string]*int{
+		"B1": new(int),
+		"B2": new(int),
+	}
+
+	newConnFn := func(bucketName string) (io.Closer, error) {
+		count := buckets[bucketName]
+		return &testConn{
+			count: count,
+		}, nil
+	}
+
+	pool := newConnPool(logger, newConnFn)
+	pool.UpdateGCInterval(1 * time.Second)
+	pool.UpdateReapInterval(3 * time.Second)
 
 	connCount := 10
 	bucket := "B1"
@@ -50,6 +72,6 @@ func TestPool(t *testing.T) {
 		pool.Put(bucket, conn)
 	}
 
-	time.Sleep(7 * time.Second)
+	time.Sleep(4 * time.Second)
 	require.Equal(t, connCount, *(buckets[bucket]))
 }

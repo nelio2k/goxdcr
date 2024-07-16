@@ -28,7 +28,7 @@ type loggerImpl struct {
 	rules     *Rules
 	rulesLock sync.RWMutex
 
-	connPool *connPool
+	connPool ConnPool
 	logger   *log.CommonLogger
 
 	workerCount int
@@ -72,7 +72,7 @@ func WithWorkerCount(val int) LoggerOpt {
 	}
 }
 
-func newLoggerImpl(logger *log.CommonLogger, replId string, connPool *connPool, opts ...LoggerOpt) (l *loggerImpl, err error) {
+func newLoggerImpl(logger *log.CommonLogger, replId string, connPool ConnPool, opts ...LoggerOpt) (l *loggerImpl, err error) {
 	options := &LoggerOptions{}
 	for _, opt := range opts {
 		opt(options)
@@ -87,7 +87,7 @@ func newLoggerImpl(logger *log.CommonLogger, replId string, connPool *connPool, 
 	}
 
 	if options.mapper == nil {
-		options.mapper = NewFixedMapper(logger, Target{Bucket: "B1"})
+		options.mapper = NewConflictMapper(logger)
 	}
 
 	logger.Infof("creating new conflict logger replId=%s loggerOptions=%#v", replId, options)

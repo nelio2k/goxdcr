@@ -17,6 +17,35 @@ const (
 	DefaultPoolReapInterval = 120 * time.Second
 )
 
+var _ ConnPool = (*connPool)(nil)
+
+// ConnPool defines the behaviour of a connection pool for objects/resources
+// which implements io.Closer interface. The pool should reap the unused resources by
+// calling io.Closer.Close() governed by the GC & reap interval
+type ConnPool interface {
+	// Get returns an object from the pool. If there is none then it creates
+	// one by calling newConnFn() and returns it. It is guaranteed that either
+	// an error or a non-nil connection object will be returned
+	Get(bucketName string) (conn io.Closer, err error)
+
+	// Put releases the connection back to the pool for reuse. It is caller's job
+	// to ensure that right bucket name is passed here.
+	Put(bucketName string, conn io.Closer)
+
+	// UpdateGCInterval updates the new GC frequency
+	// Duration <= 0 has no effect and its ignored
+	UpdateGCInterval(d time.Duration)
+
+	// UpdateReapInterval updates the reap interval for unused connections
+	// Duration <= 0 has no effect and its ignored
+	UpdateReapInterval(d time.Duration)
+
+	// UpdateLimit sets the upper limit of number of active connections in the pool and
+	// created but not released back to the pool. On reaching the max connections the Get()
+	// will block. Value <= has no effect and its ignored
+	UpdateLimit(n int)
+}
+
 // connPool is a connection pool for any object which implements io.Closer interface
 // This is generic enough to support pooling of wide array of resources like files,
 // sockets, etc
@@ -24,9 +53,13 @@ const (
 // there is no notion of a bucket.
 type connPool struct {
 	logger *log.CommonLogger
+
 	// buckets is the map of buckets to its connection list
 	buckets map[string]*connList
-	mu      sync.Mutex
+
+	// mu is a pool level lock
+	mu sync.Mutex
+
 	// function to create new pool objects. This is called when
 	// there are no objects to return
 	newConnFn func(bucketName string) (io.Closer, error)
@@ -38,14 +71,23 @@ type connPool struct {
 	// connection should be reaped
 	reapInterval time.Duration
 
+	// limit is the max number of outstanding connections
+	// NOT IN USE AT THE MOMENT
+	limit int
+
 	finch chan bool
 }
 
 // connList is the list of actual objects which are pooled
 type connList struct {
+	// lastUsed is the timestamp when the connection list was used (either pop or push)
 	lastUsed time.Time
-	mu       sync.Mutex
-	list     *list.List
+
+	// mu is list level lock
+	mu sync.Mutex
+
+	//list is the actual linked list to hold the pooled objects
+	list *list.List
 }
 
 func (l *connList) pop() io.Closer {
@@ -84,6 +126,7 @@ func (l *connList) closeAll() {
 	}
 }
 
+// newConnPool creates a new connection pool
 func newConnPool(logger *log.CommonLogger, newConnFn func(bucketName string) (io.Closer, error)) *connPool {
 	p := &connPool{
 		logger:       logger,
@@ -100,6 +143,9 @@ func newConnPool(logger *log.CommonLogger, newConnFn func(bucketName string) (io
 	return p
 }
 
+// getOrCreateListNoLock gets the connection list for the bucket. If the bucket does not
+// exist then it creates one before returning. The function assumes that caller will acquire
+// the lock before calling.
 func (pool *connPool) getOrCreateListNoLock(bucketName string) *connList {
 	clist, ok := pool.buckets[bucketName]
 	if !ok {
@@ -156,7 +202,8 @@ func (pool *connPool) UpdateReapInterval(d time.Duration) {
 }
 
 // Get returns an object from the pool. If there is none then it creates
-// one by calling newConnFn() and returns it.
+// one by calling newConnFn() and returns it. It is guaranteed that either
+// an error or a non-nil connection object will be returned
 func (pool *connPool) Get(bucketName string) (conn io.Closer, err error) {
 	conn = pool.get(bucketName)
 	if conn != nil {
@@ -167,6 +214,8 @@ func (pool *connPool) Get(bucketName string) (conn io.Closer, err error) {
 	return
 }
 
+// Put releases the connection back to the pool for reuse. It is caller's job
+// to ensure that right bucket name is passed here.
 func (pool *connPool) Put(bucketName string, conn io.Closer) {
 	pool.mu.Lock()
 	defer pool.mu.Unlock()
@@ -175,24 +224,41 @@ func (pool *connPool) Put(bucketName string, conn io.Closer) {
 	l.push(conn)
 }
 
+// Close shutsdown the GC worker and initiates a final gc with force=true
 func (pool *connPool) Close() {
+	close(pool.finch)
 
+	// use force=true to ensure all remaining connections are reaped.
+	pool.gcOnce(true)
+}
+
+// UpdateLimit sets the upper limit of number of active connections in the pool and
+// created but not released back to the pool. On reaching the max connections the Get()
+// will block
+func (pool *connPool) UpdateLimit(n int) {
+	if n <= 0 {
+		return
+	}
+
+	pool.mu.Lock()
+	pool.limit = n
+	pool.mu.Unlock()
 }
 
 // reapConnList collects all the connection lists which have not been used for the reapInterval time
 // This does not close the connection itself
-func (pool *connPool) reapConnList() []*connList {
+func (pool *connPool) reapConnList(force bool) []*connList {
 	connListList := []*connList{}
 	reapedBuckets := []string{}
 
-	now := time.Now()
 	pool.mu.Lock()
 	defer pool.mu.Unlock()
 
+	now := time.Now()
 	// Collect all expired buckets and its lists
 	for bucketName, connList := range pool.buckets {
 		elapsed := now.Sub(connList.lastUsed)
-		if elapsed >= pool.reapInterval {
+		if force || elapsed >= pool.reapInterval {
 			reapedBuckets = append(reapedBuckets, bucketName)
 			connListList = append(connListList, connList)
 		}
@@ -211,8 +277,8 @@ func (pool *connPool) reapConnList() []*connList {
 }
 
 // gcOnce runs one single iteration of reaping the connections
-func (pool *connPool) gcOnce() {
-	connListList := pool.reapConnList()
+func (pool *connPool) gcOnce(force bool) {
+	connListList := pool.reapConnList(force)
 
 	// Note: the closing of the connections happen outside the pool lock.
 	// From this point, a parallel request to create a connection is safe
@@ -243,7 +309,7 @@ func (pool *connPool) gc() {
 			return
 		case <-gcTicker.C:
 			pool.logger.Debug("conflict log conn pool gc run starts")
-			pool.gcOnce()
+			pool.gcOnce(false)
 		}
 	}
 }

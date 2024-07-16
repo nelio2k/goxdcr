@@ -1,8 +1,6 @@
 package conflictlog
 
 import (
-	"fmt"
-
 	"github.com/couchbase/goxdcr/log"
 )
 
@@ -18,7 +16,7 @@ func NewConflictMapper(logger *log.CommonLogger) *conflictMapper {
 // returns the "target" to which the conflict record needs to be routed.
 func (m *conflictMapper) Map(rules *Rules, c Conflict) (target Target, err error) {
 	if rules == nil {
-		err = fmt.Errorf("nil rules")
+		err = ErrEmptyRules
 		return
 	}
 
