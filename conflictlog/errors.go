@@ -9,4 +9,5 @@ var (
 	ErrQueueFull             error = errors.New("conflict log is full")
 	ErrLoggerClosed          error = errors.New("conflict logger is closed")
 	ErrLogWaitAborted        error = errors.New("conflict log handle received abort")
+	ErrEmptyRules            error = errors.New("empty conflict rules")
 )

@@ -29,8 +29,8 @@ type loggerImpl struct {
 	rules     *Rules
 	rulesLock sync.RWMutex
 
-	writerPool *writerPool
-	logger     *log.CommonLogger
+	connPool ConnPool
+	logger   *log.CommonLogger
 
 	workerCount int
 	loggerLock  sync.Mutex
@@ -67,7 +67,13 @@ func WithCapacity(cap int) LoggerOpt {
 	}
 }
 
-func newLoggerImpl(logger *log.CommonLogger, replId string, writerPool *writerPool, opts ...LoggerOpt) (l *loggerImpl, err error) {
+func WithWorkerCount(val int) LoggerOpt {
+	return func(o *LoggerOptions) {
+		o.workerCount = val
+	}
+}
+
+func newLoggerImpl(logger *log.CommonLogger, replId string, connPool ConnPool, opts ...LoggerOpt) (l *loggerImpl, err error) {
 	options := &LoggerOptions{}
 	for _, opt := range opts {
 		opt(options)
@@ -82,7 +88,7 @@ func newLoggerImpl(logger *log.CommonLogger, replId string, writerPool *writerPo
 	}
 
 	if options.mapper == nil {
-		options.mapper = NewFixedMapper(logger, Target{Bucket: "B1"})
+		options.mapper = NewConflictMapper(logger)
 	}
 
 	logger.Infof("creating new conflict logger replId=%s loggerOptions=%#v", replId, options)
@@ -92,7 +98,7 @@ func newLoggerImpl(logger *log.CommonLogger, replId string, writerPool *writerPo
 		replId:      replId,
 		rules:       options.rules,
 		rulesLock:   sync.RWMutex{},
-		writerPool:  writerPool,
+		connPool:    connPool,
 		mapper:      options.mapper,
 		workerCount: options.workerCount,
 		loggerLock:  sync.Mutex{},
@@ -133,8 +139,15 @@ func (l *loggerImpl) log(c *ConflictRecord) (ackCh chan error, err error) {
 
 func (l *loggerImpl) Log(c *ConflictRecord) (h base.ConflictLoggerHandle, err error) {
 	l.logger.Infof("logging conflict record replId=%s sourceKey=%s", l.replId, c.Source.Id)
+	if l.closed {
+		err = ErrLoggerClosed
+		return
+	}
 
 	ackCh, err := l.log(c)
+	if err != nil {
+		return
+	}
 
 	h = logReqHandle{
 		ackCh: ackCh,
@@ -223,6 +236,58 @@ func (l *loggerImpl) getTarget(rec *ConflictRecord) (t Target, err error) {
 	return
 }
 
+func (l *loggerImpl) getFromPool(bucketName string) (conn Connection, err error) {
+	obj, err := l.connPool.Get(bucketName)
+	if err != nil {
+		return
+	}
+
+	conn, ok := obj.(Connection)
+	if !ok {
+		err = fmt.Errorf("pool object is of invalid type got=%T", obj)
+		return
+	}
+
+	return
+}
+
+func (l *loggerImpl) writeDocs(conn Connection, req logRequest, target Target) (err error) {
+	// Write source document.
+	for i := 0; i < DefaultRetryCntOnWriteFailure; i++ {
+		err = conn.SetMeta(req.conflictRec.Source.Id, req.conflictRec.Source.body, req.conflictRec.Source.Datatype, target)
+		if err != nil {
+			continue
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("error writing source doc, err=%v", err)
+	}
+
+	// Write target document.
+	for i := 0; i < DefaultRetryCntOnWriteFailure; i++ {
+		err = conn.SetMeta(req.conflictRec.Target.Id, req.conflictRec.Target.body, req.conflictRec.Target.Datatype, target)
+		if err != nil {
+			continue
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("error writing target doc, err=%v", err)
+	}
+
+	// Write conflict record.
+	for i := 0; i < DefaultRetryCntOnWriteFailure; i++ {
+		err = conn.SetMeta(req.conflictRec.Id, req.conflictRec.body, req.conflictRec.datatype, target)
+		if err != nil {
+			continue
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("error writing conflict record, err=%v", err)
+	}
+
+	return
+}
+
 func (l *loggerImpl) processReq(req logRequest) error {
 	var err error
 
@@ -236,48 +301,17 @@ func (l *loggerImpl) processReq(req logRequest) error {
 		return err
 	}
 
-	w, err := l.writerPool.get(target.Bucket)
+	conn, err := l.getFromPool(target.Bucket)
 	if err != nil {
 		return err
 	}
 
-	defer func() {
-		l.writerPool.release(w)
-	}()
-
-	// Write source document.
-	for i := 0; i < DefaultRetryCntOnWriteFailure; i++ {
-		err = w.SetMeta(req.conflictRec.Source.Id, req.conflictRec.Source.body, req.conflictRec.Source.Datatype, target)
-		if err != nil {
-			continue
-		}
-	}
+	err = l.writeDocs(conn, req, target)
 	if err != nil {
-		return fmt.Errorf("error writing source doc, err=%v", err)
+		return err
 	}
 
-	// Write target document.
-	for i := 0; i < DefaultRetryCntOnWriteFailure; i++ {
-		err = w.SetMeta(req.conflictRec.Target.Id, req.conflictRec.Target.body, req.conflictRec.Target.Datatype, target)
-		if err != nil {
-			continue
-		}
-	}
-	if err != nil {
-		return fmt.Errorf("error writing target doc, err=%v", err)
-	}
-
-	// Write conflict record.
-	// Write target document.
-	for i := 0; i < DefaultRetryCntOnWriteFailure; i++ {
-		err = w.SetMeta(req.conflictRec.Id, req.conflictRec.body, req.conflictRec.datatype, target)
-		if err != nil {
-			continue
-		}
-	}
-	if err != nil {
-		return fmt.Errorf("error writing conflict record, err=%v", err)
-	}
+	l.connPool.Put(target.Bucket, conn, err)
 
 	return nil
 }

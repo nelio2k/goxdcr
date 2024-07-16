@@ -13,7 +13,7 @@ import (
 
 const ConflictWriterUserAgent = "xdcrConflictWriter"
 
-var _ Writer = (*gocbCoreConn)(nil)
+var _ Connection = (*gocbCoreConn)(nil)
 
 type gocbCoreConn struct {
 	MemcachedAddr  string

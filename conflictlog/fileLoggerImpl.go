@@ -187,7 +187,10 @@ func (l *fileLoggerImpl) processReq(req logRequest) (err error) {
 		return
 	}
 
-	req.conflictRec.PopulateData(l.replId)
+	err = req.conflictRec.PopulateData(l.replId)
+	if err != nil {
+		return
+	}
 
 	// Log to the goxdcr.log as POC, instead of logging/send over network to a conflict bucket
 	l.logger.Infof("Logging conflict %s, to target %s, sourceDoc=%s, targetDoc=%s",
