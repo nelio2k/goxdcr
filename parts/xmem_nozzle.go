@@ -1906,12 +1906,10 @@ func (xmem *XmemNozzle) log(wrappedReq *base.WrappedMCRequest, resp *base.Subdoc
 
 	sourceDoc := base.DecodeSetMetaReq(wrappedReq)
 	var sourceBodyClone []byte
-	var sourceHlv, sourceSync, sourceMou string
-	if !sourceDoc.Deletion {
-		sourceBody := base.FindSourceBodyWithoutXattr(wrappedReq.Req)
-		sourceBodyClone = make([]byte, len(sourceBody))
-		copy(sourceBodyClone, sourceBody)
-	}
+	var sourceHlvClone, sourceSyncClone, sourceMouClone string
+	sourceBody := base.FindSourceBodyWithoutXattr(wrappedReq.Req)
+	sourceBodyClone = make([]byte, len(sourceBody))
+	copy(sourceBodyClone, sourceBody)
 
 	if wrappedReq.Req.DataType&base.XattrDataType > 0 {
 		body := wrappedReq.Req.Body
@@ -1926,12 +1924,12 @@ func (xmem *XmemNozzle) log(wrappedReq *base.WrappedMCRequest, resp *base.Subdoc
 				return err
 			}
 			if wrappedReq.HLVModeOptions.SendHlv && base.Equals(key, base.XATTR_HLV) {
-				sourceHlv = string(value)
+				sourceHlvClone = string(value)
 			} else if wrappedReq.HLVModeOptions.PreserveSync {
 				if base.Equals(key, base.XATTR_MOBILE) {
-					sourceSync = string(value)
+					sourceSyncClone = string(value)
 				} else if base.Equals(key, base.XATTR_MOU) {
-					sourceMou = string(value)
+					sourceMouClone = string(value)
 				}
 			}
 		}
@@ -1945,15 +1943,13 @@ func (xmem *XmemNozzle) log(wrappedReq *base.WrappedMCRequest, resp *base.Subdoc
 
 	var targetBodyClone []byte
 	var targetHlvClone, targetSyncClone, targetMouClone string
-	if !targetDoc.Deletion {
-		targetBody, err := resp.FindTargetBodyWithoutXattr()
-		if err != nil {
-			err = fmt.Errorf("error getting target body, err=%v", err)
-			return err
-		} else {
-			targetBodyClone = make([]byte, len(targetBody))
-			copy(targetBodyClone, targetBody)
-		}
+	targetBody, err := resp.FindTargetBodyWithoutXattr()
+	if err != nil {
+		err = fmt.Errorf("error getting target body, err=%v", err)
+		return err
+	} else {
+		targetBodyClone = make([]byte, len(targetBody))
+		copy(targetBodyClone, targetBody)
 	}
 
 	if wrappedReq.HLVModeOptions.SendHlv {
@@ -1994,50 +1990,32 @@ func (xmem *XmemNozzle) log(wrappedReq *base.WrappedMCRequest, resp *base.Subdoc
 	tgtCollectionName := wrappedReq.TgtColNamespace.CollectionName
 	wrappedReq.TgtColNamespaceMtx.RUnlock()
 
+	// TODO - right now we only input doc body and without any xattrs or compression already present.
+	sourceDocDatatype := sourceDoc.DataType & (^base.XattrDataType) & (^base.SnappyDataType)
+	targetDocDatatype := targetDoc.DataType & (^base.XattrDataType) & (^base.SnappyDataType)
+
 	// Generate a conflict record from above information.
-	conflictRecord := conflictlog.ConflictRecord{
-		DocId: string(wrappedReq.Req.Key),
-		Source: conflictlog.DocInfo{
-			Scope:       srcScopeName,
-			Collection:  srcColllectionName,
-			BucketUUID:  xmem.sourceBucketUuid,
-			ClusterUUID: xmem.sourceClusterUuid,
-			NodeId:      xmem.config.sourceHostname,
-			Expiry:      sourceDoc.Expiry,
-			Flags:       sourceDoc.Flags,
-			Datatype:    sourceDoc.DataType,
-			Cas:         sourceDoc.Cas,
-			RevSeqno:    sourceDoc.RevSeq,
-			IsDeleted:   sourceDoc.Deletion,
-			Xattrs: conflictlog.Xattrs{
-				Hlv:  sourceHlv,
-				Sync: sourceSync,
-				Mou:  sourceMou,
-			},
-		},
-
-		Target: conflictlog.DocInfo{
-			Scope:       tgtScopeName,
-			Collection:  tgtCollectionName,
-			BucketUUID:  xmem.sourceBucketUuid,
-			ClusterUUID: xmem.sourceClusterUuid,
-			NodeId:      xmem.config.targetHostname,
-			Expiry:      targetDoc.Expiry,
-			Flags:       targetDoc.Flags,
-			Datatype:    targetDoc.DataType,
-			Cas:         targetDoc.Cas,
-			RevSeqno:    targetDoc.RevSeq,
-			IsDeleted:   targetDoc.Deletion,
-			Xattrs: conflictlog.Xattrs{
-				Hlv:  targetHlvClone,
-				Sync: targetSyncClone,
-				Mou:  targetMouClone,
-			},
-		},
-	}
-
-	conflictRecord.Source.SetExtras(sourceBodyClone, wrappedReq.Req.VBucket, sourceDoc.Seqno, sourceDoc.VbUUID)
-	conflictRecord.Target.SetExtras(targetBodyClone, wrappedReq.Req.VBucket, targetDoc.Seqno, targetDoc.VbUUID)
+	conflictRecord := conflictlog.NewConflictRecord(
+		string(wrappedReq.Req.Key), // document key
+		srcScopeName, tgtScopeName, // source and target scope name
+		srcColllectionName, tgtCollectionName, // source and target collection name
+		xmem.sourceBucketUuid, xmem.targetBucketUuid, // source and target bucketuuid
+		xmem.sourceClusterUuid, xmem.targetClusterUuid, // source and target clusteruuid
+		xmem.config.sourceHostname, xmem.config.targetHostname, // source and target hostname
+		sourceDoc.Expiry, targetDoc.Expiry, // source and target doc expiry
+		sourceDoc.Flags, targetDoc.Flags, // source and target doc flags
+		sourceDoc.Cas, targetDoc.Cas, // source and target doc cas
+		sourceDoc.RevSeq, targetDoc.RevSeq, // source and target doc revId
+		sourceDocDatatype, targetDocDatatype, // source and target doc datatype
+		sourceDoc.Deletion, targetDoc.Deletion, // if source and target docs are tombstone
+		sourceHlvClone, targetHlvClone, // source and target doc xattr._vv
+		sourceSyncClone, targetSyncClone, // source and target xattr._sync
+		sourceMouClone, targetMouClone, // source and target xattr._mou
+		wrappedReq.Req.VBucket, wrappedReq.Req.VBucket, // source and target vbno
+		sourceDoc.VbUUID, targetDoc.VbUUID, // source and target vb vbuuid
+		sourceDoc.Seqno, targetDoc.Seqno, // source and target vb seqno
+		sourceBodyClone, targetBodyClone, // source and target doc body
+	)
 
 	loggerWait, err := xmem.conflictLogger.Log(&conflictRecord)
 	if err != nil {

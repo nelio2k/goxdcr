@@ -9,7 +9,7 @@
 CLUSTER_NAME_PORT_MAP=(["C1"]=9000 ["C2"]=9001 ["C3"]=9002)
 CLUSTER_NAME_XDCR_PORT_MAP=(["C1"]=13000 ["C2"]=13001 ["C3"]=13002)
 declare -a cluster1BucketsArr
-cluster1BucketsArr=("B1" "B4")
+cluster1BucketsArr=("B1" "B4" "B0")
 declare -a cluster2BucketsArr
 cluster2BucketsArr=("B2" "B5")
 declare -a cluster3BucketsArr
@@ -24,6 +24,7 @@ insertPropertyIntoBucketNamePropertyMap "B2" BucketProperty
 insertPropertyIntoBucketNamePropertyMap "B5" BucketProperty # conflict bucket for C2.B2
 insertPropertyIntoBucketNamePropertyMap "B3" BucketProperty
 insertPropertyIntoBucketNamePropertyMap "B6" BucketProperty # conflict bucket for C3.B3
+insertPropertyIntoBucketNamePropertyMap "B0" BucketProperty # bucket to test conflict records are not replicated
 
 conflictLoggingMap1="{\"bucket\":\"B4\", \"loggingRules\": {\"S1.col1\": {\"bucket\":\"B4\", \"collection\": \"S1.col1\"}}}"
 declare -A BucketReplProperties1=(["replicationType"]="continuous" ["checkpointInterval"]=60 ["statsInterval"]=500 ["filterBinary"]=true ["conflictLogging"]=$conflictLoggingMap1)
@@ -34,11 +35,13 @@ declare -A BucketReplProperties2=(["replicationType"]="continuous" ["checkpointI
 conflictLoggingMap3="{\"bucket\":\"B6\", \"loggingRules\": {\"S1.col1\": {\"bucket\":\"B6\", \"collection\": \"S1.col1\"}}}"
 declare -A BucketReplProperties3=(["replicationType"]="continuous" ["checkpointInterval"]=60 ["statsInterval"]=500 ["filterBinary"]=true ["conflictLogging"]=$conflictLoggingMap3)
 
+declare -A BucketReplProperties=(["replicationType"]="continuous" ["checkpointInterval"]=60 ["statsInterval"]=500 ["filterBinary"]=true) # replication to test conflict records are not replicated
+
 # Each bucket with S1.col1 and S1.col1 -> S1.col2 will be the special loggingRule
 # Bucket -> Scopes
 # -----------------
 declare -a scope1Arr=("S1")
-BUCKET_NAME_SCOPE_MAP=(["B1"]=${scope1Arr[@]} ["B2"]=${scope1Arr[@]} ["B3"]=${scope1Arr[@]} ["B4"]=${scope1Arr[@]})
+BUCKET_NAME_SCOPE_MAP=(["B1"]=${scope1Arr[@]} ["B2"]=${scope1Arr[@]} ["B3"]=${scope1Arr[@]} ["B4"]=${scope1Arr[@]} ["B0"]=${scope1Arr[@]})
 
 # Scopes -> Collections
 # ----------------------
@@ -52,6 +55,7 @@ function waitForChangesLeft0ForTopology {
 	waitForChangesLeft0 "C2" "B2" "C3" "B3"
 	waitForChangesLeft0 "C3" "B3" "C1" "B1"
 	waitForChangesLeft0 "C3" "B3" "C2" "B2"
+	waitForChangesLeft0 "C1" "B4" "C1" "B0"
 }
 
 function verifyPromStats {
@@ -70,6 +74,12 @@ function verifyPromStats {
 	validateDatapoolFailIs0 "C2" "B2" "B3"
 	validateDatapoolFailIs0 "C3" "B3" "B1"
 	validateDatapoolFailIs0 "C3" "B3" "B2"
+
+	# verify that conflict records are not replicated
+	checkItemCnt "C1" "B0" 0
+	validateBinaryFilteredIs0 "C1" "B4" "B0"
+	validatePrometheusStatsDocsFilteredNon0 "C1" "B4" "B0"
+	validateDatapoolFailIs0 "C1" "B4" "B0"
 }
 
 function testReplicationWithConflictLogging {
@@ -90,6 +100,10 @@ function testReplicationWithConflictLogging {
 	createBucketReplication "C3" "B3" "C1" "B1" BucketReplProperties3
 	echo "Replication C3.B3 -> C2.B2"
 	createBucketReplication "C3" "B3" "C2" "B2" BucketReplProperties3
+	echo "Replication C1.B4 -> C1.B0"
+
+	# replication to verify that conflict records are not replicated.
+	createBucketReplication "C1" "B4" "C1" "B0" BucketReplProperties
 
 	# Insert
 	writeJSONDocument "C1" "B1" "mobile1" '{"foo":"bar"}'
@@ -177,6 +191,7 @@ function runTestCase {
 	createRemoteClusterReference "C2" "C3"
 	createRemoteClusterReference "C3" "C1"
 	createRemoteClusterReference "C3" "C2"
+	createRemoteClusterReference "C1" "C1"
 
 	sleep 2
 	testReplicationWithConflictLogging
@@ -185,6 +200,6 @@ function runTestCase {
 	echo "Running conflict logging test case passed"
 	echo "============================================================================"
 	cleanupBucketReplications
-    cleanupBuckets
+	cleanupBuckets
 	cleanupRemoteClusterRefs
 }

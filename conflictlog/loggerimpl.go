@@ -13,6 +13,7 @@ const (
 )
 
 const DefaultLogCapacity = 5
+const DefaultRetryCntOnWriteFailure = 5
 
 var _ Logger = (*loggerImpl)(nil)
 
@@ -205,7 +206,6 @@ func (l *loggerImpl) worker() {
 			return
 		case req := <-l.logCh:
 			err := l.processReq(req)
-			// swi
 			req.ackCh <- err
 		}
 	}
@@ -223,55 +223,63 @@ func (l *loggerImpl) getTarget(rec *ConflictRecord) (t Target, err error) {
 	return
 }
 
-func (l *loggerImpl) processReq(req logRequest) (err error) {
+func (l *loggerImpl) processReq(req logRequest) error {
+	var err error
 
-	req.conflictRec.PopulateData(l.replId)
+	err = req.conflictRec.PopulateData(l.replId)
+	if err != nil {
+		return err
+	}
 
 	target, err := l.getTarget(req.conflictRec)
 	if err != nil {
-		return
+		return err
 	}
 
 	w, err := l.writerPool.get(target.Bucket)
 	if err != nil {
-		return
+		return err
 	}
 
 	defer func() {
 		l.writerPool.release(w)
 	}()
 
-	// CRD.
-	err1 := w.SetMetaObj(req.conflictRec.Id, req.conflictRec)
-	if err1 != nil {
-		if err == nil {
-			err = err1
-		} else {
-			err = fmt.Errorf("%v, %v", err, err1)
+	// Write source document.
+	for i := 0; i < DefaultRetryCntOnWriteFailure; i++ {
+		err = w.SetMeta(req.conflictRec.Source.Id, req.conflictRec.Source.body, req.conflictRec.Source.Datatype, target)
+		if err != nil {
+			continue
 		}
 	}
-
-	// Source document.
-	err2 := w.SetMetaObj(req.conflictRec.Source.Id, req.conflictRec.Source.GetDocBody())
-	if err2 != nil {
-		if err == nil {
-			err = err2
-		} else {
-			err = fmt.Errorf("%v, %v", err, err2)
-		}
+	if err != nil {
+		return fmt.Errorf("error writing source doc, err=%v", err)
 	}
 
-	// Target document.
-	err3 := w.SetMetaObj(req.conflictRec.Target.Id, req.conflictRec.Target.GetDocBody())
-	if err3 != nil {
-		if err == nil {
-			err = err3
-		} else {
-			err = fmt.Errorf("%v, %v", err, err3)
+	// Write target document.
+	for i := 0; i < DefaultRetryCntOnWriteFailure; i++ {
+		err = w.SetMeta(req.conflictRec.Target.Id, req.conflictRec.Target.body, req.conflictRec.Target.Datatype, target)
+		if err != nil {
+			continue
 		}
 	}
+	if err != nil {
+		return fmt.Errorf("error writing target doc, err=%v", err)
+	}
 
-	return
+	// Write conflict record.
+	// Write target document.
+	for i := 0; i < DefaultRetryCntOnWriteFailure; i++ {
+		err = w.SetMeta(req.conflictRec.Id, req.conflictRec.body, req.conflictRec.datatype, target)
+		if err != nil {
+			continue
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("error writing conflict record, err=%v", err)
+	}
+
+	return nil
 }
 
 type logReqHandle struct {

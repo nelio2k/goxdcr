@@ -1719,7 +1719,7 @@ func (x *XattrComposer) CommitRawKVPair() (int, error) {
 
 // Once all the Xattributes are finished, calculate the whole xattr section and append doc value
 // Remember to set Xattr flag
-// req and lookup are passed in for debugging info only
+// req and lookup are passed in for debugging info only and could be nil.
 func (x *XattrComposer) FinishAndAppendDocValue(val []byte, req *mc.MCRequest, lookup *SubdocLookupResponse) ([]byte, bool) {
 	if !x.atLeastOneXattr {
 		// No xattr written - do not do anything

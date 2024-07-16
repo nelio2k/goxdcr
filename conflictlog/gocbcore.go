@@ -82,21 +82,24 @@ func (conn *gocbCoreConn) Bucket() string {
 	return conn.bucketName
 }
 
-func (conn *gocbCoreConn) SetMeta(key string, body []byte, dataType uint8) (err error) {
+func (conn *gocbCoreConn) SetMeta(key string, body []byte, dataType uint8, target Target) (err error) {
 	ch := make(chan error)
 
-	opts := gocbcore.SetOptions{
-		Key:      []byte(key),
-		Value:    body,
-		Datatype: dataType,
+	opts := gocbcore.SetMetaOptions{
+		Key:            []byte(key),
+		Value:          body,
+		Datatype:       dataType,
+		ScopeName:      target.Scope,
+		CollectionName: target.Collection,
+		Cas:            gocbcore.Cas(time.Now().Nanosecond()),
 	}
 
-	cb := func(sr *gocbcore.StoreResult, err2 error) {
-		conn.logger.Infof("got set callback sr=%v, err2=%v", sr, err2)
+	cb := func(sr *gocbcore.SetMetaResult, err2 error) {
+		conn.logger.Infof("got setMeta callback sr=%v, err2=%v", sr, err2)
 		ch <- err2
 	}
 
-	_, err = conn.agent.Set(opts, cb)
+	_, err = conn.agent.SetMeta(opts, cb)
 	if err != nil {
 		return
 	}
@@ -112,22 +115,15 @@ func (conn *gocbCoreConn) SetMeta(key string, body []byte, dataType uint8) (err 
 	return
 }
 
-func (conn *gocbCoreConn) SetMetaObj(key string, val interface{}) (err error) {
-	conn.logger.Infof("set: key=%s", key)
+func (conn *gocbCoreConn) SetMetaObj(key string, val interface{}, target Target) (err error) {
+	conn.logger.Infof("setMeta: key=%s", key)
 
-	docBody, isDocBody := val.([]byte)
-
-	var body []byte
-	if isDocBody {
-		body = docBody
-	} else {
-		body, err = json.Marshal(val)
-		if err != nil {
-			return
-		}
+	body, err := json.Marshal(val)
+	if err != nil {
+		return
 	}
 
-	return conn.SetMeta(key, body, base.JSONDataType)
+	return conn.SetMeta(key, body, base.JSONDataType, target)
 }
 
 func (conn *gocbCoreConn) Close() error {

@@ -1485,6 +1485,9 @@ const (
 	ConflictLoggingXattrVal string = "true"
 )
 
+var ConflictLoggingXattrKeyBytes []byte = []byte(ConflictLoggingXattrKey)
+var ConflictLoggingXattrValBytes []byte = []byte(ConflictLoggingXattrVal)
+
 const BackfillPipelineTopicPrefix = "backfill_"
 
 const MobileCompatibleKey = "mobile"

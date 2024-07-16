@@ -1876,11 +1876,15 @@ func ValidateAndConvertStringToJsonType(value string) (map[string]interface{}, e
 }
 
 func FindSourceBodyWithoutXattr(req *mc.MCRequest) []byte {
-	if req.DataType&mcc.XattrDataType == 0 {
-		return req.Body
+	return FindDocBodyWithoutXattr(req.Body, req.DataType)
+}
+
+func FindDocBodyWithoutXattr(body []byte, datatype uint8) []byte {
+	if datatype&mcc.XattrDataType == 0 {
+		return body
 	}
-	xattrLen := binary.BigEndian.Uint32(req.Body[0:4])
-	return req.Body[4+xattrLen:]
+	xattrLen := binary.BigEndian.Uint32(body[0:4])
+	return body[4+xattrLen:]
 }
 
 type SubdocLookupPathSpecs []SubdocLookupPathSpec

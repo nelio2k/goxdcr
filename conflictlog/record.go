@@ -3,14 +3,23 @@ package conflictlog
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"time"
+
+	"github.com/couchbase/goxdcr/base"
 )
 
 const (
-	SourcePrefix = "src"
-	TargetPrefix = "tgt"
-	CRDPrefix    = "crd"
+	SourcePrefix    string = "src"
+	TargetPrefix    string = "tgt"
+	CRDPrefix       string = "crd"
+	TimestampFormat string = "2006-01-02T15:04:05.000Z07:00" // YYYY-MM-DDThh:mm:ss:SSSZ format
+	// max increase in document body size after adding `"_xdcr_conflict":true` xattr.
+	MaxBodyIncrease int = 4 /* entire xattr section size */ +
+		4 /* _xdcr_conflict xattr size */ +
+		len(base.ConflictLoggingXattrKey) + 2 /* quotes for the xattr key string */ +
+		len(base.ConflictLoggingXattrVal) + 2 /* null terminators one each after key and value */
 )
 
 // Conflict is an abstraction over conflict record
@@ -39,30 +48,11 @@ type DocInfo struct {
 	Datatype    uint8  `json:"datatype"`
 	Xattrs      Xattrs `json:"xattrs"`
 
-	// Note: The following are considered "Extras" and will not be serialized to json
+	// Note: The following will not be serialized to json
 	body   []byte // document body.
 	vbno   uint16
 	seqno  uint64
 	vbUUID uint64
-}
-
-// set the attributes that are not serialised into json.
-func (d *DocInfo) SetExtras(body []byte, vbno uint16, seqno, vbUUID uint64) {
-	if d == nil {
-		return
-	}
-	d.body = body
-	d.vbno = vbno
-	d.seqno = seqno
-	d.vbUUID = vbUUID
-}
-
-// Get document body.
-func (d *DocInfo) GetDocBody() []byte {
-	if d == nil {
-		return nil
-	}
-	return d.body
 }
 
 func (d *DocInfo) String() string {
@@ -94,11 +84,73 @@ func (x *Xattrs) String() string {
 // ConflictRecord has the all the details of the detected conflict
 // which are needed to be persisted
 type ConflictRecord struct {
+	Timestamp     string `json:"timestamp"`
 	Id            string `json:"id"`
 	DocId         string `json:"docId"`
 	ReplicationId string `json:"replId"`
 	Source        DocInfo
 	Target        DocInfo
+
+	// Note: The following will not be serialized to json
+	datatype uint8
+	body     []byte
+}
+
+// Id and ReplicationId are derived/generated during conflict logging.
+func NewConflictRecord(key string, srcScopeName, tgtScopeName, srcCollectionName, tgtCollectionName, srcBucketUUID, tgtBucketUUID, srcClusterUUID, tgtClusterUUID, srcHostname, tgtHostname string,
+	srcExpiry, tgtExpiry, srcFlags, tgtFlags uint32, srcCas, tgtCas, srcRevSeq, tgtRevSeq uint64, srcDatatype, tgtDatatype uint8, srcDeletion, tgtDeletion bool,
+	srcHlv, tgtHlv, srcSync, tgtSync, srcMou, tgtMou string, srcVbno, tgtVbno uint16, srcVbuuid, tgtVbuuid, srcSeqno, tgtSeqno uint64, srcDocBody, tgtDocBody []byte) ConflictRecord {
+	crd := ConflictRecord{
+		Timestamp: time.Now().Format(TimestampFormat),
+		DocId:     key,
+		Source: DocInfo{
+			Scope:       srcScopeName,
+			Collection:  srcCollectionName,
+			BucketUUID:  srcBucketUUID,
+			ClusterUUID: srcClusterUUID,
+			NodeId:      srcHostname,
+			Expiry:      srcExpiry,
+			Flags:       srcFlags,
+			Datatype:    srcDatatype,
+			Cas:         srcCas,
+			RevSeqno:    srcRevSeq,
+			IsDeleted:   srcDeletion,
+			Xattrs: Xattrs{
+				Hlv:  srcHlv,
+				Sync: srcSync,
+				Mou:  srcMou,
+			},
+			body:   srcDocBody,
+			vbno:   srcVbno,
+			vbUUID: srcVbuuid,
+			seqno:  srcSeqno,
+		},
+		Target: DocInfo{
+			Scope:       tgtScopeName,
+			Collection:  tgtCollectionName,
+			BucketUUID:  tgtBucketUUID,
+			ClusterUUID: tgtClusterUUID,
+			NodeId:      tgtHostname,
+			Expiry:      tgtExpiry,
+			Flags:       tgtFlags,
+			Datatype:    tgtDatatype,
+			Cas:         tgtCas,
+			RevSeqno:    tgtRevSeq,
+			IsDeleted:   tgtDeletion,
+			Xattrs: Xattrs{
+				Hlv:  tgtHlv,
+				Sync: tgtSync,
+				Mou:  tgtMou,
+			},
+			body:   tgtDocBody,
+			vbno:   tgtVbno,
+			vbUUID: tgtVbuuid,
+			seqno:  tgtSeqno,
+		},
+		datatype: base.JSONDataType,
+	}
+
+	return crd
 }
 
 func (r *ConflictRecord) Scope() string {
@@ -127,18 +179,35 @@ func (r *ConflictRecord) SmallString() string {
 		r.Source.Scope, r.Source.Collection, r.Target.Scope, r.Target.Collection)
 }
 
-// populates some derived data.
-func (r *ConflictRecord) PopulateData(replicationId string) {
+// populates the following:
+// 1. document Ids.
+// 2. CRD body.
+// 3. xattr for all three conflict records.
+func (r *ConflictRecord) PopulateData(replicationId string) error {
 	if r == nil {
-		return
+		return fmt.Errorf("nil CRD")
 	}
 
 	now := time.Now().UnixNano()
 
 	r.ReplicationId = replicationId
+
 	r.PopulateSourceDocId(now)
 	r.PopulateTargetDocId(now)
 	r.PopulateCRDocId(now)
+
+	body, err := json.Marshal(r)
+	if err != nil {
+		return err
+	}
+	r.body = body
+
+	err = r.InsertConflictXattr()
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // A pair of mutations can be uniquely identified by:
@@ -174,4 +243,82 @@ func (r *ConflictRecord) PopulateTargetDocId(now int64) {
 func (r *ConflictRecord) PopulateCRDocId(now int64) {
 	uniqKey := r.GenerateUniqHash()
 	r.Id = fmt.Sprintf("%s_%v_%s", CRDPrefix, now, uniqKey)
+}
+
+// inserts the "_xdcr_conflict": true xattr to avoid them replicating.
+func (r *ConflictRecord) InsertConflictXattr() error {
+	// add it to the source body
+	newBody, newDatatype, err := insertConflictXattrToBody(r.Source.body, r.Source.Datatype)
+	if err != nil {
+		return fmt.Errorf("error inserting xattr to source body, err=%v", err)
+	}
+	r.Source.body = newBody
+	r.Source.Datatype = newDatatype
+
+	// add it to the target body
+	newBody, newDatatype, err = insertConflictXattrToBody(r.Target.body, r.Target.Datatype)
+	if err != nil {
+		return fmt.Errorf("error inserting xattr to target body, err=%v", err)
+	}
+	r.Target.body = newBody
+	r.Target.Datatype = newDatatype
+
+	// add it to the CRD body
+	newBody, newDatatype, err = insertConflictXattrToBody(r.body, r.datatype)
+	if err != nil {
+		return fmt.Errorf("error inserting xattr to CRD, err=%v", err)
+	}
+	r.body = newBody
+	r.datatype = newDatatype
+
+	return nil
+}
+
+// Inserts "_xdcr_conflict": true to the input byte slice.
+// If any error occurs, the original body is returned.
+// Otherwise, returns new body and new datatype after xattr is successfully added.
+func insertConflictXattrToBody(body []byte, datatype uint8) ([]byte, uint8, error) {
+	newbodyLen := len(body) + MaxBodyIncrease
+	// TODO - Use datapool.
+	newbody := make([]byte, newbodyLen)
+
+	xattrComposer := base.NewXattrComposer(newbody)
+
+	if base.HasXattr(datatype) {
+		// insert the already existing xattrs
+		it, err := base.NewXattrIterator(body)
+		if err != nil {
+			return body, datatype, err
+		}
+
+		for it.HasNext() {
+			key, val, err := it.Next()
+			if err != nil {
+				return body, datatype, err
+			}
+			err = xattrComposer.WriteKV(key, val)
+			if err != nil {
+				return body, datatype, err
+			}
+		}
+	}
+
+	err := xattrComposer.WriteKV(base.ConflictLoggingXattrKeyBytes, base.ConflictLoggingXattrValBytes)
+	if err != nil {
+		return body, datatype, err
+	}
+
+	docWithoutXattr := base.FindDocBodyWithoutXattr(body, datatype)
+	out, atLeastOneXattr := xattrComposer.FinishAndAppendDocValue(docWithoutXattr, nil, nil)
+
+	if atLeastOneXattr {
+		datatype = datatype | base.PROTOCOL_BINARY_DATATYPE_XATTR
+	} else {
+		// odd - shouldn't happen.
+		datatype = datatype & ^(base.PROTOCOL_BINARY_DATATYPE_XATTR)
+	}
+
+	body = nil // no use of this body anymore, set to nil to help GC quicker.
+
+	return out, datatype, err
 }
