@@ -1,6 +1,8 @@
 package conflictlog
 
 import (
+	"io"
+
 	"github.com/couchbase/goxdcr/log"
 )
 
@@ -42,7 +44,7 @@ func InitManager(loggerCtx *log.LoggerContext, memdAddrGetter MemcachedAddrGette
 	}
 
 	logger.Info("creating conflict manager writer pool")
-	impl.writerPool = newWriterPool(impl.newWriter)
+	impl.connPool = newConnPool(logger, impl.newConn)
 
 	manager = impl
 }
@@ -51,12 +53,12 @@ func InitManager(loggerCtx *log.LoggerContext, memdAddrGetter MemcachedAddrGette
 type managerImpl struct {
 	logger         *log.CommonLogger
 	memdAddrGetter MemcachedAddrGetter
-	writerPool     *writerPool
+	connPool       *connPool
 }
 
 func (m *managerImpl) NewLogger(logger *log.CommonLogger, replId string, opts ...LoggerOpt) (l Logger, err error) {
 
-	l, err = newLoggerImpl(logger, replId, m.writerPool, opts...)
+	l, err = newLoggerImpl(logger, replId, m.connPool, opts...)
 	if err != nil {
 		return
 	}
@@ -64,7 +66,7 @@ func (m *managerImpl) NewLogger(logger *log.CommonLogger, replId string, opts ..
 	return
 }
 
-func (m *managerImpl) newWriter(bucketName string) (w Writer, err error) {
+func (m *managerImpl) newConn(bucketName string) (w io.Closer, err error) {
 	m.logger.Infof("creating new conflict writer bucket=%s", bucketName)
 	return newGocbConn(m.logger, m.memdAddrGetter, bucketName)
 }

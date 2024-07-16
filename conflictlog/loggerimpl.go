@@ -28,8 +28,8 @@ type loggerImpl struct {
 	rules     *Rules
 	rulesLock sync.RWMutex
 
-	writerPool *writerPool
-	logger     *log.CommonLogger
+	connPool *connPool
+	logger   *log.CommonLogger
 
 	workerCount int
 	loggerLock  sync.Mutex
@@ -66,7 +66,13 @@ func WithCapacity(cap int) LoggerOpt {
 	}
 }
 
-func newLoggerImpl(logger *log.CommonLogger, replId string, writerPool *writerPool, opts ...LoggerOpt) (l *loggerImpl, err error) {
+func WithWorkerCount(val int) LoggerOpt {
+	return func(o *LoggerOptions) {
+		o.workerCount = val
+	}
+}
+
+func newLoggerImpl(logger *log.CommonLogger, replId string, connPool *connPool, opts ...LoggerOpt) (l *loggerImpl, err error) {
 	options := &LoggerOptions{}
 	for _, opt := range opts {
 		opt(options)
@@ -91,7 +97,7 @@ func newLoggerImpl(logger *log.CommonLogger, replId string, writerPool *writerPo
 		replId:      replId,
 		rules:       options.rules,
 		rulesLock:   sync.RWMutex{},
-		writerPool:  writerPool,
+		connPool:    connPool,
 		mapper:      options.mapper,
 		workerCount: options.workerCount,
 		loggerLock:  sync.Mutex{},
@@ -132,8 +138,15 @@ func (l *loggerImpl) log(c *ConflictRecord) (ackCh chan error, err error) {
 
 func (l *loggerImpl) Log(c *ConflictRecord) (h base.ConflictLoggerHandle, err error) {
 	l.logger.Infof("logging conflict record replId=%s sourceKey=%s", l.replId, c.Source.Id)
+	if l.closed {
+		err = ErrLoggerClosed
+		return
+	}
 
 	ackCh, err := l.log(c)
+	if err != nil {
+		return
+	}
 
 	h = logReqHandle{
 		ackCh: ackCh,
@@ -223,6 +236,44 @@ func (l *loggerImpl) getTarget(rec *ConflictRecord) (t Target, err error) {
 	return
 }
 
+func (l *loggerImpl) getFromPool(bucketName string) (conn Connection, err error) {
+	obj, err := l.connPool.Get(bucketName)
+	if err != nil {
+		return
+	}
+
+	conn, ok := obj.(Connection)
+	if !ok {
+		err = fmt.Errorf("pool object is of invalid type got=%T", obj)
+		return
+	}
+
+	return
+}
+
+func (l *loggerImpl) writeDocs(conn Connection, req logRequest) (err error) {
+	// Source document.
+	err = conn.SetMetaObj(req.conflictRec.Source.Id, req.conflictRec.Source.GetDocBody())
+	if err != nil {
+		err = fmt.Errorf("failed to write source doc %v", err)
+		return
+	}
+
+	// Target document.
+	err = conn.SetMetaObj(req.conflictRec.Target.Id, req.conflictRec.Target.GetDocBody())
+	if err != nil {
+		err = fmt.Errorf("failed to write target doc %v", err)
+		return
+	}
+
+	err = conn.SetMetaObj(req.conflictRec.Id, req.conflictRec)
+	if err != nil {
+		err = fmt.Errorf("failed to write confict doc %v", err)
+	}
+
+	return
+}
+
 func (l *loggerImpl) processReq(req logRequest) (err error) {
 
 	req.conflictRec.PopulateData(l.replId)
@@ -232,43 +283,18 @@ func (l *loggerImpl) processReq(req logRequest) (err error) {
 		return
 	}
 
-	w, err := l.writerPool.get(target.Bucket)
+	conn, err := l.getFromPool(target.Bucket)
 	if err != nil {
 		return
 	}
 
 	defer func() {
-		l.writerPool.release(w)
+		l.connPool.Put(target.Bucket, conn)
 	}()
 
-	// CRD.
-	err1 := w.SetMetaObj(req.conflictRec.Id, req.conflictRec)
-	if err1 != nil {
-		if err == nil {
-			err = err1
-		} else {
-			err = fmt.Errorf("%v, %v", err, err1)
-		}
-	}
-
-	// Source document.
-	err2 := w.SetMetaObj(req.conflictRec.Source.Id, req.conflictRec.Source.GetDocBody())
-	if err2 != nil {
-		if err == nil {
-			err = err2
-		} else {
-			err = fmt.Errorf("%v, %v", err, err2)
-		}
-	}
-
-	// Target document.
-	err3 := w.SetMetaObj(req.conflictRec.Target.Id, req.conflictRec.Target.GetDocBody())
-	if err3 != nil {
-		if err == nil {
-			err = err3
-		} else {
-			err = fmt.Errorf("%v, %v", err, err3)
-		}
+	err = l.writeDocs(conn, req)
+	if err != nil {
+		return
 	}
 
 	return
