@@ -1739,6 +1739,14 @@ function validatePrometheusStatsCasPoisonNon0 {
 	validatePrometheusStatsNon0 "$node" "$sourceBucket" "$targetBucket" "xdcr_docs_cas_poisoned_total"
 }
 
+function validatePrometheusStatsDocsFilteredNon0 {
+	local node=$1
+	local sourceBucket=$2
+	local targetBucket=$3
+
+	validatePrometheusStatsNon0 "$node" "$sourceBucket" "$targetBucket" "xdcr_docs_filtered_total"
+}
+
 # use cbc-pillowfight to create a large bucket
 function runCbcPillowFight {
 	local cluster=$1

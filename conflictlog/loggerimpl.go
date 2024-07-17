@@ -13,6 +13,7 @@ const (
 )
 
 const DefaultLogCapacity = 5
+const DefaultRetryCntOnWriteFailure = 5
 
 var _ Logger = (*loggerImpl)(nil)
 
@@ -218,7 +219,6 @@ func (l *loggerImpl) worker() {
 			return
 		case req := <-l.logCh:
 			err := l.processReq(req)
-			// swi
 			req.ackCh <- err
 		}
 	}
@@ -251,48 +251,69 @@ func (l *loggerImpl) getFromPool(bucketName string) (conn Connection, err error)
 	return
 }
 
-func (l *loggerImpl) writeDocs(conn Connection, req logRequest) (err error) {
-	// Source document.
-	err = conn.SetMetaObj(req.conflictRec.Source.Id, req.conflictRec.Source.GetDocBody())
+func (l *loggerImpl) writeDocs(conn Connection, req logRequest, target Target) (err error) {
+	// Write source document.
+	for i := 0; i < DefaultRetryCntOnWriteFailure; i++ {
+		err = conn.SetMeta(req.conflictRec.Source.Id, req.conflictRec.Source.body, req.conflictRec.Source.Datatype, target)
+		if err != nil {
+			continue
+		}
+	}
 	if err != nil {
-		err = fmt.Errorf("failed to write source doc %v", err)
-		return
+		return fmt.Errorf("error writing source doc, err=%v", err)
 	}
 
-	// Target document.
-	err = conn.SetMetaObj(req.conflictRec.Target.Id, req.conflictRec.Target.GetDocBody())
+	// Write target document.
+	for i := 0; i < DefaultRetryCntOnWriteFailure; i++ {
+		err = conn.SetMeta(req.conflictRec.Target.Id, req.conflictRec.Target.body, req.conflictRec.Target.Datatype, target)
+		if err != nil {
+			continue
+		}
+	}
 	if err != nil {
-		err = fmt.Errorf("failed to write target doc %v", err)
-		return
+		return fmt.Errorf("error writing target doc, err=%v", err)
 	}
 
-	err = conn.SetMetaObj(req.conflictRec.Id, req.conflictRec)
+	// Write conflict record.
+	for i := 0; i < DefaultRetryCntOnWriteFailure; i++ {
+		err = conn.SetMeta(req.conflictRec.Id, req.conflictRec.body, req.conflictRec.datatype, target)
+		if err != nil {
+			continue
+		}
+	}
 	if err != nil {
-		err = fmt.Errorf("failed to write confict doc %v", err)
+		return fmt.Errorf("error writing conflict record, err=%v", err)
 	}
 
 	return
 }
 
-func (l *loggerImpl) processReq(req logRequest) (err error) {
+func (l *loggerImpl) processReq(req logRequest) error {
+	var err error
 
-	req.conflictRec.PopulateData(l.replId)
+	err = req.conflictRec.PopulateData(l.replId)
+	if err != nil {
+		return err
+	}
 
 	target, err := l.getTarget(req.conflictRec)
 	if err != nil {
-		return
+		return err
 	}
 
 	conn, err := l.getFromPool(target.Bucket)
 	if err != nil {
-		return
+		return err
 	}
 
-	err = l.writeDocs(conn, req)
+	err = l.writeDocs(conn, req, target)
+	if err != nil {
+		return err
+	}
 
 	l.connPool.Put(target.Bucket, conn, err)
 
-	return
+	return nil
 }
 
 type logReqHandle struct {
