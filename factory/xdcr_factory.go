@@ -632,7 +632,7 @@ func (xdcrf *XDCRFactory) constructOutgoingNozzles(topic string, spec *metadata.
 	logger := log.NewLogger(conflictlog.ConflictLoggerName, logger_ctx)
 	conflictLogger, err = clm.NewLogger(
 		logger,
-		topic,
+		fmt.Sprintf("%s-%s", spec.Id, spec.InternalId),
 		conflictlog.WithMapper(conflictlog.NewConflictMapper(logger)),
 		conflictlog.WithCapacity(1000), // SUMUKH TODO - make the default size configurable.
 		conflictlog.WithRules(nil),     // nil to begin with, will be initialised as part of XmemNozzle.initialize().
