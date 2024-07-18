@@ -11,7 +11,7 @@ import (
 	"github.com/couchbase/goxdcr/utils"
 )
 
-var _ Connection = (*MemcachedConn)(nil)
+//var _ Connection = (*MemcachedConn)(nil)
 
 type MemcachedConn struct {
 	logger     *log.CommonLogger

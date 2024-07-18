@@ -4,6 +4,7 @@ import (
 	"io"
 
 	"github.com/couchbase/goxdcr/log"
+	"github.com/couchbase/goxdcr/utils"
 )
 
 const (
@@ -34,7 +35,7 @@ func GetManager() (Manager, error) {
 }
 
 // InitManager intializes global conflict manager
-func InitManager(loggerCtx *log.LoggerContext, memdAddrGetter MemcachedAddrGetter) {
+func InitManager(loggerCtx *log.LoggerContext, utils utils.UtilsIface, memdAddrGetter MemcachedAddrGetter) {
 	logger := log.NewLogger(ConflictManagerLoggerName, loggerCtx)
 
 	logger.Info("intializing conflict manager")
@@ -42,6 +43,7 @@ func InitManager(loggerCtx *log.LoggerContext, memdAddrGetter MemcachedAddrGette
 	impl := &managerImpl{
 		logger:         logger,
 		memdAddrGetter: memdAddrGetter,
+		utils:          utils,
 	}
 
 	logger.Info("creating conflict manager writer pool")
@@ -54,12 +56,13 @@ func InitManager(loggerCtx *log.LoggerContext, memdAddrGetter MemcachedAddrGette
 type managerImpl struct {
 	logger         *log.CommonLogger
 	memdAddrGetter MemcachedAddrGetter
+	utils          utils.UtilsIface
 	connPool       *connPool
 }
 
 func (m *managerImpl) NewLogger(logger *log.CommonLogger, replId string, opts ...LoggerOpt) (l Logger, err error) {
 
-	l, err = newLoggerImpl(logger, replId, m.connPool, opts...)
+	l, err = newLoggerImpl(logger, replId, m.utils, m.connPool, opts...)
 	if err != nil {
 		return
 	}

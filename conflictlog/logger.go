@@ -1,6 +1,10 @@
 package conflictlog
 
-import "github.com/couchbase/goxdcr/base"
+import (
+	"time"
+
+	"github.com/couchbase/goxdcr/base"
+)
 
 // Logger interface allows logging of conflicts in an abstracted manner
 type Logger interface {
@@ -20,10 +24,48 @@ type Logger interface {
 
 // LoggerOptions defines optional args for a logger implementation
 type LoggerOptions struct {
-	rules       *Rules
-	mapper      Mapper
-	logQueueCap int
-	workerCount int
+	rules                *Rules
+	mapper               Mapper
+	logQueueCap          int
+	workerCount          int
+	networkRetryCount    int
+	networkRetryInterval time.Duration
+}
+
+func WithRules(r *Rules) LoggerOpt {
+	return func(o *LoggerOptions) {
+		o.rules = r
+	}
+}
+
+func WithMapper(m Mapper) LoggerOpt {
+	return func(o *LoggerOptions) {
+		o.mapper = m
+	}
+}
+
+func WithCapacity(cap int) LoggerOpt {
+	return func(o *LoggerOptions) {
+		o.logQueueCap = cap
+	}
+}
+
+func WithWorkerCount(val int) LoggerOpt {
+	return func(o *LoggerOptions) {
+		o.workerCount = val
+	}
+}
+
+func WithNetworkRetryCount(val int) LoggerOpt {
+	return func(o *LoggerOptions) {
+		o.networkRetryCount = val
+	}
+}
+
+func WithNetworkRetryInterval(val time.Duration) LoggerOpt {
+	return func(o *LoggerOptions) {
+		o.networkRetryInterval = val
+	}
 }
 
 func (o *LoggerOptions) SetRules(rules *Rules) {

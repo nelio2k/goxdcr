@@ -42,10 +42,10 @@ type ConnPool interface {
 	Get(bucketName string) (conn io.Closer, err error)
 
 	// Put releases the connection back to the pool for reuse. It is caller's job
-	// to ensure that right bucket name is passed here. The err != nil tells the pool
+	// to ensure that right bucket name is passed here. The damaged == true tells the pool
 	// that the conn is damaged. The pool appropriately should manage its internal state
 	// in response this (e.g. active Connection Count)
-	Put(bucketName string, conn io.Closer, err error)
+	Put(bucketName string, conn io.Closer, damaged bool)
 
 	// UpdateGCInterval updates the new GC frequency
 	// Duration <= 0 has no effect and its ignored
@@ -235,8 +235,8 @@ func (pool *connPool) Get(bucketName string) (conn io.Closer, err error) {
 
 // Put releases the connection back to the pool for reuse. It is caller's job
 // to ensure that right bucket name is passed here.
-func (pool *connPool) Put(bucketName string, conn io.Closer, err error) {
-	if err != nil { // this implies damaged connection
+func (pool *connPool) Put(bucketName string, conn io.Closer, damaged bool) {
+	if damaged { // this implies damaged connection
 		// NOT IMPLEMENTED YET. As of now we ignore it and not put the damaged connection
 		// in the pool. We simply handle it as no-op and let the caller Get() new connection
 		return

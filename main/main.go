@@ -150,8 +150,6 @@ func main() {
 
 	host := top_svc.GetLocalHostName()
 
-	conflictlog.InitManager(log.DefaultLoggerContext, top_svc)
-
 	metakv_svc, err := metadata_svc.NewMetaKVMetadataSvc(nil, utils, false /*readOnly*/)
 	if err != nil {
 		fmt.Printf("Error starting metadata service. err=%v\n", err)
@@ -261,6 +259,8 @@ func main() {
 			fmt.Printf("Error starting P2P manager. err=%v\n", err)
 			os.Exit(1)
 		}
+
+		conflictlog.InitManager(log.DefaultLoggerContext, utils, top_svc)
 
 		// start replication manager in normal mode
 		rm.StartReplicationManager(host,
