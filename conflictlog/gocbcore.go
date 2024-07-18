@@ -91,7 +91,7 @@ func (conn *gocbCoreConn) SetMeta(key string, body []byte, dataType uint8, targe
 		Datatype:       dataType,
 		ScopeName:      target.Scope,
 		CollectionName: target.Collection,
-		Cas:            gocbcore.Cas(time.Now().Nanosecond()),
+		Cas:            gocbcore.Cas(time.Now().UnixNano()),
 	}
 
 	cb := func(sr *gocbcore.SetMetaResult, err2 error) {

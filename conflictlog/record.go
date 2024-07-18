@@ -18,7 +18,7 @@ const (
 	// max increase in document body size after adding `"_xdcr_conflict":true` xattr.
 	MaxBodyIncrease int = 4 /* entire xattr section size */ +
 		4 /* _xdcr_conflict xattr size */ +
-		len(base.ConflictLoggingXattrKey) + 2 /* quotes for the xattr key string */ +
+		len(base.ConflictLoggingXattrKey) +
 		len(base.ConflictLoggingXattrVal) + 2 /* null terminators one each after key and value */
 )
 

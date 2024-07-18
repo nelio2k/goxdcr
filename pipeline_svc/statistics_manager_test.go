@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/couchbase/goxdcr/base"
+	"github.com/couchbase/goxdcr/conflictlog"
 	"github.com/couchbase/goxdcr/metadata"
 	"github.com/couchbase/goxdcr/pipeline"
 
@@ -115,7 +116,7 @@ func setupBoilerPlate() (*log.CommonLogger, *service_def.ThroughSeqnoTrackerSvc,
 	dcpNozzle := parts.NewDcpNozzle(testDCPPart, "sourceBucket", "targetBucket", vbs, xdcrTopologySvc,
 		false /*isCapi*/, log.DefaultLoggerContext, utils, nil /*func*/)
 
-	xmemNozzle := parts.NewXmemNozzle(testXmemPart, remoteClusterSvc, "", "", "testTopic", "connPoolPrefix", 0, "connStr", "sourceBucket", "targetBucket", "", "", "", base.CRMode_RevId, nil, utils, vbs, nil, "", "")
+	xmemNozzle := parts.NewXmemNozzle(testXmemPart, remoteClusterSvc, "", "", "testTopic", "connPoolPrefix", 0, "connStr", "sourceBucket", "targetBucket", "", "", "", base.CRMode_RevId, nil, utils, vbs, nil, "", "", conflictlog.NewFileLogger(nil, ""))
 
 	connector := &common.Connector{}
 
