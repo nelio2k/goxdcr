@@ -38,3 +38,6 @@ tools/testScripts/vagrant/.vagrant
 tools/testScripts/vagrant/data
 
 build/
+
+# binaries
+xtest

@@ -127,7 +127,7 @@ func (l *loggerImpl) log(c *ConflictRecord) (ackCh chan error, err error) {
 }
 
 func (l *loggerImpl) Log(c *ConflictRecord) (h base.ConflictLoggerHandle, err error) {
-	l.logger.Infof("logging conflict record replId=%s sourceKey=%s", l.replId, c.Source.Id)
+	l.logger.Debugf("logging conflict record replId=%s sourceKey=%s", l.replId, c.Source.Id)
 	if l.closed {
 		err = ErrLoggerClosed
 		return

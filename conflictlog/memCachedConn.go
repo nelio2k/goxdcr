@@ -164,7 +164,7 @@ func (m *MemcachedConn) setMeta(key string, body []byte, collId uint32, dataType
 			err = ErrUnknownCollection
 			return
 		}
-		m.logger.Infof("received rsp key=%s status=%d", rsp.Key, rsp.Status)
+		m.logger.Debugf("received rsp key=%s status=%d", rsp.Key, rsp.Status)
 	}
 	if err != nil {
 		return
