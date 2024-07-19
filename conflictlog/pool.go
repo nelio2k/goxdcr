@@ -95,6 +95,9 @@ type connPool struct {
 	limit int
 
 	finch chan bool
+
+	// closed when set to true indicates that pool is closed
+	closed bool
 }
 
 // connList is the list of actual objects which are pooled
@@ -224,6 +227,11 @@ func (pool *connPool) UpdateReapInterval(d time.Duration) {
 // one by calling newConnFn() and returns it. It is guaranteed that either
 // an error or a non-nil connection object will be returned
 func (pool *connPool) Get(bucketName string) (conn io.Closer, err error) {
+	if pool.closed {
+		err = ErrClosedConnPool
+		return
+	}
+
 	conn = pool.get(bucketName)
 	if conn != nil {
 		return
@@ -242,6 +250,10 @@ func (pool *connPool) Put(bucketName string, conn io.Closer, damaged bool) {
 		return
 	}
 
+	if pool.closed {
+		conn.Close()
+	}
+
 	pool.mu.Lock()
 	defer pool.mu.Unlock()
 
@@ -251,6 +263,12 @@ func (pool *connPool) Put(bucketName string, conn io.Closer, damaged bool) {
 
 // Close shutsdown the GC worker and initiates a final gc with force=true
 func (pool *connPool) Close() error {
+	if pool.closed {
+		return nil
+	}
+
+	pool.closed = true
+	pool.logger.Infof("closing all connections of conflict connection pool")
 	close(pool.finch)
 
 	// use force=true to ensure all remaining connections are reaped.
@@ -305,6 +323,8 @@ func (pool *connPool) reapConnList(force bool) []*connList {
 // gcOnce runs one single iteration of reaping the connections
 func (pool *connPool) gcOnce(force bool) {
 	connListList := pool.reapConnList(force)
+
+	pool.logger.Debugf("conflict connection pool reaping lists. force=%v, count=%d", force, len(connListList))
 
 	// Note: the closing of the connections happen outside the pool lock.
 	// From this point, a parallel request to create a connection is safe

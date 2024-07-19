@@ -10,4 +10,6 @@ var (
 	ErrLoggerClosed          error = errors.New("conflict logger is closed")
 	ErrLogWaitAborted        error = errors.New("conflict log handle received abort")
 	ErrEmptyRules            error = errors.New("empty conflict rules")
+	ErrUnknownCollection     error = errors.New("unknown collection")
+	ErrClosedConnPool        error = errors.New("use of closed connection pool")
 )

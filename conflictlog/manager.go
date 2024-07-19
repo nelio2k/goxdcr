@@ -19,6 +19,8 @@ var _ Manager = (*managerImpl)(nil)
 type Manager interface {
 	NewLogger(logger *log.CommonLogger, replId string, opts ...LoggerOpt) (l Logger, err error)
 	ConnPool() ConnPool
+	// [TEMP]: SetConnType exists only for perf test
+	SetConnType(connType string) error
 }
 
 type MemcachedAddrGetter interface {
@@ -44,10 +46,13 @@ func InitManager(loggerCtx *log.LoggerContext, utils utils.UtilsIface, memdAddrG
 		logger:         logger,
 		memdAddrGetter: memdAddrGetter,
 		utils:          utils,
+		manifestCache:  newManifestCache(),
+		connType:       "gocbcore",
 	}
 
 	logger.Info("creating conflict manager writer pool")
-	impl.connPool = newConnPool(logger, impl.newConn)
+	//impl.connPool = newConnPool(logger, impl.newConn)
+	impl.setConnPool()
 
 	manager = impl
 }
@@ -58,6 +63,9 @@ type managerImpl struct {
 	memdAddrGetter MemcachedAddrGetter
 	utils          utils.UtilsIface
 	connPool       *connPool
+	manifestCache  *ManifestCache
+	// [TEMP] connType only exists for perf test
+	connType string
 }
 
 func (m *managerImpl) NewLogger(logger *log.CommonLogger, replId string, opts ...LoggerOpt) (l Logger, err error) {
@@ -70,11 +78,50 @@ func (m *managerImpl) NewLogger(logger *log.CommonLogger, replId string, opts ..
 	return
 }
 
+func (m *managerImpl) setConnPool() {
+	m.logger.Infof("creating conflict manager connection pool type=%s", m.connType)
+	fn := m.newGocbCoreConn
+	if m.connType == "memcached" {
+		fn = m.newMemcachedConn
+	}
+
+	m.connPool = newConnPool(m.logger, fn)
+	return
+}
+
+func (m *managerImpl) SetConnType(connType string) error {
+	if m.connType == connType {
+		return nil
+	}
+
+	m.logger.Infof("closing conflict manager connection pool type=%s", m.connType)
+	err := m.connPool.Close()
+	if err != nil {
+		return err
+	}
+
+	m.connType = connType
+	m.setConnPool()
+
+	return nil
+}
+
 func (m *managerImpl) ConnPool() ConnPool {
 	return m.connPool
 }
 
-func (m *managerImpl) newConn(bucketName string) (w io.Closer, err error) {
+func (m *managerImpl) newGocbCoreConn(bucketName string) (w io.Closer, err error) {
 	m.logger.Infof("creating new conflict writer bucket=%s", bucketName)
 	return newGocbConn(m.logger, m.memdAddrGetter, bucketName)
+}
+
+func (m *managerImpl) newMemcachedConn(bucketName string) (conn io.Closer, err error) {
+	addr, err := m.memdAddrGetter.MyMemcachedAddr()
+	if err != nil {
+		return
+	}
+
+	conn, err = NewMemcachedConn(m.logger, m.utils, m.manifestCache, bucketName, addr)
+
+	return
 }

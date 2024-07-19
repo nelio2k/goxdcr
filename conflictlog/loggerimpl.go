@@ -244,7 +244,7 @@ func (l *loggerImpl) writeDocs(req logRequest, target Target) (err error) {
 
 	// Write source document.
 	err = l.writeDocRetry(target.Bucket, func(conn Connection) error {
-		err := conn.SetMeta(req.conflictRec.Source.Id, req.conflictRec.Source.body, req.conflictRec.Source.Datatype, target)
+		err := conn.SetMeta(req.conflictRec.Source.Id, req.conflictRec.Source.Body, req.conflictRec.Source.Datatype, target)
 		return err
 	})
 	if err != nil {
@@ -253,7 +253,7 @@ func (l *loggerImpl) writeDocs(req logRequest, target Target) (err error) {
 
 	// Write target document.
 	err = l.writeDocRetry(target.Bucket, func(conn Connection) error {
-		err = conn.SetMeta(req.conflictRec.Target.Id, req.conflictRec.Target.body, req.conflictRec.Target.Datatype, target)
+		err = conn.SetMeta(req.conflictRec.Target.Id, req.conflictRec.Target.Body, req.conflictRec.Target.Datatype, target)
 		return err
 	})
 	if err != nil {

@@ -1,13 +1,11 @@
 package conflictlog
 
 import (
-	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/couchbase/cbauth"
 	"github.com/couchbase/gocbcore/v9"
-	"github.com/couchbase/goxdcr/base"
 	"github.com/couchbase/goxdcr/log"
 )
 
@@ -113,17 +111,6 @@ func (conn *gocbCoreConn) SetMeta(key string, body []byte, dataType uint8, targe
 	}
 
 	return
-}
-
-func (conn *gocbCoreConn) SetMetaObj(key string, val interface{}, target Target) (err error) {
-	conn.logger.Infof("setMeta: key=%s", key)
-
-	body, err := json.Marshal(val)
-	if err != nil {
-		return
-	}
-
-	return conn.SetMeta(key, body, base.JSONDataType, target)
 }
 
 func (conn *gocbCoreConn) Close() error {
