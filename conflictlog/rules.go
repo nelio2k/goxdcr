@@ -214,11 +214,11 @@ func (m *Mapping) SameAs(other *Mapping) bool {
 // the conflicts will be logged
 type Target struct {
 	// Bucket is the conflict bucket
-	Bucket string
+	Bucket string `json:"bucket"`
 	// Scope is the conflict bucket's scope
-	Scope string
+	Scope string `json:"scope"`
 	// Collection is the conflict bucket's collection
-	Collection string
+	Collection string `json:"collection"`
 }
 
 func (t Target) String() string {

@@ -12,4 +12,5 @@ var (
 	ErrEmptyRules            error = errors.New("empty conflict rules")
 	ErrUnknownCollection     error = errors.New("unknown collection")
 	ErrClosedConnPool        error = errors.New("use of closed connection pool")
+	ErrNotMyBucket           error = errors.New("not my bucket")
 )

@@ -2,7 +2,9 @@ package conflictlog
 
 import (
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -18,10 +20,14 @@ import (
 var _ Connection = (*MemcachedConn)(nil)
 
 type MemcachedConn struct {
+	id            int64
+	addr          string
 	logger        *log.CommonLogger
 	bucketName    string
-	mccConn       *mcc.Client
+	connMap       map[string]*mcc.Client
 	manifestCache *ManifestCache
+	utilsObj      utils.UtilsIface
+	bucketInfo    *BucketInfo
 	opaque        uint32
 }
 
@@ -33,7 +39,36 @@ func NewMemcachedConn(logger *log.CommonLogger, utilsObj utils.UtilsIface, manCa
 
 	logger.Debugf("memcached user=%s passwd=%s", user, passwd)
 
-	mccConn, err := base.NewConn(addr, user, passwd, bucketName, true, base.KeepAlivePeriod, logger)
+	connId := newConnId()
+	conn, err := newMemcachedConn(logger, connId, utilsObj, bucketName, addr)
+	if err != nil {
+		return
+	}
+
+	m = &MemcachedConn{
+		id:         connId,
+		bucketName: bucketName,
+		addr:       addr,
+		logger:     logger,
+		connMap: map[string]*mcc.Client{
+			addr: conn,
+		},
+		utilsObj:      utilsObj,
+		manifestCache: manCache,
+	}
+
+	return
+}
+
+func newMemcachedConn(logger *log.CommonLogger, id int64, utilsObj utils.UtilsIface, bucketName string, addr string) (conn *mcc.Client, err error) {
+	user, passwd, err := cbauth.GetMemcachedServiceAuth(addr)
+	if err != nil {
+		return
+	}
+
+	logger.Infof("connecting to memcached id=%d user=%s addr=%s", id, user, addr)
+
+	conn, err = base.NewConn(addr, user, passwd, bucketName, true, base.KeepAlivePeriod, logger)
 	if err != nil {
 		return
 	}
@@ -50,27 +85,22 @@ func NewMemcachedConn(logger *log.CommonLogger, utilsObj utils.UtilsIface, manCa
 	readTimeout := 30 * time.Second
 	writeTimeout := 30 * time.Second
 
-	retFeatures, err := utilsObj.SendHELOWithFeatures(mccConn, userAgent, readTimeout, writeTimeout, features, logger)
+	retFeatures, err := utilsObj.SendHELOWithFeatures(conn, userAgent, readTimeout, writeTimeout, features, logger)
 	if err != nil {
 		return
 	}
 
 	logger.Debugf("returned features: %s", retFeatures.String())
 
-	m = &MemcachedConn{
-		logger:        logger,
-		mccConn:       mccConn,
-		manifestCache: manCache,
-	}
-
 	return
 }
 
-func (m *MemcachedConn) fetchManifests() (man *metadata.CollectionsManifest, err error) {
-	rsp, err := m.mccConn.GetCollectionsManifest()
+func (m *MemcachedConn) fetchManifests(conn *mcc.Client) (man *metadata.CollectionsManifest, err error) {
+	rsp, err := conn.GetCollectionsManifest()
 	if err != nil {
 		return
 	}
+
 	if rsp.Status != gomemcached.SUCCESS {
 		err = fmt.Errorf("memcached request failed, req=GetCollectionManifest, status=%d, msg=%s", rsp.Status, string(rsp.Body))
 		return
@@ -82,7 +112,11 @@ func (m *MemcachedConn) fetchManifests() (man *metadata.CollectionsManifest, err
 	return
 }
 
-func (m *MemcachedConn) getCollectionId(target Target, checkCache bool) (collId uint32, err error) {
+func (conn *MemcachedConn) Id() int64 {
+	return conn.id
+}
+
+func (m *MemcachedConn) getCollectionId(conn *mcc.Client, target Target, checkCache bool) (collId uint32, err error) {
 	var ok bool
 
 	if checkCache {
@@ -94,7 +128,7 @@ func (m *MemcachedConn) getCollectionId(target Target, checkCache bool) (collId 
 
 	m.logger.Infof("fetching manifests for checkCache=%v bucket=%s", checkCache, target.Bucket)
 
-	man, err := m.fetchManifests()
+	man, err := m.fetchManifests(conn)
 	if err != nil {
 		return 0, err
 	}
@@ -111,7 +145,7 @@ func (m *MemcachedConn) getCollectionId(target Target, checkCache bool) (collId 
 	return
 }
 
-func (m *MemcachedConn) setMeta(key string, body []byte, collId uint32, dataType uint8) (err error) {
+func (m *MemcachedConn) setMeta(conn *mcc.Client, key string, vbNo uint16, body []byte, collId uint32, dataType uint8) (err error) {
 	bufGetter := func(sz uint64) ([]byte, error) {
 		return make([]byte, sz), nil
 	}
@@ -125,7 +159,6 @@ func (m *MemcachedConn) setMeta(key string, body []byte, collId uint32, dataType
 	keybuf := make([]byte, totalLen)
 	copy(keybuf[0:encLen], encCid[0:encLen])
 	copy(keybuf[encLen:], []byte(key))
-	vbNo := getVBNo(key, 64)
 
 	m.logger.Debugf("vbNo=%d encCid: %v, len=%d, keybuf:%v", vbNo, encCid[0:encLen], totalLen, keybuf)
 
@@ -145,7 +178,7 @@ func (m *MemcachedConn) setMeta(key string, body []byte, collId uint32, dataType
 	}
 
 	var options uint32
-	//options |= base.SKIP_CONFLICT_RESOLUTION_FLAG
+	options |= base.SKIP_CONFLICT_RESOLUTION_FLAG
 	binary.BigEndian.PutUint32(req.Extras[0:4], 0)
 	binary.BigEndian.PutUint64(req.Extras[8:16], 0)
 	binary.BigEndian.PutUint64(req.Extras[16:24], cas)
@@ -154,7 +187,7 @@ func (m *MemcachedConn) setMeta(key string, body []byte, collId uint32, dataType
 	//conn.logger.Debugf("bytes = %v", req.Bytes())
 
 	//rsp, err := m.mccConn.Set(vbNo, key, 0, 0, val, &mcc.ClientContext{CollId: colId})
-	rsp, err := m.mccConn.Send(req)
+	rsp, err := conn.Send(req)
 	if rsp != nil {
 		if rsp.Opaque != opaque {
 			err = fmt.Errorf("opaque value mismatch expected=%d,got=%d", opaque, rsp.Opaque)
@@ -162,6 +195,15 @@ func (m *MemcachedConn) setMeta(key string, body []byte, collId uint32, dataType
 		}
 		if rsp.Status == gomemcached.UNKNOWN_COLLECTION {
 			err = ErrUnknownCollection
+			return
+		}
+		if rsp.Status == gomemcached.NOT_MY_VBUCKET {
+			m.logger.Infof("got NOT_MY_BUCKET bucketName=%s", m.bucketName)
+			m.bucketInfo, err = parseNotMyVbucketValue(m.logger, rsp.Body, m.addr)
+			if err != nil {
+				return
+			}
+			err = ErrNotMyBucket
 			return
 		}
 		m.logger.Debugf("received rsp key=%s status=%d", rsp.Key, rsp.Status)
@@ -172,26 +214,55 @@ func (m *MemcachedConn) setMeta(key string, body []byte, collId uint32, dataType
 	return
 }
 
+func (m *MemcachedConn) getConnByVB(vbno uint16, replicaNum int) (conn *mcc.Client, err error) {
+	addr := m.addr
+	if m.bucketInfo != nil {
+		addr = m.bucketInfo.VBucketServerMap.GetAddrByVB(vbno, replicaNum)
+	}
+
+	m.logger.Debugf("selecting id=%d addr=%s for vb=%d", m.id, addr, vbno)
+	conn, ok := m.connMap[addr]
+	if ok {
+		return
+	}
+
+	conn, err = newMemcachedConn(m.logger, m.id, m.utilsObj, m.bucketName, addr)
+	if err != nil {
+		return
+	}
+	m.connMap[addr] = conn
+	return
+}
+
 func (m *MemcachedConn) SetMeta(key string, body []byte, dataType uint8, target Target) (err error) {
 	checkCache := true
 	var collId uint32
+	vbNo := getVBNo(key, 1024)
+
+	var conn *mcc.Client
 
 	for i := 0; i < 2; i++ {
-		collId, err = m.getCollectionId(target, checkCache)
+		conn, err = m.getConnByVB(vbNo, 0)
 		if err != nil {
 			return err
 		}
 
-		err = m.setMeta(key, body, collId, dataType)
+		collId, err = m.getCollectionId(conn, target, checkCache)
+		if err != nil {
+			return err
+		}
+
+		err = m.setMeta(conn, key, vbNo, body, collId, dataType)
 		if err == nil {
 			return
 		}
 
-		if err == ErrUnknownCollection {
+		switch err {
+		case ErrUnknownCollection:
 			m.logger.Infof("collection not found key=%s, target=%s", key, target.String())
 			checkCache = false
-			continue
-		} else {
+		case ErrNotMyBucket:
+		default:
 			return err
 		}
 	}
@@ -200,5 +271,30 @@ func (m *MemcachedConn) SetMeta(key string, body []byte, dataType uint8, target 
 }
 
 func (m *MemcachedConn) Close() error {
+	m.logger.Infof("closing memcached conn id=%d", m.id)
+	for _, conn := range m.connMap {
+		conn.Close()
+	}
 	return nil
+}
+
+func parseNotMyVbucketValue(logger *log.CommonLogger, value []byte, sourceAddr string) (info *BucketInfo, err error) {
+	logger.Debugf("parsing NOT_MY_BUCKET response")
+
+	sourceHost := base.GetHostName(sourceAddr)
+	// Try to parse the value as a bucket configuration
+	info, err = parseConfig(value, sourceHost)
+	return
+}
+
+func parseConfig(config []byte, srcHost string) (info *BucketInfo, err error) {
+	configStr := strings.Replace(string(config), "$HOST", srcHost, -1)
+
+	info = new(BucketInfo)
+	err = json.Unmarshal([]byte(configStr), info)
+	if err != nil {
+		return nil, err
+	}
+
+	return info, nil
 }

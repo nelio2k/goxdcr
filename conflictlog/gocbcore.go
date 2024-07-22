@@ -14,6 +14,7 @@ const ConflictWriterUserAgent = "xdcrConflictWriter"
 var _ Connection = (*gocbCoreConn)(nil)
 
 type gocbCoreConn struct {
+	id             int64
 	MemcachedAddr  string
 	bucketName     string
 	memdAddrGetter MemcachedAddrGetter
@@ -24,12 +25,16 @@ type gocbCoreConn struct {
 }
 
 func newGocbConn(logger *log.CommonLogger, memdAddrGetter MemcachedAddrGetter, bucketName string) (conn *gocbCoreConn, err error) {
+	connId := newConnId()
+
+	logger.Infof("creating new gocbcore connection id=%d", connId)
 	conn = &gocbCoreConn{
+		id:             connId,
 		memdAddrGetter: memdAddrGetter,
 		bucketName:     bucketName,
 		logger:         logger,
 		//sudeep todo: make it configurable
-		timeout: 5 * time.Second,
+		timeout: 60 * time.Second,
 		finch:   make(chan bool),
 	}
 
@@ -59,10 +64,11 @@ func (conn *gocbCoreConn) setupAgent() (err error) {
 	}
 
 	config := &gocbcore.AgentConfig{
-		MemdAddrs:  []string{memdAddr},
-		Auth:       auth,
-		BucketName: conn.bucketName,
-		UserAgent:  ConflictWriterUserAgent,
+		MemdAddrs:      []string{memdAddr},
+		Auth:           auth,
+		BucketName:     conn.bucketName,
+		UserAgent:      ConflictWriterUserAgent,
+		UseCollections: true,
 
 		// use KvPoolSize=1 to ensure only one connection is created by the agent
 		KvPoolSize: 1,
@@ -76,11 +82,17 @@ func (conn *gocbCoreConn) setupAgent() (err error) {
 	return
 }
 
+func (conn *gocbCoreConn) Id() int64 {
+	return conn.id
+}
+
 func (conn *gocbCoreConn) Bucket() string {
 	return conn.bucketName
 }
 
 func (conn *gocbCoreConn) SetMeta(key string, body []byte, dataType uint8, target Target) (err error) {
+	conn.logger.Infof("writing id=%d key=%s bodyLen=%d", conn.id, key, len(body))
+
 	ch := make(chan error)
 
 	opts := gocbcore.SetMetaOptions{
@@ -93,7 +105,7 @@ func (conn *gocbCoreConn) SetMeta(key string, body []byte, dataType uint8, targe
 	}
 
 	cb := func(sr *gocbcore.SetMetaResult, err2 error) {
-		conn.logger.Infof("got setMeta callback sr=%v, err2=%v", sr, err2)
+		conn.logger.Debugf("got setMeta callback sr=%v, err2=%v", sr, err2)
 		ch <- err2
 	}
 
