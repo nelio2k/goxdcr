@@ -40,4 +40,4 @@ tools/testScripts/vagrant/data
 build/
 
 # binaries
-xtest
+/xtest

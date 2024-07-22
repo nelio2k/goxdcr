@@ -1,0 +1,23 @@
+{
+    "name": "conflictLogLoadTest",
+    "logLevel": "Info",
+    "debugPort": 7171,
+
+    "conflictLogLoadTest": {
+        "target": {
+            "bucket": "B1",
+            "scope": "S1",
+            "collection": "C1"
+        },
+
+        "connType": "gocbcore",
+
+        "docLoadCount": 100000,
+        "xmemCount": 4,
+        "batchCount": 100,
+
+        "logQueue": 1000,
+        "workerCount": 3,
+        "docSizeRange": [1024, 4096]
+    } 
+}
