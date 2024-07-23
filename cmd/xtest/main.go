@@ -19,10 +19,11 @@ const Bucket = "B1"
 var gKey = "abcd"
 
 type MemAddrGetter struct {
+	addr string
 }
 
 func (m *MemAddrGetter) MyMemcachedAddr() (string, error) {
-	return "127.0.0.1:12000", nil
+	return m.addr, nil
 }
 
 func loadConfigFile(filepath string) (cfg Config, err error) {
@@ -72,17 +73,22 @@ func main() {
 
 	log.DefaultLoggerContext.SetLogLevel(logLevel)
 
-	addrGetter := &MemAddrGetter{}
+	addrGetter := &MemAddrGetter{
+		addr: cfg.MemcachedAddr,
+	}
 	utils := utils.NewUtilities()
 	conflictlog.InitManager(log.DefaultLoggerContext, utils, addrGetter)
 
 	switch cfg.Name {
 	case "conflictLogLoadTest":
 		err = conflictLogLoadTest(cfg)
-		if err != nil {
-			fmt.Printf("error=%v\n", err)
-		}
+	case "gocbcoreTest":
+		err = gocbcoreTest(cfg)
 	default:
 		fmt.Println("error: unknown config name =", cfg.Name)
+	}
+
+	if err != nil {
+		fmt.Printf("error=%v\n", err)
 	}
 }

@@ -17,6 +17,44 @@ type TestStruct struct {
 	Str string `json:"str"`
 }
 
+// ConflictLogLoadTest is the config for load testing of the
+// conflict logging
+type ConflictLogLoadTest struct {
+	// ConnType is the underlying type of connection to use
+	// Values: "gocbcore", "memcached"
+	ConnType string `json:"connType"`
+
+	// Loggers define multiple logger loads to run simultaneuosly
+	Loggers map[string]*ConflictLoggerOptions `json:"loggers"`
+}
+
+type ConflictLoggerOptions struct {
+	// Target is the target conflict bucket details
+	Target conflictlog.Target `json:"target"`
+
+	// DocSizeRange is the min and max size in bytes of the source & target documents
+	// in a conflict
+	DocSizeRange [2]int `json:"docSizeRange"`
+
+	// DocLoadCount is the count of conflicts to log
+	// Note: the actual count of docs written will be much larger
+	DocLoadCount int `json:"docLoadCount"`
+
+	// Batch count is the count of conflicts are logged before
+	// waiting for all of them
+	BatchCount int `json:"batchCount"`
+
+	// XMemCount simulates the XMemNozzle count which calls the Log()
+	XMemCount int `json:"xmemCount"`
+
+	// ----- Logger configuration -----
+	// LogQueue is the logger's internal channel capacity
+	LogQueue int `json:"logQueue"`
+
+	// WorkerCount is the logger's spawned worker count
+	WorkerCount int `json:"workerCount"`
+}
+
 func genRandomJson(id string, min, max int) ([]byte, error) {
 	n := min + rand.Intn(max-min)
 	t := TestStruct{
@@ -60,21 +98,14 @@ func createCRDDoc(prefix string, i int, min, max int) (crd *conflictlog.Conflict
 	return
 }
 
-func conflictLogLoadTest(cfg Config) (err error) {
-	opts := cfg.ConflictLogPertest
-
-	logger := log.NewLogger("xtest", log.DefaultLoggerContext)
+func runLoggerLoad(wg *sync.WaitGroup, logger *log.CommonLogger, opts *ConflictLoggerOptions) (err error) {
 	m, err := conflictlog.GetManager()
 	if err != nil {
 		return
 	}
 
-	m.SetConnType(opts.ConnType)
-
-	target := conflictlog.NewTarget("B1", "S1", "C1")
-
 	clog, err := m.NewLogger(logger, "1234",
-		conflictlog.WithMapper(conflictlog.NewFixedMapper(logger, target)),
+		conflictlog.WithMapper(conflictlog.NewFixedMapper(logger, opts.Target)),
 		conflictlog.WithCapacity(opts.LogQueue),
 		conflictlog.WithWorkerCount(opts.WorkerCount),
 	)
@@ -82,17 +113,15 @@ func conflictLogLoadTest(cfg Config) (err error) {
 		return
 	}
 
-	start := time.Now()
-
-	wg := &sync.WaitGroup{}
 	docCountPerXmem := opts.DocLoadCount / opts.XMemCount
 	finch := make(chan bool, 1)
 
 	logger.Infof("xmemCount=%d, docCountPerXmem=%d", opts.XMemCount, docCountPerXmem)
 
-	for i := 0; i < opts.XMemCount; i++ {
+	for j := 0; j < opts.XMemCount; j++ {
 		wg.Add(1)
-		go func(n int) {
+		n := j
+		go func() {
 			defer wg.Done()
 
 			docIdPrefix := fmt.Sprintf("xmem-doc-%d", n)
@@ -112,7 +141,7 @@ func conflictLogLoadTest(cfg Config) (err error) {
 					handles = []base.ConflictLoggerHandle{}
 				}
 
-				min, max := cfg.ConflictLogPertest.DocSizeRange[0], cfg.ConflictLogPertest.DocSizeRange[1]
+				min, max := opts.DocSizeRange[0], opts.DocSizeRange[1]
 				crd, err := createCRDDoc(docIdPrefix, i, min, max)
 				if err != nil {
 					logger.Errorf("error in creating crd doc err=%v", err)
@@ -138,7 +167,38 @@ func conflictLogLoadTest(cfg Config) (err error) {
 					return
 				}
 			}
-		}(i)
+		}()
+	}
+
+	return
+}
+
+func conflictLogLoadTest(cfg Config) (err error) {
+	opts := cfg.ConflictLogPertest
+
+	m, err := conflictlog.GetManager()
+	if err != nil {
+		return
+	}
+
+	m.SetConnType(opts.ConnType)
+
+	wg := &sync.WaitGroup{}
+	logger := log.NewLogger("conflictLoadTest", log.DefaultLoggerContext)
+
+	start := time.Now()
+
+	for name, loggerOpts := range opts.Loggers {
+		wg.Add(1)
+		name := name
+		loggerOpts := loggerOpts
+		go func() {
+			defer wg.Done()
+			err := runLoggerLoad(wg, logger, loggerOpts)
+			if err != nil {
+				logger.Errorf("run logger load failed, name=%s, err=%v", name, err)
+			}
+		}()
 	}
 
 	wg.Wait()

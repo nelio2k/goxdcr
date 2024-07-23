@@ -41,3 +41,10 @@ build/
 
 # binaries
 /xtest
+
+# logs
+log
+*.log
+
+#vscode
+.vscode

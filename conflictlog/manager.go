@@ -112,7 +112,7 @@ func (m *managerImpl) ConnPool() ConnPool {
 
 func (m *managerImpl) newGocbCoreConn(bucketName string) (w io.Closer, err error) {
 	m.logger.Infof("creating new conflict writer bucket=%s", bucketName)
-	return newGocbConn(m.logger, m.memdAddrGetter, bucketName)
+	return NewGocbConn(m.logger, m.memdAddrGetter, bucketName)
 }
 
 func (m *managerImpl) newMemcachedConn(bucketName string) (conn io.Closer, err error) {
