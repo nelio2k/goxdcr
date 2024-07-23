@@ -1934,7 +1934,7 @@ type SubdocSpecOption struct {
 	IncludeImportCas      bool // Include target importCas if enableCrossClusterVersioning.
 	IncludeBody           bool // Get the target body for merge
 	IncludeVXattr         bool // Get the target document metadata as Virtual so we can perform CR and format target HLV
-	ConfictLoggingEnabled bool // Get VbUUID and seqno of target doc as a virtual xattr, needed for conflict logging
+	ConfictLoggingEnabled bool // Get XTOC, VbUUID and seqno of target doc as a virtual xattr, needed for conflict logging
 }
 
 func ComposeSpecForSubdocGet(option SubdocSpecOption) (specs []SubdocLookupPathSpec) {
@@ -1955,7 +1955,7 @@ func ComposeSpecForSubdocGet(option SubdocSpecOption) (specs []SubdocLookupPathS
 		specLen = specLen + 4
 	}
 	if option.ConfictLoggingEnabled {
-		specLen = specLen + 2
+		specLen = specLen + 3
 	}
 	if specLen == 0 {
 		return
@@ -2001,6 +2001,11 @@ func ComposeSpecForSubdocGet(option SubdocSpecOption) (specs []SubdocLookupPathS
 		specs = append(specs, spec)
 		// $document.seqno
 		spec = SubdocLookupPathSpec{gomemcached.SUBDOC_GET, gomemcached.SUBDOC_FLAG_XATTR_PATH, []byte(VXATTR_SEQNO)}
+		specs = append(specs, spec)
+
+		// Since xattrs needs to be logged too, get XTOC
+		// $document.XTOC
+		spec = SubdocLookupPathSpec{gomemcached.SUBDOC_GET, gomemcached.SUBDOC_FLAG_XATTR_PATH, []byte(XattributeToc)}
 		specs = append(specs, spec)
 	}
 	if option.IncludeBody {

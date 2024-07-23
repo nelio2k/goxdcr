@@ -1609,16 +1609,6 @@ func (router *Router) ComposeMCRequest(wrappedEvent *base.WrappedUprEvent) (*bas
 	wrapped_req.ColInfo = router.targetColInfoPool.Get()
 	wrapped_req.ColInfoMtx.Unlock()
 
-	isCCR := router.sourceCRMode == base.CRMode_Custom
-	isMobile := router.getMobileCompatMode() != base.MobileCompatibilityOff
-	crossClusterVersioning := router.getCrossClusterVersioning()
-	if isMobile {
-		wrapped_req.HLVModeOptions.PreserveSync = true
-	}
-	if crossClusterVersioning || isCCR {
-		wrapped_req.HLVModeOptions.SendHlv = true
-	}
-
 	return wrapped_req, nil
 }
 

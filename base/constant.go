@@ -1753,3 +1753,9 @@ const CASDriftLiveDetected = "One or more documents are not replicated because t
 const PreCheckCASDriftDetected = "The following VBs have time drift (nanoSecs) beyond acceptable threshold"
 
 var NWLatencyToleranceMilliSec = 10000 * time.Millisecond
+
+var BodySpec SubdocLookupPathSpec = SubdocLookupPathSpec{
+	Opcode: GET,
+	Flags:  0,
+	Path:   nil,
+}

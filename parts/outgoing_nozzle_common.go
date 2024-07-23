@@ -61,12 +61,13 @@ const (
 type NeedSendStatus int
 
 const (
-	Send              NeedSendStatus = iota
-	NotSendFailedCR   NeedSendStatus = iota
-	NotSendMerge      NeedSendStatus = iota
-	NotSendSetback    NeedSendStatus = iota
-	RetryTargetLocked NeedSendStatus = iota
-	NotSendOther      NeedSendStatus = iota
+	Send                  NeedSendStatus = iota
+	NotSendFailedCR       NeedSendStatus = iota
+	NotSendMerge          NeedSendStatus = iota
+	NotSendSetback        NeedSendStatus = iota
+	RetryTargetLocked     NeedSendStatus = iota
+	RetryTargetCasChanged NeedSendStatus = iota
+	NotSendOther          NeedSendStatus = iota
 )
 
 /*
@@ -217,7 +218,7 @@ type dataBatch struct {
 	noRepMap map[string]NeedSendStatus
 	// For CCR, noRepMap value may be Not_Send_Merge or Not_Send_Setback. For these, the target document lookup
 	// response is stored in here.
-	mergeLookupMap *responseLookup
+	conflictLookupMap *responseLookup
 	// If mobile is on, for document winning conflict resolution, we need to preserve target _sync XATTR. The lookup for these are stored in here
 	sendLookupMap *responseLookup
 
@@ -288,6 +289,23 @@ func (lookup *responseLookup) deregisterLookup(uniqueKey string) (*base.SubdocLo
 	return response, nil
 }
 
+// returns the response
+func (lookup *responseLookup) getLookup(uniqueKey string) (*base.SubdocLookupResponse, error) {
+	if lookup == nil {
+		return nil, base.ErrorNilPtr
+	}
+
+	response, ok := lookup.responses[uniqueKey]
+	if !ok {
+		return nil, base.ErrorNilPtr
+	}
+	if response == nil {
+		return nil, base.ErrorNilPtr
+	}
+
+	return response, nil
+}
+
 // only recycle if the response referenced by noone responseLookup
 func (lookup *responseLookup) canRecycle(resp *mc.MCResponse) bool {
 	if lookup == nil {
@@ -309,7 +327,7 @@ func newBatch(cap_count uint32, cap_size uint32, logger *log.CommonLogger) *data
 		capacity_size:     cap_size,
 		getMetaMap:        make(base.McRequestMap),
 		noRepMap:          nil,
-		mergeLookupMap:    nil,
+		conflictLookupMap: nil,
 		sendLookupMap:     nil,
 		batch_nonempty_ch: make(chan bool),
 		nonempty_set:      false,
@@ -322,11 +340,12 @@ func (b *dataBatch) accumuBatch(req *base.WrappedMCRequest, classifyFunc func(re
 	var isFull bool = true
 
 	if req != nil && req.Req != nil {
-		// When this batch is established, it establishes these specs and conflict logging behaviour
+		// When this batch is established, it establishes these specs and conflict logging and other settings behaviour
 		// so store it to be used in case of mutation retries
 		req.GetMetaSpecWithoutHlv = b.getMetaSpecWithoutHlv
 		req.GetMetaSpecWithHlv = b.getMetaSpecWithHlv
 		req.GetBodySpec = b.getBodySpec
+
 		req.HLVModeOptions.ConflictLoggingEnabled = b.conflictLoggingEnabled
 
 		size := req.Req.Size()
