@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/couchbase/cbauth"
-	"github.com/couchbase/gocbcore/v9"
-	"github.com/couchbase/gocbcore/v9/memd"
+	"github.com/couchbase/gocbcore/v10"
+	"github.com/couchbase/gocbcore/v10/memd"
 	"github.com/couchbase/goxdcr/log"
 )
 
@@ -59,17 +59,26 @@ func (conn *gocbCoreConn) setupAgent() (err error) {
 	}
 
 	config := &gocbcore.AgentConfig{
-		MemdAddrs:      []string{memdAddr},
-		Auth:           auth,
-		BucketName:     conn.bucketName,
-		UserAgent:      ConflictWriterUserAgent,
-		UseCollections: true,
-		UseTLS:         false,
-		UseCompression: true,
-		AuthMechanisms: []gocbcore.AuthMechanism{gocbcore.PlainAuthMechanism},
-
-		// use KvPoolSize=1 to ensure only one connection is created by the agent
-		KvPoolSize: 1,
+		BucketName: conn.bucketName,
+		UserAgent:  ConflictWriterUserAgent,
+		SecurityConfig: gocbcore.SecurityConfig{
+			UseTLS:         false,
+			Auth:           auth,
+			AuthMechanisms: []gocbcore.AuthMechanism{gocbcore.PlainAuthMechanism},
+		},
+		IoConfig: gocbcore.IoConfig{
+			UseCollections: true,
+		},
+		CompressionConfig: gocbcore.CompressionConfig{
+			Enabled: true,
+		},
+		KVConfig: gocbcore.KVConfig{
+			PoolSize:             1,
+			ConnectionBufferSize: 4 * 1024,
+		},
+		SeedConfig: gocbcore.SeedConfig{
+			MemdAddrs: []string{memdAddr},
+		},
 	}
 
 	conn.agent, err = gocbcore.CreateAgent(config)
@@ -125,8 +134,6 @@ func (conn *gocbCoreConn) SetMeta(key string, body []byte, dataType uint8, targe
 	case <-conn.finch:
 		err = ErrWriterClosed
 	case err = <-ch:
-	case <-time.After(conn.timeout):
-		err = ErrWriterTimeout
 	}
 
 	return
