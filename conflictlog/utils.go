@@ -18,7 +18,7 @@ func LoggerForRules(conflictLoggingMap base.ConflictLoggingMappingInput, replId 
 
 	var rules *Rules
 	var err error
-	rules, err = NewRules(conflictLoggingMap)
+	rules, err = ParseRules(conflictLoggingMap)
 	if err != nil {
 		return nil, fmt.Errorf("error converting %v to rules, err=%v", conflictLoggingMap, err)
 	}

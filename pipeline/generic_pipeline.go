@@ -1192,7 +1192,7 @@ func (genericPipeline *GenericPipeline) updateConflictLoggingRules(settings meta
 	// Option 1: logger needs to be enabled
 	if conflictLoggingEnabled {
 		// compute the "rules"
-		newRules, err := conflictlog.NewRules(conflictLoggingMap)
+		newRules, err := conflictlog.ParseRules(conflictLoggingMap)
 		if err != nil || newRules == nil {
 			genericPipeline.logger.Warnf("%v, error converting %v to new conflict logging rules, ignoring the input and continuing with old rules. err=%v",
 				conflictLoggingMap, err)
