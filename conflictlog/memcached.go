@@ -120,7 +120,7 @@ func (m *MemcachedConn) getCollectionId(conn *mcc.Client, target Target, checkCa
 	var ok bool
 
 	if checkCache {
-		collId, ok = m.manifestCache.GetCollectionId(target.Bucket, target.Scope, target.Collection)
+		collId, ok = m.manifestCache.GetCollectionId(target.Bucket, target.NS.ScopeName, target.NS.CollectionName)
 		if ok {
 			return
 		}
@@ -133,7 +133,7 @@ func (m *MemcachedConn) getCollectionId(conn *mcc.Client, target Target, checkCa
 		return 0, err
 	}
 
-	collId, err = man.GetCollectionId(target.Scope, target.Collection)
+	collId, err = man.GetCollectionId(target.NS.ScopeName, target.NS.CollectionName)
 	if err != nil {
 		if err == base.ErrorNotFound {
 			err = fmt.Errorf("scope or collection not found. target=%s", target)
@@ -145,7 +145,7 @@ func (m *MemcachedConn) getCollectionId(conn *mcc.Client, target Target, checkCa
 	return
 }
 
-func (m *MemcachedConn) setMeta(conn *mcc.Client, key string, vbNo uint16, body []byte, collId uint32, dataType uint8, target Target) (err error) {
+func (m *MemcachedConn) setMeta(conn *mcc.Client, key string, vbNo uint16, body []byte, collId uint32, dataType uint8) (err error) {
 	bufGetter := func(sz uint64) ([]byte, error) {
 		return make([]byte, sz), nil
 	}
@@ -185,32 +185,44 @@ func (m *MemcachedConn) setMeta(conn *mcc.Client, key string, vbNo uint16, body 
 	binary.BigEndian.PutUint32(req.Extras[24:28], options)
 
 	rsp, err := conn.Send(req)
-	if rsp != nil {
-		if rsp.Opaque != opaque {
-			err = fmt.Errorf("opaque value mismatch expected=%d,got=%d", opaque, rsp.Opaque)
-			return
-		}
-
-		if rsp.Status == gomemcached.UNKNOWN_COLLECTION {
-			m.logger.Debugf("got UNKNOWN_COLLECTION id=%d, body=%s", m.id, string(rsp.Body))
-			err = ErrUnknownCollection
-			return
-		}
-
-		if rsp.Status == gomemcached.NOT_MY_VBUCKET {
-			m.logger.Debugf("got NOT_MY_BUCKET id=%d, bucketName=%s", m.id, m.bucketName)
-			m.bucketInfo, err = parseNotMyVbucketValue(m.logger, rsp.Body, m.addr)
-			if err != nil {
-				return
-			}
-			err = ErrNotMyBucket
-			return
-		}
-		m.logger.Debugf("received rsp key=%s status=%d", rsp.Key, rsp.Status)
+	err2 := m.handleResponse(rsp, opaque)
+	if err2 != nil {
+		return err2
 	}
+
 	if err != nil {
 		return
 	}
+	return
+}
+
+func (m *MemcachedConn) handleResponse(rsp *gomemcached.MCResponse, opaque uint32) (err error) {
+	if rsp == nil {
+		return
+	}
+
+	if rsp.Opaque != opaque {
+		err = fmt.Errorf("opaque value mismatch expected=%d,got=%d", opaque, rsp.Opaque)
+		return
+	}
+
+	if rsp.Status == gomemcached.UNKNOWN_COLLECTION {
+		m.logger.Debugf("got UNKNOWN_COLLECTION id=%d, body=%s", m.id, string(rsp.Body))
+		err = ErrUnknownCollection
+		return
+	}
+
+	if rsp.Status == gomemcached.NOT_MY_VBUCKET {
+		m.logger.Debugf("got NOT_MY_BUCKET id=%d, bucketName=%s", m.id, m.bucketName)
+		m.bucketInfo, err = parseNotMyVbucketValue(m.logger, rsp.Body, m.addr)
+		if err != nil {
+			return
+		}
+		err = ErrNotMyBucket
+		return
+	}
+
+	m.logger.Debugf("received rsp key=%s status=%d", rsp.Key, rsp.Status)
 	return
 }
 
@@ -252,7 +264,7 @@ func (m *MemcachedConn) SetMeta(key string, body []byte, dataType uint8, target 
 			return err
 		}
 
-		err = m.setMeta(conn, key, vbNo, body, collId, dataType, target)
+		err = m.setMeta(conn, key, vbNo, body, collId, dataType)
 		if err == nil {
 			return
 		}

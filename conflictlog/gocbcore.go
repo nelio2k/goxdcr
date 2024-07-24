@@ -105,8 +105,8 @@ func (conn *gocbCoreConn) SetMeta(key string, body []byte, dataType uint8, targe
 		Key:            []byte(key),
 		Value:          body,
 		Datatype:       dataType,
-		ScopeName:      target.Scope,
-		CollectionName: target.Collection,
+		ScopeName:      target.NS.ScopeName,
+		CollectionName: target.NS.CollectionName,
 		Options:        uint32(memd.SkipConflictResolution),
 		Cas:            gocbcore.Cas(time.Now().UnixNano()),
 	}

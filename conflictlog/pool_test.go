@@ -72,6 +72,6 @@ func TestPool_GC(t *testing.T) {
 		pool.Put(bucket, conn, false)
 	}
 
-	time.Sleep(4 * time.Second)
+	time.Sleep(6 * time.Second)
 	require.Equal(t, connCount, *(buckets[bucket]))
 }

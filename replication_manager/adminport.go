@@ -243,6 +243,7 @@ func (adminport *Adminport) handleRequest(
 		response, err = adminport.doPostConnectionPreCheckRequest(request)
 	case base.XDCRConnectionPreCheckPath + base.UrlDelimiter + base.MethodGet:
 		response, err = adminport.doGetConnectionPreCheckResultRequest(request)
+	// TODO: [TEMP] remove doChangeConflictLogSetting
 	case "xdcr/conflictlog" + base.UrlDelimiter + base.MethodPost:
 		response, err = adminport.doChangeConflictLogSetting(request)
 	default:
@@ -1404,6 +1405,7 @@ func (adminport *Adminport) doGetConnectionPreCheckResultRequest(request *http.R
 	return NewConnectionPreCheckGetResponse(taskId, res, done)
 }
 
+// TODO: [TEMP] remove doChangeConflictLogSetting
 func (adminport *Adminport) doChangeConflictLogSetting(request *http.Request) (*ap.Response, error) {
 	logger_ap.Infof("doChangeConflictConnectionType\n")
 
