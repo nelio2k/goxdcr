@@ -612,6 +612,46 @@ func NewCollectionNamespaceFromString(specificStr string) (CollectionNamespace, 
 	}
 }
 
+// The specificStr should follow the format of: "<scope>.<collection>" or "<scope>"
+// In other words, atleast scope needs to be present. It will disallow "<scope>."
+func NewOptionalCollectionNamespaceFromString(specificStr string) (CollectionNamespace, error) {
+	if !OptionalCollectionNamespaceRegex.MatchString(specificStr) {
+		if len(specificStr) > MaxCollectionNameBytes {
+			return CollectionNamespace{}, ErrorLengthExceeded
+		}
+		return CollectionNamespace{}, ErrorInvalidColNamespaceFormat
+	} else {
+		names := OptionalCollectionNamespaceRegex.FindStringSubmatch(specificStr)
+		if len(names) < 2 {
+			return CollectionNamespace{}, fmt.Errorf("Invalid capture for CollectionNameSpaces")
+		}
+
+		ns := CollectionNamespace{}
+
+		valid := CollectionNameValidationRegex.MatchString(names[1])
+		if !valid {
+			return CollectionNamespace{}, ErrorInvalidColNamespaceFormat
+		}
+		if len(names[1]) > MaxCollectionNameBytes {
+			return CollectionNamespace{}, ErrorLengthExceeded
+		}
+		ns.ScopeName = names[1]
+
+		if len(names) > 2 && names[2] != "" {
+			valid := CollectionNameValidationRegex.MatchString(names[2])
+			if !valid {
+				return CollectionNamespace{}, ErrorInvalidColNamespaceFormat
+			}
+			if len(names[2]) > MaxCollectionNameBytes {
+				return CollectionNamespace{}, ErrorLengthExceeded
+			}
+			ns.CollectionName = names[2]
+		}
+
+		return ns, nil
+	}
+}
+
 func NewDefaultCollectionNamespace() *CollectionNamespace {
 	ns, _ := NewCollectionNamespaceFromString(fmt.Sprintf("%v%v%v", DefaultScopeCollectionName, ScopeCollectionDelimiter, DefaultScopeCollectionName))
 	return &ns
@@ -651,6 +691,25 @@ func (c CollectionNamespace) Clone() CollectionNamespace {
 		ScopeName:      c.ScopeName,
 		CollectionName: c.CollectionName,
 	}
+}
+
+func (c CollectionNamespace) String() string {
+	if c.IsEmpty() {
+		return ""
+	}
+
+	scope := "<>"
+	collection := "<>"
+
+	if c.ScopeName != "" {
+		scope = c.ScopeName
+	}
+
+	if c.CollectionName != "" {
+		collection = c.CollectionName
+	}
+
+	return fmt.Sprintf("%s%s%s", scope, ScopeCollectionDelimiter, collection)
 }
 
 type CollectionNamespacePtrList []*CollectionNamespace

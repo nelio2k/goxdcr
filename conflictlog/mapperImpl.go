@@ -1,6 +1,7 @@
 package conflictlog
 
 import (
+	"github.com/couchbase/goxdcr/base"
 	"github.com/couchbase/goxdcr/log"
 )
 
@@ -29,13 +30,13 @@ func (m *conflictMapper) Map(rules *Rules, c Conflict) (target Target, err error
 		return
 	}
 
-	mapping := Mapping{
-		Scope:      c.Scope(),
-		Collection: c.Collection(),
+	source := base.CollectionNamespace{
+		ScopeName:      c.Scope(),
+		CollectionName: c.Collection(),
 	}
 
 	// SUMUKH TODO - complex rules mapping.
-	targetOverride, ok := rules.Mapping[mapping]
+	targetOverride, ok := rules.Mapping[source]
 	if ok {
 		target = targetOverride
 	}

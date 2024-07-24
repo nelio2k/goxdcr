@@ -145,8 +145,12 @@ var FilterSystemScopePassthruCollections = []string{SystemCollectionMobile}
 const CollectionValidNameCharClass = "[0-9A-Za-z-_%]"
 const CollectionValidPrefixNameClass = "[0-9A-Za-z-_]"
 
+// OptionalCollectionNamespaceRegexExpr matches pattern with collection name being optional
+// E.g S1.C1, S1 but not S1.
+var OptionalCollectionNamespaceRegexExpr = fmt.Sprintf("^(?P<scope>%v+)(?:[%v](?P<collection>%v+))?$", CollectionValidNameCharClass, ScopeCollectionDelimiter, CollectionValidNameCharClass)
 var CollectionNamespaceRegexExpr = fmt.Sprintf("^(?P<scope>%v+)[%v](?P<collection>%v+)$", CollectionValidNameCharClass, ScopeCollectionDelimiter, CollectionValidNameCharClass)
 var CollectionNamespaceRegex, _ = regexp.Compile(CollectionNamespaceRegexExpr)
+var OptionalCollectionNamespaceRegex, _ = regexp.Compile(OptionalCollectionNamespaceRegexExpr)
 
 var CollectionNameValidationRegex, _ = regexp.Compile(fmt.Sprintf("^%v%v*$", CollectionValidPrefixNameClass, CollectionValidNameCharClass))
 

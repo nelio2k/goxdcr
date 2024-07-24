@@ -617,7 +617,7 @@ func (config *xmemConfig) setConflictLoggingRules(settings metadata.ReplicationS
 	var newRules *conflictlog.Rules
 	if conflictLoggingEnabled {
 		// compute the "rules"
-		newRulesVal, err := conflictlog.NewRules(conflictLoggingMap)
+		newRulesVal, err := conflictlog.ParseRules(conflictLoggingMap)
 		if err != nil {
 			// shouldn't reach here since we validate as part of replication setting input validation.
 			config.logger.Errorf("Error converting %v to rules, ignoring the input. err=%v. enabled=%v", conflictLoggingMap, err, config.conflictLoggingEnabled.Load())
