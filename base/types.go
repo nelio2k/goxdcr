@@ -3200,12 +3200,13 @@ func (clm ConflictLoggingMappingInput) SameAs(other interface{}) bool {
 	return true
 }
 
-// "bucket" key should be present and non-empty.
-// "collection" key is optional and if not present, _default._default is implied.
-// Other keys are ignored from validation and parsing.
-// collection values should be of format [scope].[collection].
-// clm should be not nil or non-empty.
-func ParseOneConflictLoggingRule(rule map[string]interface{}) (bucketOut, scopeOut, collectionOut string, err error) {
+// rule should be not nil or non-empty.
+func ValidateOneConflictLoggingRule(rule map[string]interface{}) (err error) {
+	if rule == nil {
+		err = fmt.Errorf("nil conflict logging mapping")
+		return
+	}
+
 	bucketVal, ok := rule[CLBucketKey]
 	if !ok {
 		err = fmt.Errorf("no %v in %v", CLBucketKey, rule)
@@ -3225,10 +3226,7 @@ func ParseOneConflictLoggingRule(rule map[string]interface{}) (bucketOut, scopeO
 
 	collectionVal, ok := rule[CLCollectionKey]
 	if !ok {
-		// _default._default will be implied.
-		bucketOut = bucketName
-		scopeOut = DefaultScopeCollectionName
-		collectionOut = DefaultScopeCollectionName
+		err = fmt.Errorf("no %v in %v", CLCollectionKey, rule)
 		return
 	}
 
@@ -3243,23 +3241,21 @@ func ParseOneConflictLoggingRule(rule map[string]interface{}) (bucketOut, scopeO
 		return
 	}
 
-	scopeName, collectionName := SeparateScopeCollection(collection)
-	if scopeName == "" {
-		err = fmt.Errorf("%v should be of type [scope].[collection], empty [scope] in %v", CLCollectionKey, rule)
-		return
-	}
-	if collectionName == "" {
-		err = fmt.Errorf("%v should be of type [scope].[collection], empty [collection] in %v", CLCollectionKey, rule)
+	ns, err := NewCollectionNamespaceFromString(collection)
+	if err != nil {
+		err = fmt.Errorf("%v is invalid collection, err=%v", collection, err)
 		return
 	}
 
-	bucketOut = bucketName
-	scopeOut = scopeName
-	collectionOut = collectionName
+	if ns.CollectionName == "" || ns.ScopeName == "" {
+		err = fmt.Errorf("scope and/or collection should not be empty in %v", collection)
+		return
+	}
 
 	return
 }
 
+// should be in sync with conflictlog.ParseRules
 func (clm ConflictLoggingMappingInput) ValidateConflictLoggingMapValues() error {
 	if clm == nil {
 		return fmt.Errorf("nil conflict logging map %v", clm)
@@ -3271,7 +3267,7 @@ func (clm ConflictLoggingMappingInput) ValidateConflictLoggingMapValues() error 
 	}
 
 	// validate minimal requirements to turn conflict logging feature
-	_, _, _, err := ParseOneConflictLoggingRule(clm)
+	err := ValidateOneConflictLoggingRule(clm)
 	if err != nil {
 		return err
 	}
@@ -3290,10 +3286,17 @@ func (clm ConflictLoggingMappingInput) ValidateConflictLoggingMapValues() error 
 
 	for source, target := range loggingRules {
 		if source == "" {
-			// should not be empty.
-			// Note that this need not always be of format "[scope].[collection]".
-			// Can just be "[scope]", with not [collection], unlike target.
 			return fmt.Errorf("empty source key %v -> %v logging rule, in %v", source, target, loggingRules)
+		}
+
+		ns, err := NewOptionalCollectionNamespaceFromString(source)
+		if err != nil {
+			return fmt.Errorf("source for %v -> %v is invalid, err=%v", source, target, err)
+		}
+
+		// scope must be non empty, collection can be empty.
+		if ns.ScopeName == "" {
+			return fmt.Errorf("scope must not be empty in source for %v -> %v is invalid, err=%v", source, target, err)
 		}
 
 		targetMap, ok := target.(map[string]interface{})
@@ -3306,9 +3309,9 @@ func (clm ConflictLoggingMappingInput) ValidateConflictLoggingMapValues() error 
 			continue
 		}
 
-		_, _, _, err := ParseOneConflictLoggingRule(targetMap)
+		err = ValidateOneConflictLoggingRule(targetMap)
 		if err != nil {
-			return err
+			return fmt.Errorf("Error validating %v -> %v logging rule, err=%v", source, targetMap, err)
 		}
 	}
 

@@ -53,6 +53,7 @@ func parseTarget(m map[string]interface{}) (t Target, err error) {
 }
 
 // ParseRules parses map[string]interface{} object into rules.
+// should be in sync with base.ValidateConflictLoggingMapValues
 func ParseRules(j base.ConflictLoggingMappingInput) (rules *Rules, err error) {
 	fallbackTarget, err := parseTarget(j)
 	if err != nil {

@@ -114,7 +114,3 @@ func (c *AbstractComponent) AsyncComponentEventListeners() map[string]common.Asy
 	}
 	return listenerMap
 }
-
-func (c *AbstractComponent) Pipeline() common.Pipeline {
-	return c.pipeline
-}
