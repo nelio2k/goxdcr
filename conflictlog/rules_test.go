@@ -12,10 +12,19 @@ import (
 
 func TestRules_Parse(t *testing.T) {
 	testData := []struct {
-		name            string
-		jsonStr         string
+		name string
+		// jsonStr is the json in string form which simulates the input
+		// to the update settings. The test setup will parse this first.
+		// and any error in parsing is a test fail as it is not the objective
+		// of the test
+		jsonStr string
+
+		// expectedMapping is the what the final mapping should look like
+		// after parsing. A nil is an accepted value.
 		expectedMapping map[base.CollectionNamespace]Target
-		shouldFail      bool
+
+		// shouldFail=true implies we expect a failure for the input
+		shouldFail bool
 	}{
 		{
 			name:       "[negative] empty json",

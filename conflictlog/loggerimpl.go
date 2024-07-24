@@ -25,6 +25,9 @@ var _ Logger = (*loggerImpl)(nil)
 type loggerImpl struct {
 	logger *log.CommonLogger
 
+	// id uniquely identifies a logger instance
+	id int64
+
 	// utils object for misc utilities
 	utils utils.UtilsIface
 
@@ -43,8 +46,8 @@ type loggerImpl struct {
 	// mu is the logger level lock
 	mu sync.Mutex
 
-	// logCh is the work queue for all logging requests
-	logCh chan logRequest
+	// logReqCh is the work queue for all logging requests
+	logReqCh chan logRequest
 
 	// finch is intended to close all log workers
 	finch chan bool
@@ -52,9 +55,8 @@ type loggerImpl struct {
 	// shutdownCh is intended to shut a subset of workers
 	shutdownCh chan bool
 
-	// Logger can be shared between different nozzles,
-	// hence it should be closed by only one of them when the pipeline is stopping.
-	closed bool
+	// wg is used to wait for outstanding log requests to be finished
+	wg sync.WaitGroup
 }
 
 type logRequest struct {
@@ -83,25 +85,31 @@ func newLoggerImpl(logger *log.CommonLogger, replId string, utils utils.UtilsIfa
 
 	l = &loggerImpl{
 		logger:    logger,
+		id:        newLoggerId(),
 		utils:     utils,
 		replId:    replId,
 		rulesLock: sync.RWMutex{},
 		connPool:  connPool,
 		opts:      options,
 		mu:        sync.Mutex{},
-		logCh:     make(chan logRequest, options.logQueueCap),
+		logReqCh:  make(chan logRequest, options.logQueueCap),
 		finch:     make(chan bool, 1),
 		// the value 10 is arbitrary. It basically means max 10 workers can be shutdown in parallel
 		// The assumption is that >10 log workers would be very rare.
 		shutdownCh: make(chan bool, 10),
+		wg:         sync.WaitGroup{},
 	}
 
 	logger.Infof("spawning conflict logger workers replId=%s count=%d", l.replId, l.opts.workerCount)
 	for i := 0; i < l.opts.workerCount; i++ {
-		go l.worker()
+		l.startWorker()
 	}
 
 	return
+}
+
+func (l *loggerImpl) Id() int64 {
+	return l.id
 }
 
 func (l *loggerImpl) log(c *ConflictRecord) (ackCh chan error, err error) {
@@ -114,13 +122,9 @@ func (l *loggerImpl) log(c *ConflictRecord) (ackCh chan error, err error) {
 	select {
 	case <-l.finch:
 		err = ErrLoggerClosed
-	case l.logCh <- req:
+	case l.logReqCh <- req:
 	default:
 		err = ErrQueueFull
-	}
-
-	if err != nil {
-		return
 	}
 
 	return
@@ -128,7 +132,7 @@ func (l *loggerImpl) log(c *ConflictRecord) (ackCh chan error, err error) {
 
 func (l *loggerImpl) Log(c *ConflictRecord) (h base.ConflictLoggerHandle, err error) {
 	l.logger.Debugf("logging conflict record replId=%s sourceKey=%s", l.replId, c.Source.Id)
-	if l.closed {
+	if l.isClosed() {
 		err = ErrLoggerClosed
 		return
 	}
@@ -145,16 +149,41 @@ func (l *loggerImpl) Log(c *ConflictRecord) (h base.ConflictLoggerHandle, err er
 	return
 }
 
-func (l *loggerImpl) Close() (err error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
+func (l *loggerImpl) isClosed() bool {
+	select {
+	case <-l.finch:
+		return true
+	default:
+		return false
+	}
+}
 
-	if !l.closed {
-		l.closed = true
-		close(l.finch)
+func (l *loggerImpl) Close() (err error) {
+	// check for closed channel as multiple threads could have attempted it
+	if l.isClosed() {
+		return nil
 	}
 
+	l.mu.Lock()
+
+	// check for closed channel as multiple threads could have attempted it
+	if l.isClosed() {
+		return nil
+	}
+
+	close(l.finch)
+	close(l.logReqCh)
+
+	defer l.mu.Unlock()
+
+	l.wg.Wait()
+
 	return
+}
+
+func (l *loggerImpl) startWorker() {
+	l.wg.Add(1)
+	go l.worker()
 }
 
 func (l *loggerImpl) UpdateWorkerCount(newCount int) {
@@ -169,7 +198,7 @@ func (l *loggerImpl) UpdateWorkerCount(newCount int) {
 
 	if newCount > l.opts.workerCount {
 		for i := 0; i < (newCount - l.opts.workerCount); i++ {
-			go l.worker()
+			l.startWorker()
 		}
 	} else {
 		for i := 0; i < (l.opts.workerCount - newCount); i++ {
@@ -199,14 +228,19 @@ func (l *loggerImpl) UpdateRules(r *Rules) (err error) {
 }
 
 func (l *loggerImpl) worker() {
+	defer l.wg.Done()
+
 	for {
 		select {
-		case <-l.finch:
-			return
 		case <-l.shutdownCh:
 			l.logger.Infof("shutting down conflict log worker replId=%s", l.replId)
 			return
-		case req := <-l.logCh:
+		case req := <-l.logReqCh:
+			// nil implies that logReqCh might be closed
+			if req.conflictRec == nil {
+				return
+			}
+
 			err := l.processReq(req)
 			req.ackCh <- err
 		}
