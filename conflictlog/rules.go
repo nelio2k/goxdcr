@@ -15,7 +15,6 @@ var (
 	ErrInvalidLoggingRulesFormat    error = errors.New("conflict logging loggingRules should be a json object")
 	ErrInvalidLoggingRulesValFormat error = errors.New("conflict logging loggingRules' values should be a json object")
 	ErrEmptyBucketEmpty             error = errors.New("conflict logging bucket should not be empty")
-	ErrEmptyScopeEmpty              error = errors.New("conflict logging scope should not be empty")
 	ErrEmptyCollectionEmpty         error = errors.New("conflict logging collection should not be empty")
 )
 
@@ -27,97 +26,127 @@ type Rules struct {
 	// Mapping describes the how the conflicts from a source scope
 	// & collection is logged to the Target
 	// Empty map implies that all conflicts will be logged
-	Mapping map[Mapping]Target
+	Mapping map[base.CollectionNamespace]Target
 }
 
-// given user input of conflict logging mapping, the function creates a new and validated "Rules" object.
-// ValidateAndConvertJsonMapToConflictLoggingMapping already would have done type validations.
-// base.ParseOneConflictLoggingRule would have already been called in ValidateAndConvertJsonMapToConflictLoggingMapping too.
-// So at this point, we shouldnt not get any error.
-// jsonMapping should not be nil or {}. Such values needs to be handled explicitly by the caller.
-func NewRules(jsonMapping base.ConflictLoggingMappingInput) (rules *Rules, err error) {
-	if len(jsonMapping) == 0 {
-		// Nil is not a valid input
-		// {} is a valid input, but represent conflict logging is turned off - no rules can be generated
-		err = ErrEmptyConflictLoggingMap
+func parseString(o interface{}) (ok bool, val string) {
+	if o == nil {
+		return
+	}
+	val, ok = o.(string)
+	return
+}
+
+func parseTarget(m map[string]interface{}) (t Target, err error) {
+	if m == nil {
 		return
 	}
 
-	// parse common target
-	targetBucketName, targetScopeName, targetCollectionName, err := base.ParseOneConflictLoggingRule(jsonMapping)
+	bucketObj, ok := m[base.CLBucketKey]
+	if ok {
+		ok, s := parseString(bucketObj)
+		if ok {
+			t.Bucket = s
+		}
+	}
+
+	collectionObj, ok := m[base.CLCollectionKey]
+	if ok {
+		ok, s := parseString(collectionObj)
+		if ok {
+			t.NS, err = base.NewCollectionNamespaceFromString(s)
+		} else {
+			err = ErrInvalidCollectionValueType
+			return
+		}
+	}
+
+	return
+}
+
+// ParseRules parses map[string]interface{} object into rules.
+func ParseRules(j base.ConflictLoggingMappingInput) (rules *Rules, err error) {
+	fallbackTarget, err := parseTarget(j)
 	if err != nil {
 		return
 	}
 
-	rules = &Rules{}
+	if !fallbackTarget.IsComplete() {
+		err = ErrIncompleteTarget
+		return
+	}
 
-	rules.Target = NewTarget(
-		targetBucketName,
-		targetScopeName,
-		targetCollectionName,
-	)
-	rules.Mapping = make(map[Mapping]Target)
+	rules = &Rules{
+		Target:  fallbackTarget,
+		Mapping: map[base.CollectionNamespace]Target{},
+	}
 
-	// parse special "logging rules" if present
-	loggingRulesIn, ok := jsonMapping[base.CLLoggingRulesKey]
-	if ok {
-		loggingRules, ok := loggingRulesIn.(map[string]interface{})
-		if !ok {
-			err = ErrInvalidLoggingRulesFormat
+	loggingRulesObj, ok := j[base.CLLoggingRulesKey]
+	if !ok || loggingRulesObj == nil {
+		return
+	}
+
+	loggingRulesMap, ok := loggingRulesObj.(map[string]interface{})
+	if !ok {
+		rules = nil
+		err = ErrInvalidLoggingRulesType
+		return
+	}
+
+	for collectionStr, targetObj := range loggingRulesMap {
+		if collectionStr == "" {
+			rules = nil
+			err = ErrInvalidCollection
 			return
 		}
 
-		// SUMUKH TODO - complex rules.
-		// Right now only [scope].[collection] -> {bucket: ..., collection: ...} is parsed
-		for source, target := range loggingRules {
-			srcScopeName, srcCollectionName := base.SeparateScopeCollection(source)
-
-			targetMap, ok := target.(map[string]interface{})
-			if !ok {
-				return rules, ErrInvalidLoggingRulesValFormat
-			}
-
-			targetBucketName, targetScopeName, targetCollectionName, err = base.ParseOneConflictLoggingRule(targetMap)
-			if err != nil {
-				return
-			}
-
-			mapping := Mapping{
-				Scope:      srcScopeName,
-				Collection: srcCollectionName,
-			}
-
-			rules.Mapping[mapping] = NewTarget(
-				targetBucketName,
-				targetScopeName,
-				targetCollectionName,
-			)
+		source, err := base.NewOptionalCollectionNamespaceFromString(collectionStr)
+		if err != nil {
+			return nil, err
 		}
+
+		target := fallbackTarget
+
+		if targetObj != nil {
+			targetMap, ok := targetObj.(map[string]interface{})
+			if !ok {
+				rules = nil
+				err = ErrInvalidTargetType
+				return nil, err
+			}
+
+			if len(targetMap) > 0 {
+				target, err = parseTarget(targetMap)
+				if err != nil {
+					return nil, err
+				}
+
+				if !target.IsComplete() {
+					return nil, ErrIncompleteTarget
+				}
+			}
+		}
+
+		rules.Mapping[source] = target
 	}
 
-	// validate the rules
-	err = rules.Validate()
-	if err != nil {
-		return rules, err
-	}
-
-	return rules, nil
+	return
 }
 
 func (r *Rules) Validate() (err error) {
-	err = r.Target.Validate()
-	if err != nil {
+	if !r.Target.IsComplete() {
+		err = ErrIncompleteTarget
 		return
 	}
 
 	for m, t := range r.Mapping {
-		err = m.Validate()
-		if err != nil {
+		if m.ScopeName == "" {
+			err = ErrEmptyBucketEmpty
 			return
 		}
 
-		err = t.Validate()
-		if err != nil {
+		if !t.IsComplete() {
+			err = ErrIncompleteTarget
 			return
 		}
 	}
@@ -130,7 +159,7 @@ func (r *Rules) SameAs(other *Rules) (same bool) {
 		return r == nil && other == nil
 	}
 
-	same = r.Target.SameAs(&other.Target)
+	same = r.Target.SameAs(other.Target)
 	if !same {
 		return
 	}
@@ -151,7 +180,7 @@ func (r *Rules) SameAs(other *Rules) (same bool) {
 			return
 		}
 
-		same = otherSource.SameAs(&target)
+		same = otherSource.SameAs(target)
 		if !same {
 			return
 		}
@@ -190,7 +219,7 @@ func (m Mapping) String() string {
 
 func (m Mapping) Validate() (err error) {
 	if m.Scope == "" {
-		err = ErrEmptyScopeEmpty
+		err = ErrEmptyScope
 		return
 	}
 	// SUMUKH TODO - can be empty, deal with it
@@ -215,46 +244,39 @@ func (m *Mapping) SameAs(other *Mapping) bool {
 type Target struct {
 	// Bucket is the conflict bucket
 	Bucket string `json:"bucket"`
-	// Scope is the conflict bucket's scope
-	Scope string `json:"scope"`
-	// Collection is the conflict bucket's collection
-	Collection string `json:"collection"`
+
+	NS base.CollectionNamespace `json:"ns"`
 }
 
 func (t Target) String() string {
-	return fmt.Sprintf("%v.%v.%v", t.Bucket, t.Scope, t.Collection)
+	return fmt.Sprintf("%v.%v.%v", t.Bucket, t.NS.ScopeName, t.NS.CollectionName)
 }
 
 func NewTarget(bucket, scope, collection string) Target {
 	return Target{
-		Bucket:     bucket,
-		Scope:      scope,
-		Collection: collection,
+		Bucket: bucket,
+		NS: base.CollectionNamespace{
+			ScopeName:      scope,
+			CollectionName: collection,
+		},
 	}
+}
+
+func (t Target) IsEmpty() bool {
+	return t.Bucket == "" && t.NS.IsEmpty()
 }
 
 func (t Target) Validate() (err error) {
 	if t.Bucket == "" {
 		err = ErrEmptyBucketEmpty
-		return
-	}
-	if t.Collection == "" {
-		err = ErrEmptyCollectionEmpty
-		return
-	}
-	if t.Scope == "" {
-		err = ErrEmptyScopeEmpty
-		return
 	}
 	return
 }
 
-func (t *Target) SameAs(other *Target) bool {
-	if t == nil || other == nil {
-		return t == nil && other == nil
-	}
+func (t Target) IsComplete() bool {
+	return t.Bucket != "" && t.NS.ScopeName != "" && t.NS.CollectionName != ""
+}
 
-	return t.Bucket == other.Bucket &&
-		t.Collection == other.Collection &&
-		t.Scope == other.Scope
+func (t Target) SameAs(other Target) bool {
+	return t.Bucket == other.Bucket && t.NS.IsSameAs(other.NS)
 }
