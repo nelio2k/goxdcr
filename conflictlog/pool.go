@@ -83,7 +83,7 @@ type connPool struct {
 	// there are no objects to return
 	newConnFn func(bucketName string) (io.Closer, error)
 
-	// gcTicker controls the periodicity of reaping of idle connections is attempted
+	// gcTicker controls the periodicity with which reaping of idle connections is attempted
 	gcTicker *time.Ticker
 
 	// reapInterval determines how last used threshold beyond which the

@@ -1,13 +1,20 @@
 package conflictlog
 
 import (
+	"sync/atomic"
 	"time"
 
 	"github.com/couchbase/goxdcr/base"
 )
 
+// gLoggerId is the counter for all conflict loggers created
+var gLoggerId int64
+
 // Logger interface allows logging of conflicts in an abstracted manner
 type Logger interface {
+	// Id() returns the unique id for the logger
+	Id() int64
+
 	// Log writes the conflict to the conflict buccket
 	Log(c *ConflictRecord) (base.ConflictLoggerHandle, error)
 
@@ -81,3 +88,9 @@ func (o *LoggerOptions) SetLogQueueCap(cap int) {
 }
 
 type LoggerOpt func(o *LoggerOptions)
+
+// newLoggerId generates new unique logger Id. This is used by the implementations
+// of the Logger interface
+func newLoggerId() int64 {
+	return atomic.AddInt64(&gLoggerId, 1)
+}
