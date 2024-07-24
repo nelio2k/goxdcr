@@ -11,11 +11,13 @@ package pipeline
 import (
 	"errors"
 	"fmt"
+	"reflect"
 	"sync"
 	"time"
 
 	"github.com/couchbase/goxdcr/base"
 	"github.com/couchbase/goxdcr/common"
+	"github.com/couchbase/goxdcr/conflictlog"
 	"github.com/couchbase/goxdcr/log"
 	"github.com/couchbase/goxdcr/metadata"
 	"github.com/couchbase/goxdcr/parts"
@@ -143,6 +145,10 @@ type GenericPipeline struct {
 	targetTopologyProgressMsg string
 
 	statusCallbacks PrometheusPipelineStatusCb
+
+	// Conflict logger for the pipeline
+	conflictLogger    conflictlog.Logger
+	conflictLoggerMtx sync.RWMutex
 }
 
 // Get the runtime context of this pipeline
@@ -759,6 +765,11 @@ func (genericPipeline *GenericPipeline) Stop() base.ErrorMap {
 	connectorsErrMap := genericPipeline.stopConnectorsWithTimeout()
 	base.ConcatenateErrors(errMap, connectorsErrMap, MaxNumberOfErrorsToTrack, genericPipeline.logger)
 
+	err = genericPipeline.closeConflictLogger()
+	if err != nil {
+		errMap["genericPipeline.closeConflictLogger"] = err
+	}
+
 	genericPipeline.ReportProgress(common.ProgressPipelineStopped)
 
 	err = genericPipeline.SetState(common.Pipeline_Stopped)
@@ -804,7 +815,13 @@ func NewGenericPipeline(t string,
 	return pipeline
 }
 
-func NewPipelineWithSettingConstructor(t string, pipelineType common.PipelineType, sources map[string]common.Nozzle, targets map[string]common.Nozzle, spec metadata.GenericSpecification, targetClusterRef *metadata.RemoteClusterReference, partsSettingsConstructor PartsSettingsConstructor, connectorSettingsConstructor ConnectorSettingsConstructor, sslPortMapConstructor SSLPortMapConstructor, partsUpdateSettingsConstructor PartsUpdateSettingsConstructor, connectorUpdateSetting_constructor ConnectorsUpdateSettingsConstructor, startingSeqnoConstructor StartingSeqnoConstructor, checkpoint_func CheckpointFunc, logger_context *log.LoggerContext, vbMasterCheckFunc VBMasterCheckFunc, mergeCkptFunc MergeVBMasterRespCkptsFunc, bucketTopologySvc service_def.BucketTopologySvc, utils utilities.UtilsIface, prometheusStatusCbConstructor func(pipeline common.Pipeline) PrometheusPipelineStatusCb) *GenericPipeline {
+func NewPipelineWithSettingConstructor(t string, pipelineType common.PipelineType, sources map[string]common.Nozzle, targets map[string]common.Nozzle,
+	spec metadata.GenericSpecification, targetClusterRef *metadata.RemoteClusterReference, partsSettingsConstructor PartsSettingsConstructor,
+	connectorSettingsConstructor ConnectorSettingsConstructor, sslPortMapConstructor SSLPortMapConstructor, partsUpdateSettingsConstructor PartsUpdateSettingsConstructor,
+	connectorUpdateSetting_constructor ConnectorsUpdateSettingsConstructor, startingSeqnoConstructor StartingSeqnoConstructor, checkpoint_func CheckpointFunc,
+	logger_context *log.LoggerContext, vbMasterCheckFunc VBMasterCheckFunc, mergeCkptFunc MergeVBMasterRespCkptsFunc, bucketTopologySvc service_def.BucketTopologySvc,
+	utils utilities.UtilsIface, prometheusStatusCbConstructor func(pipeline common.Pipeline) PrometheusPipelineStatusCb, conflictLogger conflictlog.Logger) *GenericPipeline {
+
 	pipeline := &GenericPipeline{topic: t,
 		sources:                            sources,
 		targets:                            targets,
@@ -826,7 +843,9 @@ func NewPipelineWithSettingConstructor(t string, pipelineType common.PipelineTyp
 		vbMasterCheckFunc:                  vbMasterCheckFunc,
 		mergeCkptFunc:                      mergeCkptFunc,
 		utils:                              utils,
+		conflictLogger:                     conflictLogger,
 	}
+
 	// NOTE: Calling initialize here as part of constructor
 	pipeline.statusCallbacks = prometheusStatusCbConstructor(pipeline)
 	pipeline.initialize()
@@ -1137,6 +1156,118 @@ func (genericPipeline *GenericPipeline) updatePipelineSettings(settings metadata
 	genericPipeline.updateTimestampsSetting(settings)
 	genericPipeline.updateProblematicVBSettings(settings)
 	genericPipeline.updateTopologyProgress(settings)
+	genericPipeline.updateConflictLoggingRules(settings)
+}
+
+func (genericPipeline *GenericPipeline) updateConflictLoggingRules(settings metadata.ReplicationSettingsMap) {
+	var conflictLoggingEnabled bool
+	var conflictLoggingMap base.ConflictLoggingMappingInput
+	conflictLoggingIn, ok := settings[base.ConflictLoggingKey]
+	if !ok {
+		// just didn't have this setting as update - no need to warn.
+		return
+	}
+
+	conflictLoggingMap, ok = conflictLoggingIn.(map[string]interface{})
+	if !ok {
+		// wrong type
+		genericPipeline.logger.Warnf("conflict map %v as input, is of invalid type %v. Ignoring the update",
+			conflictLoggingIn, reflect.TypeOf(conflictLoggingIn))
+		return
+	}
+
+	if conflictLoggingMap == nil {
+		// nil is not an accepted value, should not reach here.
+		genericPipeline.logger.Warnf("%v, conflict map is nil as input, but is cannot be nil. Ignoring %v for the update",
+			conflictLoggingIn)
+		return
+	}
+
+	// {} is disabled.
+	conflictLoggingEnabled = len(conflictLoggingMap) > 0
+
+	genericPipeline.conflictLoggerMtx.Lock()
+	defer genericPipeline.conflictLoggerMtx.Unlock()
+
+	// Option 1: logger needs to be enabled
+	if conflictLoggingEnabled {
+		// compute the "rules"
+		newRules, err := conflictlog.NewRules(conflictLoggingMap)
+		if err != nil || newRules == nil {
+			genericPipeline.logger.Warnf("%v, error converting %v to new conflict logging rules, ignoring the input and continuing with old rules. err=%v",
+				conflictLoggingMap, err)
+			return
+		}
+
+		// Option 1a: a logger already existed, just update it with the new rules
+		if genericPipeline.conflictLogger != nil {
+			err = genericPipeline.conflictLogger.UpdateRules(newRules)
+			if err != nil {
+				genericPipeline.logger.Warnf("%v, error updating existing conflict logging rules to new rules %s, ignoring %v and continuing with old rules. err=%v",
+					newRules, conflictLoggingMap, err)
+				return
+			}
+			genericPipeline.logger.Infof("%v, updated conflict logging rules to %s with input %v",
+				newRules, conflictLoggingMap)
+			return
+		}
+
+		// Option 1b: a logger doesn't exist, create a new one with the input rules.
+		clm, err := conflictlog.GetManager()
+		if err != nil {
+			genericPipeline.logger.Warnf("%v, error getting conflict logging manager to update to new rules %s, ignoring input %v and continuing with old rules. err=%v",
+				newRules, conflictLoggingMap, err)
+			return
+		}
+
+		spec := genericPipeline.spec.GetReplicationSpec()
+		logger := log.NewLogger(conflictlog.ConflictLoggerName, genericPipeline.logger.LoggerContext())
+
+		newConflictLogger, err := clm.NewLogger(
+			logger,
+			spec.UniqueId(),
+			conflictlog.WithMapper(conflictlog.NewConflictMapper(logger)),
+			conflictlog.WithCapacity(1000), // SUMUKH TODO - make the default size configurable.
+			conflictlog.WithRules(newRules),
+		)
+		if err != nil {
+			genericPipeline.logger.Errorf("error initialising a conflict logger for new rules %s, ignoring input %v and continuing with old rules. err=%v", newRules, conflictLoggingMap, err)
+			return
+		}
+
+		genericPipeline.conflictLogger = newConflictLogger
+		genericPipeline.logger.Infof("created conflict logger with rules %s with input %v", newRules, conflictLoggingMap)
+		return
+	}
+
+	// Option 2: logger is to be disabled.
+	if genericPipeline.conflictLogger == nil {
+		// Option 2a: logger is already disabled.
+		genericPipeline.logger.Infof("conflict logger already disabled and will remain disabled with input %v", conflictLoggingMap)
+		return
+	}
+
+	// Option 2b: logger is currently enabled, disable it.
+	err := genericPipeline.conflictLogger.Close()
+	if err != nil {
+		genericPipeline.logger.Errorf("error closing conflict logger with input %v, err=%v", conflictLoggingMap, err)
+		return
+	}
+
+	genericPipeline.conflictLogger = nil
+	genericPipeline.logger.Infof("closed conflict logger with input %v", conflictLoggingMap)
+}
+
+func (genericPipeline *GenericPipeline) closeConflictLogger() error {
+	var err error
+	genericPipeline.conflictLoggerMtx.Lock()
+	defer genericPipeline.conflictLoggerMtx.Unlock()
+
+	if genericPipeline.conflictLogger != nil {
+		err = genericPipeline.conflictLogger.Close()
+	}
+
+	return err
 }
 
 func (genericPipeline *GenericPipeline) updateTimestampsSetting(settings metadata.ReplicationSettingsMap) {
@@ -1249,6 +1380,13 @@ func (genericPipeline *GenericPipeline) GetRebalanceProgress() (string, string) 
 	defer genericPipeline.topologyMtx.Unlock()
 
 	return genericPipeline.sourceTopologyProgressMsg, genericPipeline.targetTopologyProgressMsg
+}
+
+func (genericPipeline *GenericPipeline) ConflictLogger() conflictlog.Logger {
+	genericPipeline.conflictLoggerMtx.RLock()
+	defer genericPipeline.conflictLoggerMtx.RUnlock()
+
+	return genericPipeline.conflictLogger
 }
 
 // enforcer for GenericPipeline to implement Pipeline

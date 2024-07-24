@@ -1127,7 +1127,16 @@ func (s *ReplicationSettings) GetConflictLoggingMapping() base.ConflictLoggingMa
 		return base.ConflictLoggingMappingInput{}
 	}
 
-	mapping := val.(map[string]interface{})
+	var mapping base.ConflictLoggingMappingInput
+	var ok bool
+	mapping, ok = val.(base.ConflictLoggingMappingInput)
+	if !ok {
+		// if val is read from metakv for instance, the type will not be ConflictLoggingMappingInput
+		mapping, ok = val.(map[string]interface{})
+		if !ok {
+			return base.ConflictLoggingMappingInput{}
+		}
+	}
 	return mapping
 }
 

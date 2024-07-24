@@ -9,9 +9,11 @@
 package common
 
 import (
-	"github.com/couchbase/goxdcr/base"
-	"github.com/couchbase/goxdcr/metadata"
 	"strings"
+
+	"github.com/couchbase/goxdcr/base"
+	"github.com/couchbase/goxdcr/conflictlog"
+	"github.com/couchbase/goxdcr/metadata"
 )
 
 type PipelineState int
@@ -127,4 +129,6 @@ type Pipeline interface {
 	SetBrokenMap(brokenMap metadata.CollectionNamespaceMapping)
 
 	GetRebalanceProgress() (string, string)
+
+	ConflictLogger() conflictlog.Logger
 }

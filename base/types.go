@@ -770,13 +770,6 @@ func (req *WrappedMCRequest) WaitForConflictLogging(finCh chan bool, logger *log
 	}
 }
 
-func (req *WrappedMCRequest) LogConflicts() bool {
-	if req == nil {
-		return false
-	}
-	return req.HLVModeOptions.ConflictLoggingEnabled
-}
-
 // set the intent to use subdoc command
 func (req *WrappedMCRequest) SetSubdocOp() {
 	if req == nil {
@@ -2926,12 +2919,10 @@ type HLVModeOptions struct {
 	PreserveSync bool   // Preserve target _sync XATTR and send it in setWithMeta.
 	ActualCas    uint64 // copy of Req.Cas, which can be used if Req.Cas is set to 0
 
-	// Conflict logging options
-	ConflictLoggingEnabled bool
-	// ConflictLoggingRules   *conflictlog.Rules
 	// Handle to wait for conflict logging in progress for this request.
 	// It has a value of nil if conflict logging is not in progress.
-	ConflictLoggerWait ConflictLoggerHandle
+	ConflictLoggerWait     ConflictLoggerHandle
+	ConflictLoggingEnabled bool
 }
 
 // These options are explicitly set when SubdocOp != NotSubdoc
@@ -3105,9 +3096,15 @@ func (clm ConflictLoggingMappingInput) SameAs(other interface{}) bool {
 		return clm == nil && other == nil
 	}
 
-	otherClm, ok := other.(map[string]interface{})
+	var otherClm ConflictLoggingMappingInput
+	var ok bool
+	otherClm, ok = other.(ConflictLoggingMappingInput)
 	if !ok {
-		return false
+		// if other is read from metakv for instance, the type will not be ConflictLoggingMappingInput
+		otherClm, ok = other.(map[string]interface{})
+		if !ok {
+			return false
+		}
 	}
 
 	if clm == nil || otherClm == nil {
