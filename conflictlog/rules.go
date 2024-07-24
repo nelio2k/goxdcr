@@ -240,11 +240,14 @@ func (m *Mapping) SameAs(other *Mapping) bool {
 }
 
 // Target describes the target bucket, scope and collection where
-// the conflicts will be logged
+// the conflicts will be logged. There are few terms:
+// Complete => The triplet (Bucket, Scope, Collection) are populated
+// Empty => All components of the triplet are empty
 type Target struct {
 	// Bucket is the conflict bucket
 	Bucket string `json:"bucket"`
 
+	// NS is namespace which defines scope and collection
 	NS base.CollectionNamespace `json:"ns"`
 }
 
@@ -266,13 +269,8 @@ func (t Target) IsEmpty() bool {
 	return t.Bucket == "" && t.NS.IsEmpty()
 }
 
-func (t Target) Validate() (err error) {
-	if t.Bucket == "" {
-		err = ErrEmptyBucketEmpty
-	}
-	return
-}
-
+// IsComplete implies that all components of the triplet (bucket, scope & collection)
+// are populated
 func (t Target) IsComplete() bool {
 	return t.Bucket != "" && t.NS.ScopeName != "" && t.NS.CollectionName != ""
 }
