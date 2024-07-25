@@ -116,7 +116,7 @@ func (conn *MemcachedConn) Id() int64 {
 	return conn.id
 }
 
-func (m *MemcachedConn) getCollectionId(conn *mcc.Client, target Target, checkCache bool) (collId uint32, err error) {
+func (m *MemcachedConn) getCollectionId(conn *mcc.Client, target base.ConflictLoggingTarget, checkCache bool) (collId uint32, err error) {
 	var ok bool
 
 	if checkCache {
@@ -246,7 +246,7 @@ func (m *MemcachedConn) getConnByVB(vbno uint16, replicaNum int) (conn *mcc.Clie
 	return
 }
 
-func (m *MemcachedConn) SetMeta(key string, body []byte, dataType uint8, target Target) (err error) {
+func (m *MemcachedConn) SetMeta(key string, body []byte, dataType uint8, target base.ConflictLoggingTarget) (err error) {
 	checkCache := true
 	var collId uint32
 	vbNo := getVBNo(key, 1024)

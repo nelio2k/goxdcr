@@ -15,7 +15,7 @@ func NewConflictMapper(logger *log.CommonLogger) *conflictMapper {
 }
 
 // returns the "target" to which the conflict record needs to be routed.
-func (m *conflictMapper) Map(rules *Rules, c Conflict) (target Target, err error) {
+func (m *conflictMapper) Map(rules *Rules, c Conflict) (target base.ConflictLoggingTarget, err error) {
 	if rules == nil {
 		err = ErrEmptyRules
 		return
