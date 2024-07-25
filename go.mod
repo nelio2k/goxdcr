@@ -12,6 +12,8 @@ replace github.com/couchbase/go_json => ../go_json
 
 replace github.com/couchbase/regulator => ../regulator
 
+replace github.com/couchbase/gocb/v2 => ../../../../../godeps/src/github.com/couchbase/gocb/v2
+
 require (
 	github.com/couchbase/cbauth v0.1.12
 	github.com/couchbase/eventing-ee v0.0.0-20240710062826-663e162c6dc0
