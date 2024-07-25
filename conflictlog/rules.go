@@ -1,21 +1,9 @@
 package conflictlog
 
 import (
-	"errors"
 	"fmt"
 
 	"github.com/couchbase/goxdcr/base"
-)
-
-var (
-	ErrEmptyConflictLoggingMap      error = errors.New("nil or empty conflict logging map not allowed")
-	ErrInvalidBucket                error = errors.New("conflict logging bucket not provided or wrong format")
-	ErrInvalidCollection            error = errors.New("conflict logging collection not provided or wrong format")
-	ErrInvalidCollectionFormat      error = errors.New("conflict logging collection should be in format [scope].[collection]")
-	ErrInvalidLoggingRulesFormat    error = errors.New("conflict logging loggingRules should be a json object")
-	ErrInvalidLoggingRulesValFormat error = errors.New("conflict logging loggingRules' values should be a json object")
-	ErrEmptyBucketEmpty             error = errors.New("conflict logging bucket should not be empty")
-	ErrEmptyCollectionEmpty         error = errors.New("conflict logging collection should not be empty")
 )
 
 // Rules captures the logging rules for a replication
@@ -203,40 +191,6 @@ func (r *Rules) String() string {
 	loggingRules = "{" + loggingRules + "}"
 
 	return fmt.Sprintf("Target: %s, loggingRules: %s", r.Target, loggingRules)
-}
-
-// Mapping is the source scope and collection
-type Mapping struct {
-	// Scope is source bucket's scope
-	Scope string
-	// Collection is source bucket's collection
-	Collection string
-}
-
-func (m Mapping) String() string {
-	return fmt.Sprintf("%v.%v", m.Scope, m.Collection)
-}
-
-func (m Mapping) Validate() (err error) {
-	if m.Scope == "" {
-		err = ErrEmptyScope
-		return
-	}
-	// SUMUKH TODO - can be empty, deal with it
-	if m.Collection == "" {
-		err = ErrEmptyCollectionEmpty
-		return
-	}
-	return
-}
-
-func (m *Mapping) SameAs(other *Mapping) bool {
-	if m == nil || other == nil {
-		return m == nil && other == nil
-	}
-
-	return m.Scope == other.Scope &&
-		m.Collection == other.Collection
 }
 
 // Target describes the target bucket, scope and collection where

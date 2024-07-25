@@ -95,7 +95,8 @@ func setupBoilerPlateXmem(bname string, crMode base.ConflictResolutionMode, opti
 	remoteClusterSvc := &serviceDefMocks.RemoteClusterSvc{}
 
 	// local cluster run has KV port starting at 12000
-	xmemNozzle := NewXmemNozzle("testId", remoteClusterSvc, "", "", "testTopic", "testConnPoolNamePrefix", 5, kvStringTgt, "B1", bname, "temporaryBucketUuid", "Administrator", "wewewe", crMode, log.DefaultLoggerContext, utilitiesMock, vbList, nil, "", "", conflictlog.NewFileLogger(nil, ""))
+	xmemNozzle := NewXmemNozzle("testId", remoteClusterSvc, "", "", "testTopic", "testConnPoolNamePrefix", 5, kvStringTgt, "B1", bname, "temporaryBucketUuid", "Administrator", "wewewe", crMode, log.DefaultLoggerContext, utilitiesMock, vbList, nil, "", "")
+	xmemNozzle.SetConflictLoggerGetter(func() conflictlog.Logger { return nil })
 
 	// settings map
 	settingsMap := make(map[string]interface{})

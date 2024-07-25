@@ -108,9 +108,6 @@ type baseConfig struct {
 
 	devMainSendDelay     uint32
 	devBackfillSendDelay uint32
-
-	// conflict logging feature data-structures
-	conflictLoggingEnabled atomic.Bool
 }
 
 // We determine the "commit" time as the time we hear back from the target, for statistics purposes
@@ -228,10 +225,9 @@ type dataBatch struct {
 	// At the beginning of each batch we will check the config to decide the getMeta/getSubdoc, setMeta and conflict logging behavior.
 	// Note that these are only needed for CCR and mobile currently. The specs will be nil otherwise. If nil, getMeta will be used.
 	// These are "templated" and references in each wrapped MCRequest will be created to refer to them
-	getMetaSpecWithoutHlv  []base.SubdocLookupPathSpec
-	getMetaSpecWithHlv     []base.SubdocLookupPathSpec
-	getBodySpec            []base.SubdocLookupPathSpec // This one will get document body in addition to document metadata. Used for CCR only
-	conflictLoggingEnabled bool
+	getMetaSpecWithoutHlv []base.SubdocLookupPathSpec
+	getMetaSpecWithHlv    []base.SubdocLookupPathSpec
+	getBodySpec           []base.SubdocLookupPathSpec // This one will get document body in addition to document metadata. Used for CCR only
 
 	curCount          uint32
 	curSize           uint32
@@ -241,6 +237,8 @@ type dataBatch struct {
 	logger            *log.CommonLogger
 	batch_nonempty_ch chan bool
 	nonempty_set      bool
+
+	conflictLoggingEnabled bool
 }
 
 type responseLookup struct {

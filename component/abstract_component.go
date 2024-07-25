@@ -11,9 +11,10 @@ package Component
 import (
 	"errors"
 	"fmt"
+	"sync"
+
 	"github.com/couchbase/goxdcr/common"
 	"github.com/couchbase/goxdcr/log"
-	"sync"
 )
 
 type AbstractComponent struct {
@@ -112,4 +113,8 @@ func (c *AbstractComponent) AsyncComponentEventListeners() map[string]common.Asy
 		}
 	}
 	return listenerMap
+}
+
+func (c *AbstractComponent) Pipeline() common.Pipeline {
+	return c.pipeline
 }

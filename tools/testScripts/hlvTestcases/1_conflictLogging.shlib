@@ -26,13 +26,13 @@ insertPropertyIntoBucketNamePropertyMap "B3" BucketProperty
 insertPropertyIntoBucketNamePropertyMap "B6" BucketProperty # conflict bucket for C3.B3
 insertPropertyIntoBucketNamePropertyMap "B0" BucketProperty # bucket to test conflict records are not replicated
 
-conflictLoggingMap1="{\"bucket\":\"B4\", \"loggingRules\": {\"S1.col1\": {\"bucket\":\"B4\", \"collection\": \"S1.col1\"}}}"
+conflictLoggingMap1="{\"bucket\":\"B4\", \"collection\": \"_default._default\", \"loggingRules\": {\"S1.col1\": {\"bucket\":\"B4\", \"collection\": \"S1.col1\"}}}"
 declare -A BucketReplProperties1=(["replicationType"]="continuous" ["checkpointInterval"]=60 ["statsInterval"]=500 ["filterBinary"]=true ["conflictLogging"]=$conflictLoggingMap1)
 
-conflictLoggingMap2="{\"bucket\":\"B5\", \"loggingRules\": {\"S1.col1\": {\"bucket\":\"B5\", \"collection\": \"S1.col1\"}}}"
+conflictLoggingMap2="{\"bucket\":\"B5\", \"collection\": \"_default._default\", \"loggingRules\": {\"S1.col1\": {\"bucket\":\"B5\", \"collection\": \"S1.col1\"}}}"
 declare -A BucketReplProperties2=(["replicationType"]="continuous" ["checkpointInterval"]=60 ["statsInterval"]=500 ["filterBinary"]=true ["conflictLogging"]=$conflictLoggingMap2)
 
-conflictLoggingMap3="{\"bucket\":\"B6\", \"loggingRules\": {\"S1.col1\": {\"bucket\":\"B6\", \"collection\": \"S1.col1\"}}}"
+conflictLoggingMap3="{\"bucket\":\"B6\", \"collection\": \"_default._default\", \"loggingRules\": {\"S1.col1\": {\"bucket\":\"B6\", \"collection\": \"S1.col1\"}}}"
 declare -A BucketReplProperties3=(["replicationType"]="continuous" ["checkpointInterval"]=60 ["statsInterval"]=500 ["filterBinary"]=true ["conflictLogging"]=$conflictLoggingMap3)
 
 declare -A BucketReplProperties=(["replicationType"]="continuous" ["checkpointInterval"]=60 ["statsInterval"]=500 ["filterBinary"]=true) # replication to test conflict records are not replicated

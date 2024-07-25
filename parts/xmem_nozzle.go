@@ -587,63 +587,6 @@ func (config *xmemConfig) initializeConfig(settings metadata.ReplicationSettings
 	return err
 }
 
-// If there are any errors in parsing the conflict logging mapping or converting to rules,
-// the error is ignored, logged as warning and the input is not applied in partial state.
-func (config *xmemConfig) setConflictLoggingRules(settings metadata.ReplicationSettingsMap, customUpdater func(*conflictlog.Rules) error) {
-	var conflictLoggingEnabled bool
-	var conflictLoggingMap base.ConflictLoggingMappingInput
-	conflictLoggingIn, ok := settings[CONFLICT_LOGGING]
-	if !ok {
-		// just didn't have this setting as update - no need to warn.
-		return
-	}
-
-	conflictLoggingMap, ok = conflictLoggingIn.(map[string]interface{})
-	if !ok {
-		// wrong type
-		config.logger.Warnf("Conflict map %v as input, is of invalid type %v. Ignoring the update. enabled=%v", conflictLoggingIn, reflect.TypeOf(conflictLoggingIn), config.conflictLoggingEnabled.Load())
-		return
-	}
-
-	if conflictLoggingMap == nil {
-		// nil is not an accepted value, should not reach here.
-		config.logger.Warnf("Conflict map is nil as input, but is cannot be nil. Ignoring %v for the update. enabled=%v", conflictLoggingIn, config.conflictLoggingEnabled.Load())
-		return
-	}
-
-	// {} is disabled.
-	conflictLoggingEnabled = len(conflictLoggingMap) > 0
-
-	var newRules *conflictlog.Rules
-	if conflictLoggingEnabled {
-		// compute the "rules"
-		newRulesVal, err := conflictlog.ParseRules(conflictLoggingMap)
-		if err != nil {
-			// shouldn't reach here since we validate as part of replication setting input validation.
-			config.logger.Errorf("Error converting %v to rules, ignoring the input. err=%v. enabled=%v", conflictLoggingMap, err, config.conflictLoggingEnabled.Load())
-			return
-		}
-		newRules = newRulesVal
-	}
-
-	oldConflictLoggingEnabled := config.conflictLoggingEnabled.Load()
-
-	if oldConflictLoggingEnabled != conflictLoggingEnabled {
-		config.logger.Infof("Updated conflictLoggingEnabled from %v to %v", oldConflictLoggingEnabled, conflictLoggingEnabled)
-	}
-
-	config.conflictLoggingEnabled.Store(conflictLoggingEnabled)
-
-	if customUpdater != nil {
-		// send it to the conflict logger.
-		err := customUpdater(newRules)
-		if err != nil {
-			// shouldn't reach here since we validate as part of replication setting input validation.
-			config.logger.Errorf("Error updating %v to rules, might ignore the input for Logger. err=%v. enabled=%v", conflictLoggingMap, err, config.conflictLoggingEnabled.Load())
-		}
-	}
-}
-
 /*
 ***********************************
 /* struct opaque_KeySeqnoMap
@@ -832,8 +775,8 @@ type XmemNozzle struct {
 
 	mcRequestPool *base.MCRequestPool
 
-	// Conflict logger.
-	conflictLogger conflictlog.Logger
+	// getter to fetch pipeline level conflict logger
+	conflictLogger conflictlog.LoggerGetter
 }
 
 func getGuardrailIdx(status mc.Status) int {
@@ -844,7 +787,9 @@ func getMcStatusFromGuardrailIdx(idx int) mc.Status {
 	return mc.Status(int(mc.BUCKET_RESIDENT_RATIO_TOO_LOW) + idx)
 }
 
-func NewXmemNozzle(id string, remoteClusterSvc service_def.RemoteClusterSvc, sourceBucketUuid string, targetClusterUuid string, topic string, connPoolNamePrefix string, connPoolConnSize int, connectString string, sourceBucketName string, targetBucketName string, targetBucketUuid string, username string, password string, source_cr_mode base.ConflictResolutionMode, logger_context *log.LoggerContext, utilsIn utilities.UtilsIface, vbList []uint16, eventsProducer common.PipelineEventsProducer, sourceClusterUUID string, sourceHostname string, conflictLogger conflictlog.Logger) *XmemNozzle {
+func NewXmemNozzle(id string, remoteClusterSvc service_def.RemoteClusterSvc, sourceBucketUuid string, targetClusterUuid string, topic string, connPoolNamePrefix string, connPoolConnSize int,
+	connectString string, sourceBucketName string, targetBucketName string, targetBucketUuid string, username string, password string, source_cr_mode base.ConflictResolutionMode,
+	logger_context *log.LoggerContext, utilsIn utilities.UtilsIface, vbList []uint16, eventsProducer common.PipelineEventsProducer, sourceClusterUUID string, sourceHostname string) *XmemNozzle {
 
 	part := NewAbstractPartWithLogger(id, log.NewLogger("XmemNozzle", logger_context))
 
@@ -885,7 +830,6 @@ func NewXmemNozzle(id string, remoteClusterSvc service_def.RemoteClusterSvc, sou
 		nonTempErrsSeen:     make(map[uint16]mc.Status),
 		mcRequestPool:       base.NewMCRequestPool(id, nil),
 		sourceClusterUuid:   sourceClusterUUID,
-		conflictLogger:      conflictLogger,
 	}
 
 	xmem.last_ten_batches_size = []uint32{0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
@@ -1309,9 +1253,6 @@ func (xmem *XmemNozzle) finalCleanup() {
 		}
 	}
 	xmem.conflictMgr = nil
-
-	xmem.conflictLogger.Close()
-	xmem.conflictLogger = nil
 }
 
 func (xmem *XmemNozzle) cleanupBufferedMCRequest(req *bufferedMCRequest) {
@@ -1888,8 +1829,12 @@ func (xmem *XmemNozzle) sendBatchGetRequest(getMap base.McRequestMap, retry int)
 	return
 }
 
+func (xmem *XmemNozzle) SetConflictLoggerGetter(loggerGetter conflictlog.LoggerGetter) {
+	xmem.conflictLogger = loggerGetter
+}
+
 func (xmem *XmemNozzle) logConflicts() bool {
-	return xmem.config.conflictLoggingEnabled.Load()
+	return xmem.conflictLogger() != nil
 }
 
 // logs the source and target document involved in the conflict and their metadata.
@@ -2017,11 +1962,15 @@ func (xmem *XmemNozzle) log(wrappedReq *base.WrappedMCRequest, resp *base.Subdoc
 		sourceBodyClone, targetBodyClone, // source and target doc body
 	)
 
-	loggerWait, err := xmem.conflictLogger.Log(&conflictRecord)
-	if err != nil {
-		return err
-	} else {
-		wrappedReq.HLVModeOptions.ConflictLoggerWait = loggerWait
+	conflictLogger := xmem.conflictLogger()
+
+	if conflictLogger != nil {
+		loggerWait, err := conflictLogger.Log(&conflictRecord)
+		if err != nil {
+			return err
+		} else {
+			wrappedReq.HLVModeOptions.ConflictLoggerWait = loggerWait
+		}
 	}
 
 	return nil
@@ -2099,7 +2048,7 @@ func (xmem *XmemNozzle) batchGet(get_map base.McRequestMap) (noRep_map map[strin
 				delete(get_map, uniqueKey)
 				resp.Resp.Recycle()
 			} else if base.IsSuccessGetResponse(resp.Resp) {
-				logConflicts := wrappedReq.LogConflicts()
+				logConflicts := wrappedReq.HLVModeOptions.ConflictLoggingEnabled
 				CDResult, CRResult, err := xmem.conflict_resolver(wrappedReq, resp.Resp, resp.Specs, xmem.sourceActorId, xmem.targetActorId, xmem.xattrEnabled, logConflicts, xmem.uncompressBody, xmem.Logger())
 				if err != nil {
 					// Log the error. We will retry
@@ -2111,9 +2060,9 @@ func (xmem *XmemNozzle) batchGet(get_map base.McRequestMap) (noRep_map map[strin
 					err := xmem.log(wrappedReq, resp)
 					if err != nil {
 						// warn and continue to replicate
-						if err == conflictlog.ErrQueueFull {
+						if err == conflictlog.ErrQueueFull || err == conflictlog.ErrLoggerClosed {
 							// TODO - can spam, good to update it to a counter.
-							xmem.Logger().Warnf("%v Conflict logging queue full, could not log for key=%v%s%v",
+							xmem.Logger().Warnf("%v Conflict logging queue full or closed, could not log for key=%v%s%v",
 								xmem.Id(),
 								base.UdTagBegin, wrappedReq.Req.Key, base.UdTagEnd,
 							)
@@ -2790,12 +2739,13 @@ func (xmem *XmemNozzle) initNewBatch() {
 	isMobile := xmem.getMobileCompatible() != base.MobileCompatibilityOff
 	conflictLoggingEnabled := xmem.logConflicts()
 
+	// continue with the same behaviour during the entire lifecycle
+	// for all the requests of this batch.
+	xmem.batch.conflictLoggingEnabled = conflictLoggingEnabled
+
 	subdocSpecOpt := base.SubdocSpecOption{}
 	if conflictLoggingEnabled {
 		subdocSpecOpt.ConfictLoggingEnabled = true
-		// Use the same conflict logging behaviour for the entire batch.
-		// If there is a change, it applies from the next batch.
-		xmem.batch.conflictLoggingEnabled = conflictLoggingEnabled
 	}
 	if isMobile {
 		subdocSpecOpt.IncludeMobileSync = true
@@ -2842,8 +2792,6 @@ func (xmem *XmemNozzle) initialize(settings metadata.ReplicationSettingsMap) err
 	if err != nil {
 		return err
 	}
-
-	xmem.config.setConflictLoggingRules(settings, xmem.conflictLogger.UpdateRules)
 
 	err = xmem.initializeCompressionSettings(settings)
 	if err != nil {
@@ -3207,7 +3155,7 @@ func (xmem *XmemNozzle) receiveResponse(finch chan bool, waitGrp *sync.WaitGroup
 
 				if req != nil && req.Opaque == response.Opaque {
 
-					// before incrementing through-seqno,
+					// before moving the throughseqno forward,
 					// wait for it's conflict logging to be done
 					wrappedReq.WaitForConflictLogging(xmem.finish_ch, xmem.Logger())
 
@@ -4252,10 +4200,6 @@ func (xmem *XmemNozzle) UpdateSettings(settings metadata.ReplicationSettingsMap)
 		if mobileCompatible != base.MobileCompatibilityOff && atomic.CompareAndSwapUint32(&xmem.importMutationEventRaised, 1, 0) {
 			xmem.eventsProducer.DismissEvent(int(xmem.importMutationEventId))
 		}
-	}
-	_, ok = settings[CONFLICT_LOGGING]
-	if ok {
-		xmem.config.setConflictLoggingRules(settings, xmem.conflictLogger.UpdateRules)
 	}
 
 	return nil

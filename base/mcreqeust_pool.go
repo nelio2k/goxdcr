@@ -72,6 +72,7 @@ func (pool *MCRequestPool) cleanReq(req *WrappedMCRequest) *WrappedMCRequest {
 	req.HLVModeOptions.SendHlv = false
 	req.HLVModeOptions.ActualCas = 0
 	req.HLVModeOptions.ConflictLoggerWait = nil
+	req.HLVModeOptions.ConflictLoggingEnabled = false
 	req.MouAfterProcessing = nil
 	req.ResetSubdocOptionsForRetry()
 	return req
