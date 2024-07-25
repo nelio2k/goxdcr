@@ -340,7 +340,7 @@ func (b *dataBatch) accumuBatch(req *base.WrappedMCRequest, classifyFunc func(re
 	var isFull bool = true
 
 	if req != nil && req.Req != nil {
-		// When this batch is established, it establishes these specs and conflict logging and other settings behaviour
+		// When this batch is established, it establishes these specs and conflict logging behavior
 		// so store it to be used in case of mutation retries
 		req.GetMetaSpecWithoutHlv = b.getMetaSpecWithoutHlv
 		req.GetMetaSpecWithHlv = b.getMetaSpecWithHlv

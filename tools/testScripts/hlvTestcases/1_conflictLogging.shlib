@@ -199,7 +199,7 @@ function runTestCase {
 	echo "============================================================================"
 	echo "Running conflict logging test case passed"
 	echo "============================================================================"
-	#cleanupBucketReplications
-	#cleanupBuckets
-	#cleanupRemoteClusterRefs
+	cleanupBucketReplications
+	cleanupBuckets
+	cleanupRemoteClusterRefs
 }
