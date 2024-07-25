@@ -21,7 +21,7 @@ func TestRules_Parse(t *testing.T) {
 
 		// expectedMapping is the what the final mapping should look like
 		// after parsing. A nil is an accepted value.
-		expectedMapping map[base.CollectionNamespace]Target
+		expectedMapping map[base.CollectionNamespace]base.ConflictLoggingTarget
 
 		// shouldFail=true implies we expect a failure for the input
 		shouldFail bool
@@ -165,8 +165,8 @@ func TestRules_Parse(t *testing.T) {
 					"US": null
 				}
 			}`,
-			expectedMapping: map[base.CollectionNamespace]Target{
-				{ScopeName: "US"}: NewTarget("B1", "S1", "C1"),
+			expectedMapping: map[base.CollectionNamespace]base.ConflictLoggingTarget{
+				{ScopeName: "US"}: base.NewConflictLoggingTarget("B1", "S1", "C1"),
 			},
 		},
 		{
@@ -183,10 +183,10 @@ func TestRules_Parse(t *testing.T) {
 					}
 				}
 			}`,
-			expectedMapping: map[base.CollectionNamespace]Target{
-				{ScopeName: "US", CollectionName: "Ohio"}: NewTarget("B2", "S2", "C2"),
-				{ScopeName: "US", CollectionName: ""}:     NewTarget("B1", "S1", "C1"),
-				{ScopeName: "India", CollectionName: ""}:  NewTarget("B1", "S1", "C1"),
+			expectedMapping: map[base.CollectionNamespace]base.ConflictLoggingTarget{
+				{ScopeName: "US", CollectionName: "Ohio"}: base.NewConflictLoggingTarget("B2", "S2", "C2"),
+				{ScopeName: "US", CollectionName: ""}:     base.NewConflictLoggingTarget("B1", "S1", "C1"),
+				{ScopeName: "India", CollectionName: ""}:  base.NewConflictLoggingTarget("B1", "S1", "C1"),
 			},
 		},
 	}

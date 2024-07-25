@@ -9,53 +9,24 @@ import (
 // Rules captures the logging rules for a replication
 type Rules struct {
 	// Target is the default or fallback target conflict bucket
-	Target Target
+	Target base.ConflictLoggingTarget
 
 	// Mapping describes the how the conflicts from a source scope
 	// & collection is logged to the Target
 	// Empty map implies that all conflicts will be logged
-	Mapping map[base.CollectionNamespace]Target
-}
-
-func parseString(o interface{}) (ok bool, val string) {
-	if o == nil {
-		return
-	}
-	val, ok = o.(string)
-	return
-}
-
-func parseTarget(m map[string]interface{}) (t Target, err error) {
-	if m == nil {
-		return
-	}
-
-	bucketObj, ok := m[base.CLBucketKey]
-	if ok {
-		ok, s := parseString(bucketObj)
-		if ok {
-			t.Bucket = s
-		}
-	}
-
-	collectionObj, ok := m[base.CLCollectionKey]
-	if ok {
-		ok, s := parseString(collectionObj)
-		if ok {
-			t.NS, err = base.NewCollectionNamespaceFromString(s)
-		} else {
-			err = ErrInvalidCollectionValueType
-			return
-		}
-	}
-
-	return
+	Mapping map[base.CollectionNamespace]base.ConflictLoggingTarget
 }
 
 // ParseRules parses map[string]interface{} object into rules.
 // should be in sync with base.ValidateConflictLoggingMapValues
+// j should not be empty or nil
 func ParseRules(j base.ConflictLoggingMappingInput) (rules *Rules, err error) {
-	fallbackTarget, err := parseTarget(j)
+	if j == nil {
+		err = ErrNilMapping
+		return
+	}
+
+	fallbackTarget, err := base.ParseConflictLoggingTarget(j)
 	if err != nil {
 		return
 	}
@@ -67,7 +38,7 @@ func ParseRules(j base.ConflictLoggingMappingInput) (rules *Rules, err error) {
 
 	rules = &Rules{
 		Target:  fallbackTarget,
-		Mapping: map[base.CollectionNamespace]Target{},
+		Mapping: map[base.CollectionNamespace]base.ConflictLoggingTarget{},
 	}
 
 	loggingRulesObj, ok := j[base.CLLoggingRulesKey]
@@ -105,7 +76,7 @@ func ParseRules(j base.ConflictLoggingMappingInput) (rules *Rules, err error) {
 			}
 
 			if len(targetMap) > 0 {
-				target, err = parseTarget(targetMap)
+				target, err = base.ParseConflictLoggingTarget(targetMap)
 				if err != nil {
 					return nil, err
 				}
@@ -162,7 +133,7 @@ func (r *Rules) SameAs(other *Rules) (same bool) {
 		return
 	}
 
-	var otherSource Target
+	var otherSource base.ConflictLoggingTarget
 	for mapping, target := range r.Mapping {
 		otherSource, same = other.Mapping[mapping]
 		if !same {
@@ -192,44 +163,4 @@ func (r *Rules) String() string {
 	loggingRules = "{" + loggingRules + "}"
 
 	return fmt.Sprintf("Target: %s, loggingRules: %s", r.Target, loggingRules)
-}
-
-// Target describes the target bucket, scope and collection where
-// the conflicts will be logged. There are few terms:
-// Complete => The triplet (Bucket, Scope, Collection) are populated
-// Empty => All components of the triplet are empty
-type Target struct {
-	// Bucket is the conflict bucket
-	Bucket string `json:"bucket"`
-
-	// NS is namespace which defines scope and collection
-	NS base.CollectionNamespace `json:"ns"`
-}
-
-func (t Target) String() string {
-	return fmt.Sprintf("%v.%v.%v", t.Bucket, t.NS.ScopeName, t.NS.CollectionName)
-}
-
-func NewTarget(bucket, scope, collection string) Target {
-	return Target{
-		Bucket: bucket,
-		NS: base.CollectionNamespace{
-			ScopeName:      scope,
-			CollectionName: collection,
-		},
-	}
-}
-
-func (t Target) IsEmpty() bool {
-	return t.Bucket == "" && t.NS.IsEmpty()
-}
-
-// IsComplete implies that all components of the triplet (bucket, scope & collection)
-// are populated
-func (t Target) IsComplete() bool {
-	return t.Bucket != "" && t.NS.ScopeName != "" && t.NS.CollectionName != ""
-}
-
-func (t Target) SameAs(other Target) bool {
-	return t.Bucket == other.Bucket && t.NS.IsSameAs(other.NS)
 }

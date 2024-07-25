@@ -2061,11 +2061,11 @@ func (xmem *XmemNozzle) batchGet(get_map base.McRequestMap) (noRep_map map[strin
 					if err != nil {
 						// warn and continue to replicate
 						if err == conflictlog.ErrQueueFull || err == conflictlog.ErrLoggerClosed {
-							// TODO - can spam, good to update it to a counter.
-							xmem.Logger().Warnf("%v Conflict logging queue full or closed, could not log for key=%v%s%v",
-								xmem.Id(),
-								base.UdTagBegin, wrappedReq.Req.Key, base.UdTagEnd,
-							)
+							// SUMUKH TODO - can spam, good to update it to a counter.
+							// xmem.Logger().Warnf("%v Conflict logging queue full or closed, could not log for key=%v%s%v",
+							// 	xmem.Id(),
+							// 	base.UdTagBegin, wrappedReq.Req.Key, base.UdTagEnd,
+							// )
 						} else {
 							xmem.Logger().Warnf("%v Error when logging conflict for key=%v%s%v, req=%v%s%v, reqBody=%v%v%v, resp=%v, respBody=%v%v%v, specs=%v, err=%v",
 								xmem.Id(),
@@ -2921,10 +2921,7 @@ func (xmem *XmemNozzle) markNonTempErrorResponse(response *mc.MCResponse, nonTem
 }
 
 func (xmem *XmemNozzle) nonOptimisticCROnly() bool {
-	if xmem.getMobileCompatible() != base.MobileCompatibilityOff || xmem.source_cr_mode == base.CRMode_Custom {
-		return true
-	}
-	return false
+	return xmem.getCrossClusterVers() || xmem.getMobileCompatible() != base.MobileCompatibilityOff || xmem.source_cr_mode == base.CRMode_Custom
 }
 
 func (xmem *XmemNozzle) receiveResponse(finch chan bool, waitGrp *sync.WaitGroup) {
@@ -3722,7 +3719,7 @@ func (xmem *XmemNozzle) PrintStatusSummary() {
 		if counter_sent > 0 {
 			avg_wait_time = float64(atomic.LoadUint64(&xmem.counter_waittime)) / float64(counter_sent)
 		}
-		xmem.Logger().Infof("%v state =%v connType=%v received %v items (%v compressed), sent %v items (%v compressed), target items skipped %v, ignored %v items, %v items waiting to confirm, %v in queue, %v in current batch, avg wait time is %vms, size of last ten batches processed %v, len(batches_ready_queue)=%v, resend=%v, locked=%v, repair_count_getMeta=%v, repair_count_setMeta=%v, retry_cr=%v, to resolve=%v, to setback=%v, numGetMeta=%v,numSubdocGet=%v, temp_err=%v, eaccess_err=%v guardrailHit=%v unknownStatusRec=%v\n",
+		xmem.Logger().Infof("%v state =%v connType=%v received %v items (%v compressed), sent %v items (%v compressed), target items skipped %v, ignored %v items, %v items waiting to confirm, %v in queue, %v in current batch, avg wait time is %vms, size of last ten batches processed %v, len(batches_ready_queue)=%v, resend=%v, locked=%v, repair_count_getMeta=%v, repair_count_setMeta=%v, retry_cr=%v, to resolve=%v, to setback=%v, numGetMeta=%v,numSubdocGet=%v, temp_err=%v, eaccess_err=%v, guardrailHit=%v, unknownStatusRec=%v, logConflicts=%v\n",
 			xmem.Id(), xmem.State(), connType, atomic.LoadUint64(&xmem.counter_received),
 			atomic.LoadUint64(&xmem.counter_compressed_received), atomic.LoadUint64(&xmem.counter_sent),
 			atomic.LoadUint64(&xmem.counter_compressed_sent), atomic.LoadUint64(&xmem.counter_from_target), atomic.LoadUint64(&xmem.counter_ignored),
@@ -3734,7 +3731,7 @@ func (xmem *XmemNozzle) PrintStatusSummary() {
 			atomic.LoadUint64(&xmem.counter_retry_cr), atomic.LoadUint64(&xmem.counter_to_resolve),
 			atomic.LoadUint64(&xmem.counter_to_setback), atomic.LoadUint64(&xmem.counterNumGetMeta), atomic.LoadUint64(&xmem.counterNumSubdocGet),
 			atomic.LoadUint64(&xmem.counter_tmperr), atomic.LoadUint64(&xmem.counter_eaccess),
-			atomic.LoadUint64(&xmem.counterGuardrailHit), atomic.LoadUint64(&xmem.counterUnknownStatus))
+			atomic.LoadUint64(&xmem.counterGuardrailHit), atomic.LoadUint64(&xmem.counterUnknownStatus), xmem.logConflicts())
 	} else {
 		xmem.Logger().Infof("%v state =%v ", xmem.Id(), xmem.State())
 	}

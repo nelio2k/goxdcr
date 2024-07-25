@@ -10,9 +10,10 @@ import (
 type LoggerGetter func() Logger
 
 // returns a logger only if non-null rules are parsed without any errors.
-func LoggerForRules(conflictLoggingMap base.ConflictLoggingMappingInput, replId string, logger_ctx *log.LoggerContext) (Logger, error) {
+func LoggerForRules(conflictLoggingMap base.ConflictLoggingMappingInput, replId string, logger_ctx *log.LoggerContext, logger *log.CommonLogger) (Logger, error) {
 	conflictLoggingEnabled := len(conflictLoggingMap) > 0 // {} is disabled.
 	if !conflictLoggingEnabled {
+		logger.Infof("Conflict logger will be off for pipeline=%s, with input=%v", replId, conflictLoggingMap)
 		return nil, fmt.Errorf("conflict logging disabled with input %v", conflictLoggingMap)
 	}
 
@@ -34,9 +35,9 @@ func LoggerForRules(conflictLoggingMap base.ConflictLoggingMappingInput, replId 
 		return nil, fmt.Errorf("error getting conflict logging manager. err=%v", err)
 	}
 
-	logger := log.NewLogger(ConflictLoggerName, logger_ctx)
+	fileLogger := log.NewLogger(ConflictLoggerName, logger_ctx)
 	conflictLogger, err = clm.NewLogger(
-		logger,
+		fileLogger,
 		replId,
 		WithMapper(NewConflictMapper(logger)),
 		WithCapacity(1000), // SUMUKH TODO - make the default size configurable.
@@ -45,6 +46,8 @@ func LoggerForRules(conflictLoggingMap base.ConflictLoggingMappingInput, replId 
 	if err != nil {
 		return nil, fmt.Errorf("error getting a new conflict logger for %v. err=%v", conflictLoggingMap, err)
 	}
+
+	logger.Infof("Conflict logger will be on for pipeline=%s, with rules=%s for input=%v", replId, rules, conflictLoggingMap)
 
 	return conflictLogger, nil
 }
