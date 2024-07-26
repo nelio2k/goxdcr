@@ -27,4 +27,5 @@ var (
 	ErrInvalidLoggingRulesValFormat error = errors.New("conflict logging loggingRules' values should be a json object")
 	ErrEmptyBucketEmpty             error = errors.New("conflict logging bucket should not be empty")
 	ErrEmptyCollectionEmpty         error = errors.New("conflict logging collection should not be empty")
+	ErrNilMapping                   error = errors.New("conflict logging mapping input should not be nil")
 )

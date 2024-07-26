@@ -47,7 +47,7 @@ func Test_insertConflictXattrToBody(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			newBody, newDatatype, err := insertConflictXattrToBody(tt.body, tt.datatype)
+			newBody, newDatatype, err := InsertConflictXattrToBody(tt.body, tt.datatype)
 			assert.Nil(t, err)
 			assert.Contains(t, string(newBody), fmt.Sprintf(`_xdcr_conflict%ctrue%c`, 0, 0))
 			assert.Greater(t, newDatatype&base.XattrDataType, uint8(0))

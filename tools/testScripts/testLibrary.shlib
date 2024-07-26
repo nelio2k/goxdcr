@@ -234,8 +234,8 @@ function waitForChangesLeft0 {
 		sleep 10
 	done
 
-	echo "changes_left never went to zero"
-	return 0
+	echo "changes_left never went to zero for $1.$2 -> $3.$4"
+	exit 1
 }
 
 function checkNonNegativeChangesLeft {

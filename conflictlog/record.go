@@ -205,10 +205,14 @@ func (r *ConflictRecord) PopulateData(replicationId string) error {
 	}
 	r.body = body
 
-	err = r.InsertConflictXattr()
+	// source and target document have been formatted with conflict logging xattrs as needed for SetWMeta
+	// Do it now for CRD.
+	newBody, newDatatype, err := InsertConflictXattrToBody(r.body, r.datatype)
 	if err != nil {
-		return err
+		return fmt.Errorf("error inserting xattr to CRD, err=%v", err)
 	}
+	r.body = newBody
+	r.datatype = newDatatype
 
 	return nil
 }
@@ -248,39 +252,10 @@ func (r *ConflictRecord) PopulateCRDocId(now int64) {
 	r.Id = fmt.Sprintf("%s_%v_%s", CRDPrefix, now, uniqKey)
 }
 
-// inserts the "_xdcr_conflict": true xattr to avoid them replicating.
-func (r *ConflictRecord) InsertConflictXattr() error {
-	// add it to the source body
-	newBody, newDatatype, err := insertConflictXattrToBody(r.Source.Body, r.Source.Datatype)
-	if err != nil {
-		return fmt.Errorf("error inserting xattr to source body, err=%v", err)
-	}
-	r.Source.Body = newBody
-	r.Source.Datatype = newDatatype
-
-	// add it to the target body
-	newBody, newDatatype, err = insertConflictXattrToBody(r.Target.Body, r.Target.Datatype)
-	if err != nil {
-		return fmt.Errorf("error inserting xattr to target body, err=%v", err)
-	}
-	r.Target.Body = newBody
-	r.Target.Datatype = newDatatype
-
-	// add it to the CRD body
-	newBody, newDatatype, err = insertConflictXattrToBody(r.body, r.datatype)
-	if err != nil {
-		return fmt.Errorf("error inserting xattr to CRD, err=%v", err)
-	}
-	r.body = newBody
-	r.datatype = newDatatype
-
-	return nil
-}
-
 // Inserts "_xdcr_conflict": true to the input byte slice.
 // If any error occurs, the original body is returned.
 // Otherwise, returns new body and new datatype after xattr is successfully added.
-func insertConflictXattrToBody(body []byte, datatype uint8) ([]byte, uint8, error) {
+func InsertConflictXattrToBody(body []byte, datatype uint8) ([]byte, uint8, error) {
 	newbodyLen := len(body) + MaxBodyIncrease
 	// TODO - Use datapool.
 	newbody := make([]byte, newbodyLen)

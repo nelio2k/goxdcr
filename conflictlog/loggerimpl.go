@@ -209,15 +209,18 @@ func (l *loggerImpl) UpdateWorkerCount(newCount int) {
 	l.opts.workerCount = newCount
 }
 
+// r should be non-nil
 func (l *loggerImpl) UpdateRules(r *Rules) (err error) {
+	if r == nil {
+		err = ErrEmptyRules
+		return
+	}
+
 	defer l.logger.Infof("Logger got the updated rules %v", r)
 
-	if r != nil {
-		// r is nil, meaning conflict logging is off.
-		err = r.Validate()
-		if err != nil {
-			return
-		}
+	err = r.Validate()
+	if err != nil {
+		return
 	}
 
 	l.rulesLock.Lock()
@@ -247,7 +250,7 @@ func (l *loggerImpl) worker() {
 	}
 }
 
-func (l *loggerImpl) getTarget(rec *ConflictRecord) (t Target, err error) {
+func (l *loggerImpl) getTarget(rec *ConflictRecord) (t base.ConflictLoggingTarget, err error) {
 	l.rulesLock.RLock()
 	defer l.rulesLock.RUnlock()
 
@@ -274,7 +277,7 @@ func (l *loggerImpl) getFromPool(bucketName string) (conn Connection, err error)
 	return
 }
 
-func (l *loggerImpl) writeDocs(req logRequest, target Target) (err error) {
+func (l *loggerImpl) writeDocs(req logRequest, target base.ConflictLoggingTarget) (err error) {
 
 	// Write source document.
 	err = l.writeDocRetry(target.Bucket, func(conn Connection) error {
