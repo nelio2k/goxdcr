@@ -51,7 +51,6 @@ func InitManager(loggerCtx *log.LoggerContext, utils utils.UtilsIface, memdAddrG
 	}
 
 	logger.Info("creating conflict manager writer pool")
-	//impl.connPool = newConnPool(logger, impl.newConn)
 	impl.setConnPool()
 
 	manager = impl
@@ -69,17 +68,13 @@ type managerImpl struct {
 }
 
 func (m *managerImpl) NewLogger(logger *log.CommonLogger, replId string, opts ...LoggerOpt) (l Logger, err error) {
-
 	l, err = newLoggerImpl(logger, replId, m.utils, m.connPool, opts...)
-	if err != nil {
-		return
-	}
-
 	return
 }
 
 func (m *managerImpl) setConnPool() {
 	m.logger.Infof("creating conflict manager connection pool type=%s", m.connType)
+
 	fn := m.newGocbCoreConn
 	if m.connType == "memcached" {
 		fn = m.newMemcachedConn

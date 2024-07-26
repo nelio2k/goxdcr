@@ -116,6 +116,9 @@ func (conn *MemcachedConn) Id() int64 {
 	return conn.id
 }
 
+// getCollectionId first attempts to get the collectionId from the cache (if checkCache=true). If not found then
+// it attempt to fetch it from the cluster using the same memcached connection. checkCache=false is generally used
+// when we know that the value is cache is stale and a fresh one has to be fetched.
 func (m *MemcachedConn) getCollectionId(conn *mcc.Client, target base.ConflictLoggingTarget, checkCache bool) (collId uint32, err error) {
 	var ok bool
 
