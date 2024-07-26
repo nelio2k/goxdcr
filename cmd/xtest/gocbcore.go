@@ -10,11 +10,11 @@ import (
 )
 
 type GocbcoreTest struct {
-	Addr   string                 `json:"addr"`
-	Target conflictlog.Target     `json:"target"`
-	Count  int                    `json:"count"`
-	Key    string                 `json:"key"`
-	Doc    map[string]interface{} `json:"doc"`
+	Addr   string                     `json:"addr"`
+	Target base.ConflictLoggingTarget `json:"target"`
+	Count  int                        `json:"count"`
+	Key    string                     `json:"key"`
+	Doc    map[string]interface{}     `json:"doc"`
 }
 
 func gocbcoreTest(cfg Config) (err error) {

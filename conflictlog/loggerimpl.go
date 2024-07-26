@@ -10,15 +10,6 @@ import (
 	"github.com/couchbase/goxdcr/utils"
 )
 
-const (
-	ConflictLoggerName string = "conflictLogger"
-)
-
-const DefaultLogCapacity = 5
-const DefaultLoggerWorkerCount = 3
-const DefaultNetworkRetryCount = 6
-const DefaultNetworkRetryInterval = 10 * time.Second
-
 var _ Logger = (*loggerImpl)(nil)
 
 // loggerImpl implements the Logger interface
@@ -49,11 +40,12 @@ type loggerImpl struct {
 	// logReqCh is the work queue for all logging requests
 	logReqCh chan logRequest
 
-	// finch is intended to close all log workers
+	// finch is intended to signal closure of the logger
 	finch chan bool
 
-	// shutdownCh is intended to shut a subset of workers
-	shutdownCh chan bool
+	// shutdownWorkerCh is intended to shut a subset of workers
+	// This is used when new worker count is lesser than the current one
+	shutdownWorkerCh chan bool
 
 	// wg is used to wait for outstanding log requests to be finished
 	wg sync.WaitGroup
@@ -81,11 +73,12 @@ func newLoggerImpl(logger *log.CommonLogger, replId string, utils utils.UtilsIfa
 		opt(&options)
 	}
 
-	logger.Infof("creating new conflict logger replId=%s loggerOptions=%#v", replId, options)
+	loggerId := newLoggerId()
+	logger.Infof("creating new conflict logger id=%d replId=%s loggerOptions=%#v", loggerId, replId, options)
 
 	l = &loggerImpl{
 		logger:    logger,
-		id:        newLoggerId(),
+		id:        loggerId,
 		utils:     utils,
 		replId:    replId,
 		rulesLock: sync.RWMutex{},
@@ -96,8 +89,8 @@ func newLoggerImpl(logger *log.CommonLogger, replId string, utils utils.UtilsIfa
 		finch:     make(chan bool, 1),
 		// the value 10 is arbitrary. It basically means max 10 workers can be shutdown in parallel
 		// The assumption is that >10 log workers would be very rare.
-		shutdownCh: make(chan bool, 10),
-		wg:         sync.WaitGroup{},
+		shutdownWorkerCh: make(chan bool, LoggerShutdownChCap),
+		wg:               sync.WaitGroup{},
 	}
 
 	logger.Infof("spawning conflict logger workers replId=%s count=%d", l.replId, l.opts.workerCount)
@@ -132,6 +125,7 @@ func (l *loggerImpl) log(c *ConflictRecord) (ackCh chan error, err error) {
 
 func (l *loggerImpl) Log(c *ConflictRecord) (h base.ConflictLoggerHandle, err error) {
 	l.logger.Debugf("logging conflict record replId=%s sourceKey=%s", l.replId, c.Source.Id)
+
 	if l.isClosed() {
 		err = ErrLoggerClosed
 		return
@@ -171,12 +165,22 @@ func (l *loggerImpl) Close() (err error) {
 		return nil
 	}
 
+	l.logger.Infof("closing conflict logger id=%d replId=%s", l.id, l.replId)
+
+	// The close is implemented on the same principle that some restaurants have:
+	// "last entry at 10:00 PM". When translated here it means, we will disallow
+	// new requests but existing requests will be served and results acknowledged.
+	// We also will wait for all of these to be completed.
 	close(l.finch)
+
+	// We close the work channel as well i.e. logReqCh. This is because we want to
+	// handle inflight log requests (both in the channel and in workers)
 	close(l.logReqCh)
 
 	defer l.mu.Unlock()
 
 	l.wg.Wait()
+	l.logger.Infof("closing of conflict logger done id=%d replId=%s", l.id, l.replId)
 
 	return
 }
@@ -202,11 +206,12 @@ func (l *loggerImpl) UpdateWorkerCount(newCount int) {
 		}
 	} else {
 		for i := 0; i < (l.opts.workerCount - newCount); i++ {
-			l.shutdownCh <- true
+			l.shutdownWorkerCh <- true
 		}
 	}
 
 	l.opts.workerCount = newCount
+	l.logger.Infof("changing conflict logger worker count done replId=%s", l.replId)
 }
 
 // r should be non-nil
@@ -216,7 +221,7 @@ func (l *loggerImpl) UpdateRules(r *Rules) (err error) {
 		return
 	}
 
-	defer l.logger.Infof("Logger got the updated rules %v", r)
+	l.logger.Infof("conflict logger got request to update rules id=%d replId=%s %v", l.id, l.replId, r)
 
 	err = r.Validate()
 	if err != nil {
@@ -227,6 +232,7 @@ func (l *loggerImpl) UpdateRules(r *Rules) (err error) {
 	l.opts.rules = r
 	l.rulesLock.Unlock()
 
+	l.logger.Infof("conflict logger rules updated id=%d replId=%s", l.id, l.replId)
 	return
 }
 
@@ -235,7 +241,7 @@ func (l *loggerImpl) worker() {
 
 	for {
 		select {
-		case <-l.shutdownCh:
+		case <-l.shutdownWorkerCh:
 			l.logger.Infof("shutting down conflict log worker replId=%s", l.replId)
 			return
 		case req := <-l.logReqCh:
@@ -285,7 +291,9 @@ func (l *loggerImpl) writeDocs(req logRequest, target base.ConflictLoggingTarget
 		return err
 	})
 	if err != nil {
-		return fmt.Errorf("error writing source doc, err=%v", err)
+		// errors are not logged here as it will spam it when we get errors like TMPFAIL
+		// we let the callers deal with it
+		return err
 	}
 
 	// Write target document.
@@ -294,7 +302,7 @@ func (l *loggerImpl) writeDocs(req logRequest, target base.ConflictLoggingTarget
 		return err
 	})
 	if err != nil {
-		return fmt.Errorf("error writing target doc, err=%v", err)
+		return err
 	}
 
 	// Write conflict record.
@@ -303,14 +311,15 @@ func (l *loggerImpl) writeDocs(req logRequest, target base.ConflictLoggingTarget
 		return err
 	})
 	if err != nil {
-		return fmt.Errorf("error writing conflict record, err=%v", err)
+		return err
 	}
 
 	return
 }
 
-// writeDocRetry arranges for a connection from pool which the supplied function can use. The function wraps the
-// supplied function to check for network errors and appropriately releases the connection back to the pool
+// writeDocRetry arranges for a connection from the pool which the supplied function can use. The function
+// wraps the supplied function to check for network errors and appropriately releases the connection back
+// to the pool
 func (l *loggerImpl) writeDocRetry(bucketName string, fn func(conn Connection) error) (err error) {
 	var conn Connection
 

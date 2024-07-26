@@ -6,11 +6,19 @@ import (
 	"github.com/couchbase/goxdcr/metadata"
 )
 
+// NOTE: The cache implementation, although specific for colleciton manifest can be
+// made generic to cache any value for a bucket. This is a todo for future.
+
+// cachedObj is lock protected wrapper on the cached value
 type cachedObj struct {
 	man *metadata.CollectionsManifest
 	rw  sync.RWMutex
 }
 
+// ManifestCache stores collection manifest for all buckets
+// Reads on multiple buckets do not block each other
+// Write to a bucket B1's manifest do not block other bucket's read or write. It will
+// however, block reads of the B1's manifest
 type ManifestCache struct {
 	buckets map[string]*cachedObj
 	rw      sync.RWMutex
