@@ -10,15 +10,6 @@ import (
 	"github.com/couchbase/goxdcr/utils"
 )
 
-const (
-	ConflictLoggerName string = "conflictLogger"
-)
-
-const DefaultLogCapacity = 5
-const DefaultLoggerWorkerCount = 3
-const DefaultNetworkRetryCount = 6
-const DefaultNetworkRetryInterval = 10 * time.Second
-
 var _ Logger = (*loggerImpl)(nil)
 
 // loggerImpl implements the Logger interface
@@ -98,7 +89,7 @@ func newLoggerImpl(logger *log.CommonLogger, replId string, utils utils.UtilsIfa
 		finch:     make(chan bool, 1),
 		// the value 10 is arbitrary. It basically means max 10 workers can be shutdown in parallel
 		// The assumption is that >10 log workers would be very rare.
-		shutdownWorkerCh: make(chan bool, 10),
+		shutdownWorkerCh: make(chan bool, LoggerShutdownChCap),
 		wg:               sync.WaitGroup{},
 	}
 

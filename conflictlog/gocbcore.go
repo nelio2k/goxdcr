@@ -12,8 +12,6 @@ import (
 	"github.com/couchbase/goxdcr/log"
 )
 
-const ConflictWriterUserAgent = "xdcrConflictWriter"
-
 var _ Connection = (*gocbCoreConn)(nil)
 
 type gocbCoreConn struct {
@@ -63,7 +61,7 @@ func (conn *gocbCoreConn) setupAgent() (err error) {
 		MemdAddrs:      []string{memdAddr},
 		Auth:           auth,
 		BucketName:     conn.bucketName,
-		UserAgent:      ConflictWriterUserAgent,
+		UserAgent:      MemcachedConnUserAgent,
 		UseCollections: true,
 		UseTLS:         false,
 		UseCompression: true,

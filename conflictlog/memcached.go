@@ -32,13 +32,6 @@ type MemcachedConn struct {
 }
 
 func NewMemcachedConn(logger *log.CommonLogger, utilsObj utils.UtilsIface, manCache *ManifestCache, bucketName string, addr string) (m *MemcachedConn, err error) {
-	user, passwd, err := cbauth.GetMemcachedServiceAuth(addr)
-	if err != nil {
-		return
-	}
-
-	logger.Debugf("memcached user=%s passwd=%s", user, passwd)
-
 	connId := newConnId()
 	conn, err := newMemcachedConn(logger, connId, utilsObj, bucketName, addr)
 	if err != nil {
@@ -81,7 +74,7 @@ func newMemcachedConn(logger *log.CommonLogger, id int64, utilsObj utils.UtilsIf
 
 	// For setMeta, negotiate compression, if it is set
 	features.CompressionType = base.CompressionTypeSnappy
-	userAgent := "conflictLogConn"
+	userAgent := MemcachedConnUserAgent
 	readTimeout := 30 * time.Second
 	writeTimeout := 30 * time.Second
 
@@ -210,13 +203,13 @@ func (m *MemcachedConn) handleResponse(rsp *gomemcached.MCResponse, opaque uint3
 	}
 
 	if rsp.Status == gomemcached.UNKNOWN_COLLECTION {
-		m.logger.Debugf("got UNKNOWN_COLLECTION id=%d, body=%s", m.id, string(rsp.Body))
+		m.logger.Debugf("got unknown_collection id=%d, body=%s", m.id, string(rsp.Body))
 		err = ErrUnknownCollection
 		return
 	}
 
 	if rsp.Status == gomemcached.NOT_MY_VBUCKET {
-		m.logger.Debugf("got NOT_MY_BUCKET id=%d, bucketName=%s", m.id, m.bucketName)
+		m.logger.Debugf("got not_my_vbucket id=%d, bucketName=%s", m.id, m.bucketName)
 		m.bucketInfo, err = parseNotMyVbucketValue(m.logger, rsp.Body, m.addr)
 		if err != nil {
 			return

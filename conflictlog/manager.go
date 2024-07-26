@@ -7,10 +7,6 @@ import (
 	"github.com/couchbase/goxdcr/utils"
 )
 
-const (
-	ConflictManagerLoggerName = "conflictMgr"
-)
-
 var manager Manager
 
 var _ Manager = (*managerImpl)(nil)

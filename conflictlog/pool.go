@@ -9,14 +9,6 @@ import (
 	"github.com/couchbase/goxdcr/log"
 )
 
-const (
-	// DefaultPoolGCInterval is the GC frequency for connection pool
-	DefaultPoolGCInterval = 60 * time.Second
-
-	// DefaultPoolReapInterval is the last used threshold for reaping unused connections
-	DefaultPoolReapInterval = 120 * time.Second
-)
-
 var _ ConnPool = (*connPool)(nil)
 
 // ConnPool defines the behaviour of a connection pool for objects/resources
