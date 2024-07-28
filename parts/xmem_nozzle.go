@@ -2977,9 +2977,6 @@ func (xmem *XmemNozzle) initNewBatch() {
 	xmem.batch.conflictLoggingEnabled = conflictLoggingEnabled
 
 	subdocSpecOpt := base.SubdocSpecOption{}
-	if conflictLoggingEnabled {
-		subdocSpecOpt.ConfictLoggingEnabled = true
-	}
 	if isMobile {
 		subdocSpecOpt.IncludeMobileSync = true
 		subdocSpecOpt.IncludeVXattr = true
@@ -2990,6 +2987,7 @@ func (xmem *XmemNozzle) initNewBatch() {
 		subdocSpecOpt.IncludeImportCas = crossClusterVers
 		subdocSpecOpt.IncludeHlv = true // CCR needs target HLV for CR, crossClusterVers needs cvCas
 		subdocSpecOpt.IncludeVXattr = true
+		subdocSpecOpt.ConfictLoggingEnabled = conflictLoggingEnabled
 		xmem.batch.getMetaSpecWithHlv = base.ComposeSpecForSubdocGet(subdocSpecOpt)
 		// This is needed for CCR.
 		subdocSpecOpt.IncludeBody = true
