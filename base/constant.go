@@ -1528,6 +1528,12 @@ const (
 	CLLoggingRulesKey  string = "loggingRules"
 )
 
+// simple keys inside conflict logging mapping. It excludes loggingRules key.
+var SimpleConflictLoggingKeys []string = []string{
+	CLBucketKey,
+	CLCollectionKey,
+}
+
 // Required for conflict resolution
 const (
 	PERIOD      = "."

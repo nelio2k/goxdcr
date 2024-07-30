@@ -1315,7 +1315,7 @@ func (xmem *XmemNozzle) batchSetMetaWithRetry(batch *dataBatch, numOfRetry int) 
 			atomic.AddUint64(&xmem.counter_waittime, uint64(time.Since(item.Start_time).Seconds()*1000))
 
 			// check if conflict logging needs to be done for this item
-			logConflicts := xmem.logConflicts()
+			logConflicts := xmem.conflictLoggingEnabled()
 			if logConflicts && !xmem.isCCR() {
 				resp, err := batch.conflictLookupMap.deregisterLookup(item.UniqueKey)
 				if err == nil {
@@ -1660,10 +1660,10 @@ func (xmem *XmemNozzle) batchGetHandler(count int, finch chan bool, return_ch ch
 
 				if !isNetTimeoutError(err) && err != PartStoppedError {
 					logger.Errorf("%v batchGet received fatal error and had to abort. Expected %v responses, got %v responses. err=%v", xmem.Id(), count, len(respMap), err)
-					logger.Infof("%v Expected=%v, Received=%v\n", xmem.Id(), opaque_keySeqno_map.CloneAndRedact(), base.UdTagBegin, respMap, base.UdTagEnd)
+					logger.Infof("%v Expected=%v, Received=%v%v%v\n", xmem.Id(), opaque_keySeqno_map.CloneAndRedact(), base.UdTagBegin, respMap, base.UdTagEnd)
 				} else {
 					logger.Errorf("%v batchGet timed out. Expected %v responses, got %v responses", xmem.Id(), count, len(respMap))
-					logger.Infof("%v Expected=%v, Received=%v\n", xmem.Id(), opaque_keySeqno_map.CloneAndRedact(), base.UdTagBegin, respMap, base.UdTagEnd)
+					logger.Infof("%v Expected=%v, Received=%v%v%v\n", xmem.Id(), opaque_keySeqno_map.CloneAndRedact(), base.UdTagBegin, respMap, base.UdTagEnd)
 				}
 				return
 			} else {
@@ -1706,8 +1706,8 @@ func (xmem *XmemNozzle) batchGetHandler(count int, finch chan bool, return_ch ch
 								xmem.RaiseEvent(common.NewEvent(common.DataSentFailed, response.Status, xmem, nil, nil))
 							} else {
 								// log the corresponding request to facilitate debugging
-								xmem.Logger().Warnf("%v received error from getMeta client. key=%v%s%v, seqno=%v, response=%v%v%v\n", xmem.Id(), base.UdTagBegin, key, base.UdTagEnd, seqno,
-									base.UdTagBegin, response, base.UdTagEnd)
+								xmem.Logger().Warnf("%v received error from getMeta client. key=%v%s%v, seqno=%v, response=%v%v%v, specs=%v%s%v\n", xmem.Id(), base.UdTagBegin, key, base.UdTagEnd, seqno,
+									base.UdTagBegin, response, base.UdTagEnd, base.UdTagBegin, specs, base.UdTagEnd)
 								err = fmt.Errorf("error response with status %v from memcached", response.Status)
 								xmem.repairConn(xmem.client_for_getMeta, err.Error(), rev)
 								// no need to wait further since connection has been reset
@@ -1929,7 +1929,7 @@ func getBodyAndXattrSpecs(xtoc []byte) (base.SubdocLookupPathSpecs, error) {
 	xi := base.NewXtocIterator(xtoc)
 	len, err := xi.Len()
 	if err != nil {
-		return nil, fmt.Errorf("Error getting xtoc len, err=%v", err)
+		return nil, fmt.Errorf("error getting xtoc len, err=%v", err)
 	}
 
 	specs = make(base.SubdocLookupPathSpecs, 0, len+1)
@@ -1937,7 +1937,7 @@ func getBodyAndXattrSpecs(xtoc []byte) (base.SubdocLookupPathSpecs, error) {
 	for xi.HasNext() {
 		xattrKey, err := xi.Next()
 		if err != nil {
-			return nil, fmt.Errorf("Error getting xtoc next, err=%v", err)
+			return nil, fmt.Errorf("error getting xtoc next, err=%v", err)
 		}
 
 		spec := base.SubdocLookupPathSpec{
@@ -1953,7 +1953,7 @@ func getBodyAndXattrSpecs(xtoc []byte) (base.SubdocLookupPathSpecs, error) {
 	return specs, nil
 }
 
-func (xmem *XmemNozzle) logConflicts() bool {
+func (xmem *XmemNozzle) conflictLoggingEnabled() bool {
 	return xmem.conflictLogger() != nil
 }
 
@@ -2011,7 +2011,7 @@ func (xmem *XmemNozzle) log(req *base.WrappedMCRequest, resp *base.SubdocLookupR
 		return fmt.Errorf("error decoding target document response, err=%v", err)
 	}
 
-	targetDocDatatype := targetDoc.DataType & (^base.XattrDataType) & (^base.SnappyDataType)
+	targetDocDatatype := targetDoc.DataType & (^base.SnappyDataType)
 
 	var targetBodyClone []byte
 	var targetHlvClone, targetSyncClone, targetMouClone string
@@ -2081,7 +2081,7 @@ func (xmem *XmemNozzle) log(req *base.WrappedMCRequest, resp *base.SubdocLookupR
 
 	req.SrcColNamespaceMtx.RLock()
 	srcScopeName := req.SrcColNamespace.ScopeName
-	srcColllectionName := req.SrcColNamespace.CollectionName
+	srcCollectionName := req.SrcColNamespace.CollectionName
 	req.SrcColNamespaceMtx.RUnlock()
 
 	req.TgtColNamespaceMtx.RLock()
@@ -2090,27 +2090,55 @@ func (xmem *XmemNozzle) log(req *base.WrappedMCRequest, resp *base.SubdocLookupR
 	req.TgtColNamespaceMtx.RUnlock()
 
 	// Generate a conflict record from above information.
-	conflictRecord := conflictlog.NewConflictRecord(
-		string(req.Req.Key),        // document key
-		srcScopeName, tgtScopeName, // source and target scope name
-		srcColllectionName, tgtCollectionName, // source and target collection name
-		xmem.sourceBucketUuid, xmem.targetBucketUuid, // source and target bucketuuid
-		xmem.sourceClusterUuid, xmem.targetClusterUuid, // source and target clusteruuid
-		xmem.config.sourceHostname, xmem.config.targetHostname, // source and target hostname
-		sourceDoc.Expiry, targetDoc.Expiry, // source and target doc expiry
-		sourceDoc.Flags, targetDoc.Flags, // source and target doc flags
-		sourceDoc.Cas, targetDoc.Cas, // source and target doc cas
-		sourceDoc.RevSeq, targetDoc.RevSeq, // source and target doc revId
-		sourceDocDatatype, targetDocDatatype, // source and target doc datatype
-		sourceDoc.Deletion, targetDoc.Deletion, // if source and target docs are tombstone
-		sourceHlvClone, targetHlvClone, // source and target doc xattr._vv
-		sourceSyncClone, targetSyncClone, // source and target xattr._sync
-		sourceMouClone, targetMouClone, // source and target xattr._mou
-		req.Req.VBucket, req.Req.VBucket, // source and target vbno
-		sourceDoc.VbUUID, targetDoc.VbUUID, // source and target vb vbuuid
-		sourceDoc.Seqno, targetDoc.Seqno, // source and target vb seqno
-		sourceBodyClone, targetBodyClone, // source and target doc body
-	)
+	conflictRecord := conflictlog.ConflictRecord{
+		Timestamp: time.Now().Format(conflictlog.TimestampFormat),
+		DocId:     string(req.Req.Key),
+		Source: conflictlog.DocInfo{
+			Scope:       srcScopeName,
+			Collection:  srcCollectionName,
+			BucketUUID:  xmem.sourceBucketUuid,
+			ClusterUUID: xmem.sourceClusterUuid,
+			NodeId:      xmem.config.sourceHostname,
+			Expiry:      sourceDoc.Expiry,
+			Flags:       sourceDoc.Flags,
+			Cas:         sourceDoc.Cas,
+			RevSeqno:    sourceDoc.RevSeq,
+			IsDeleted:   sourceDoc.Deletion,
+			Xattrs: conflictlog.Xattrs{
+				Hlv:  sourceHlvClone,
+				Sync: sourceSyncClone,
+				Mou:  sourceMouClone,
+			},
+			Body:     sourceBodyClone,
+			Datatype: sourceDocDatatype,
+			VBNo:     req.Req.VBucket,
+			VBUUID:   sourceDoc.VbUUID,
+			Seqno:    sourceDoc.Seqno,
+		},
+		Target: conflictlog.DocInfo{
+			Scope:       tgtScopeName,
+			Collection:  tgtCollectionName,
+			BucketUUID:  xmem.targetBucketUuid,
+			ClusterUUID: xmem.targetClusterUuid,
+			NodeId:      xmem.config.targetHostname,
+			Expiry:      targetDoc.Expiry,
+			Flags:       targetDoc.Flags,
+			Cas:         targetDoc.Cas,
+			RevSeqno:    targetDoc.RevSeq,
+			IsDeleted:   targetDoc.Deletion,
+			Xattrs: conflictlog.Xattrs{
+				Hlv:  targetHlvClone,
+				Sync: targetSyncClone,
+				Mou:  targetMouClone,
+			},
+			Body:     targetBodyClone,
+			Datatype: targetDocDatatype,
+			VBNo:     req.Req.VBucket,
+			VBUUID:   targetDoc.VbUUID,
+			Seqno:    targetDoc.Seqno,
+		},
+		Datatype: base.JSONDataType,
+	}
 
 	conflictLogger := xmem.conflictLogger()
 
@@ -2970,7 +2998,7 @@ func (xmem *XmemNozzle) initNewBatch() {
 	isCCR := xmem.isCCR()
 	crossClusterVers := xmem.getCrossClusterVers()
 	isMobile := xmem.getMobileCompatible() != base.MobileCompatibilityOff
-	conflictLoggingEnabled := xmem.logConflicts()
+	conflictLoggingEnabled := xmem.conflictLoggingEnabled()
 
 	// continue with the same behaviour during the entire lifecycle
 	// for all the requests of this batch.
@@ -3968,7 +3996,7 @@ func (xmem *XmemNozzle) PrintStatusSummary() {
 			atomic.LoadUint64(&xmem.counter_retry_cr), atomic.LoadUint64(&xmem.counter_to_resolve),
 			atomic.LoadUint64(&xmem.counter_to_setback), atomic.LoadUint64(&xmem.counterNumGetMeta), atomic.LoadUint64(&xmem.counterNumSubdocGet),
 			atomic.LoadUint64(&xmem.counter_tmperr), atomic.LoadUint64(&xmem.counter_eaccess),
-			atomic.LoadUint64(&xmem.counterGuardrailHit), atomic.LoadUint64(&xmem.counterUnknownStatus), xmem.logConflicts())
+			atomic.LoadUint64(&xmem.counterGuardrailHit), atomic.LoadUint64(&xmem.counterUnknownStatus), xmem.conflictLoggingEnabled())
 	} else {
 		xmem.Logger().Infof("%v state =%v ", xmem.Id(), xmem.State())
 	}

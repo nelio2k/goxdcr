@@ -331,8 +331,8 @@ func (xdcrf *XDCRFactory) newPipelineCommon(topic string, pipelineType common.Pi
 	conflictLoggingMap := spec.Settings.GetConflictLoggingMapping()
 	conflictLogger, err := conflictlog.LoggerForRules(conflictLoggingMap, spec.UniqueId(), logger_ctx, xdcrf.logger)
 	if err != nil {
-		// log as warning and continue to create pipeline.
-		xdcrf.logger.Warnf("Error initialising new logger for conflict logging with input=%v, err=%v", conflictLoggingMap, err)
+		// log the error and continue to create pipeline.
+		xdcrf.logger.Errorf("Error initialising new logger for conflict logging with input=%v, err=%v", conflictLoggingMap, err)
 	}
 
 	// construct and initializes the pipeline
@@ -1144,7 +1144,7 @@ func (xdcrf *XDCRFactory) constructSettingsForXmemNozzle(pipeline common.Pipelin
 		xmemSettings[base.VersionPruningWindowHrsKey] = val
 	}
 
-	xmemSettings[base.ConflictLoggingKey] = metadata.GetSettingFromSettingsMap(settings, metadata.ConflictLoggingKey, base.ConflictLoggingMappingInput{})
+	xmemSettings[base.ConflictLoggingKey] = metadata.GetSettingFromSettingsMap(settings, metadata.ConflictLoggingKey, base.ConflictLoggingOff)
 
 	return xmemSettings, nil
 }
