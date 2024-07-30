@@ -711,15 +711,8 @@ func (service *ReplicationSpecService) validateReplicationSettingsInternal(error
 		}
 	}
 
-	var conflictLoggingMap base.ConflictLoggingMappingInput
-	var conflictLoggingMapExists bool
-	conflictLoggingMap, conflictLoggingMapExists = settings[metadata.ConflictLoggingKey].(base.ConflictLoggingMappingInput)
-	if !conflictLoggingMapExists {
-		// if settings is read from metakv for instance, the type would not be ConflictLoggingMappingInput anymore
-		conflictLoggingMap, conflictLoggingMapExists = settings[metadata.ConflictLoggingKey].(map[string]interface{})
-	}
-
-	if conflictLoggingMapExists && len(conflictLoggingMap) != 0 {
+	conflictLoggingMap, conflictLoggingMapExists := base.ParseConflictLoggingInputType(settings[metadata.ConflictLoggingKey])
+	if conflictLoggingMapExists && conflictLoggingMap.Enabled() {
 		// Conflict logging is on. Make sure source bucket enableCrossClusterVersioning is true.
 		connstr, err := service.xdcr_comp_topology_svc.MyConnectionStr()
 		if err != nil {
@@ -760,7 +753,7 @@ func (service *ReplicationSpecService) validateReplicationSettingsInternal(error
 					warning := fmt.Sprintf("Compression pre-requisite to cluster %v check failed. Compression will be temporarily disabled for replication.", targetClusterRef.Name())
 					warnings.AppendGeneric(warning)
 					// Since we are disabling compression, reset errors
-					for k, _ := range errorMap {
+					for k := range errorMap {
 						delete(errorMap, k)
 					}
 					err = nil
@@ -783,7 +776,7 @@ func (service *ReplicationSpecService) validateReplicationSettingsInternal(error
 			}
 		}
 
-		if conflictLoggingMapExists && len(conflictLoggingMap) != 0 {
+		if conflictLoggingMapExists && conflictLoggingMap.Enabled() {
 			// Conflict logging is on. Make sure target bucket enableCrossClusterVersioning is true.
 			crossClusterVer, err := service.utils.GetCrossClusterVersioningFromBucketInfo(targetBucketInfo)
 			if err != nil {

@@ -246,7 +246,7 @@ var TargetTopologyLogFrequencyConfig = &SettingsConfig{base.TargetTopologyLogFre
 var CasDriftThresholdSecsConfig = &SettingsConfig{100, &Range{0, math.MaxInt}}
 var PreCheckCasDriftThresholdHoursConfig = &SettingsConfig{8760 /*1 year*/, &Range{0, math.MaxInt}}
 
-var ConflictLoggingConfig = &SettingsConfig{base.ConflictLoggingMappingInput{}, nil}
+var ConflictLoggingConfig = &SettingsConfig{base.ConflictLoggingOff, nil}
 
 // Note that any keys that are in the MultiValueMap should not belong here
 // Read How MultiValueMap is parsed in code for more details
@@ -1121,21 +1121,16 @@ func (s *ReplicationSettings) GetPreCheckCasDriftThreshold() uint32 {
 	return uint32(hrsInt)
 }
 
+// returns base.ConflictLoggingOff on invalid type and values.
 func (s *ReplicationSettings) GetConflictLoggingMapping() base.ConflictLoggingMappingInput {
 	val, _ := s.GetSettingValueOrDefaultValue(ConflictLoggingKey)
 	if val == nil {
-		return base.ConflictLoggingMappingInput{}
+		return base.ConflictLoggingOff
 	}
 
-	var mapping base.ConflictLoggingMappingInput
-	var ok bool
-	mapping, ok = val.(base.ConflictLoggingMappingInput)
+	mapping, ok := base.ParseConflictLoggingInputType(val)
 	if !ok {
-		// if val is read from metakv for instance, the type will not be ConflictLoggingMappingInput
-		mapping, ok = val.(map[string]interface{})
-		if !ok {
-			return base.ConflictLoggingMappingInput{}
-		}
+		return base.ConflictLoggingOff
 	}
 	return mapping
 }
@@ -1314,6 +1309,11 @@ func ValidateAndConvertReplicationSettingsValue(key, value, errorKey string, isE
 		if err = nonCAPIOnlyFeature(convertedValue.(base.FilterExpDelType), base.FilterExpDelNone, isCapi); err != nil {
 			return
 		}
+	case CollectionsMgtMultiKey:
+		convertedValue, err = ValidateAndConvertSettingsValue(key, value, ReplicationSettingsConfigMap)
+		if err != nil {
+			return
+		}
 	case CollectionsMappingRulesKey:
 		convertedValue, err = ValidateAndConvertStringToMappingRuleType(value)
 		if err != nil {
@@ -1326,6 +1326,11 @@ func ValidateAndConvertReplicationSettingsValue(key, value, errorKey string, isE
 		}
 	case MobileCompatibleKey:
 		if convertedValue, err = base.MobileCompatibilityStringToTypeConverter(value); err != nil {
+			return
+		}
+	case DismissEventKey:
+		convertedValue, err = ValidateAndConvertSettingsValue(key, value, ReplicationSettingsConfigMap)
+		if err != nil {
 			return
 		}
 	case ConflictLoggingKey:

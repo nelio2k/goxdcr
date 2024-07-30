@@ -2905,6 +2905,12 @@ type FilteringStatusType int
 // Stats per vbucket
 type VBCountMetricMap map[string]int64
 
+// the following will be not set for target doc when retrieved using GET_META.
+type OptionalConflictLoggingMetadata struct {
+	Seqno  uint64
+	VbUUID uint64
+}
+
 type DocumentMetadata struct {
 	Key      []byte
 	RevSeq   uint64 //Item revision seqno
@@ -2914,12 +2920,18 @@ type DocumentMetadata struct {
 	Deletion bool   // Existence of tombstone
 	DataType uint8  // item data type
 	Opcode   gomemcached.CommandCode
-	// Note that the following will be not set for target doc retrieved using GET_META.
-	Seqno  uint64
-	VbUUID uint64
+	OptionalConflictLoggingMetadata
 }
 
 func (doc_meta DocumentMetadata) String() string {
+	if doc_meta.VbUUID != 0 {
+		return fmt.Sprintf("[key=%v%s%v;revSeq=%v;cas=%v;flags=%v;expiry=%v;deletion=%v;datatype=%v;vbuuid=%v;seqno=%v]",
+			UdTagBegin, doc_meta.Key, UdTagEnd,
+			doc_meta.RevSeq, doc_meta.Cas, doc_meta.Flags,
+			doc_meta.Expiry, doc_meta.Deletion, doc_meta.DataType,
+			doc_meta.VbUUID, doc_meta.Seqno,
+		)
+	}
 	return fmt.Sprintf("[key=%v%s%v;revSeq=%v;cas=%v;flags=%v;expiry=%v;deletion=%v;datatype=%v]",
 		UdTagBegin, doc_meta.Key, UdTagEnd,
 		doc_meta.RevSeq, doc_meta.Cas, doc_meta.Flags,
@@ -3131,6 +3143,8 @@ type ExternalMgmtHostAndPortGetter func(map[string]interface{}, bool) (string, i
 // conflict logging json input mapping from user, before converting to "Rules"
 type ConflictLoggingMappingInput map[string]interface{}
 
+var ConflictLoggingOff ConflictLoggingMappingInput = ConflictLoggingMappingInput{}
+
 // ignores unrecognised keys from comparision
 func EqualMaps(clm1, clm2 map[string]interface{}, recognisedKeys []string) bool {
 	if clm1 == nil || clm2 == nil {
@@ -3154,23 +3168,49 @@ func EqualMaps(clm1, clm2 map[string]interface{}, recognisedKeys []string) bool 
 	return true
 }
 
-// ignores unrecognised keys from comparision
+// returns a boolean to indicate invalid type.
+func ParseConflictLoggingInputType(in interface{}) (ConflictLoggingMappingInput, bool) {
+	var out ConflictLoggingMappingInput
+	var ok bool
+	out, ok = in.(ConflictLoggingMappingInput)
+	if !ok {
+		// if other is read from metakv for instance (marshalled and unmarshalled back),
+		// the type will not be ConflictLoggingMappingInput
+		out, ok = in.(map[string]interface{})
+		if !ok {
+			return ConflictLoggingOff, false
+		}
+	}
+
+	return out, ok
+}
+
+func (clm ConflictLoggingMappingInput) Enabled() bool {
+	return !clm.Disabled()
+}
+
+func (clm ConflictLoggingMappingInput) Disabled() bool {
+	return ConflictLoggingOff.Same(clm)
+}
+
+// if other is not not valid type, false is returned.
 func (clm ConflictLoggingMappingInput) SameAs(other interface{}) bool {
 	if clm == nil || other == nil {
 		return clm == nil && other == nil
 	}
 
-	var otherClm ConflictLoggingMappingInput
-	var ok bool
-	otherClm, ok = other.(ConflictLoggingMappingInput)
+	otherClm, ok := ParseConflictLoggingInputType(other)
 	if !ok {
-		// if other is read from metakv for instance, the type will not be ConflictLoggingMappingInput
-		otherClm, ok = other.(map[string]interface{})
-		if !ok {
-			return false
-		}
+		// not of valid type
+		return false
 	}
 
+	return clm.Same(otherClm)
+}
+
+// checks if clm equals otherClm.
+// ignores unrecognised keys from comparision.
+func (clm ConflictLoggingMappingInput) Same(otherClm ConflictLoggingMappingInput) bool {
 	if clm == nil || otherClm == nil {
 		return clm == nil && otherClm == nil
 	}
@@ -3179,12 +3219,12 @@ func (clm ConflictLoggingMappingInput) SameAs(other interface{}) bool {
 		return false
 	}
 
-	// only mandatory keys recognised by conflict logging feature.
-	keys := []string{
-		CLBucketKey, CLCollectionKey,
+	// {} is a valid value
+	if len(clm) == 0 {
+		return len(otherClm) == 0
 	}
 
-	same := EqualMaps(clm, otherClm, keys)
+	same := EqualMaps(clm, otherClm, SimpleConflictLoggingKeys)
 	if !same {
 		return false
 	}
@@ -3198,7 +3238,7 @@ func (clm ConflictLoggingMappingInput) SameAs(other interface{}) bool {
 
 	rules1, ok1 := loggingRules1.(map[string]interface{})
 	rules2, ok2 := loggingRules2.(map[string]interface{})
-	if ok1 != ok2 || !EqualMaps(rules1, rules2, keys) {
+	if ok1 != ok2 || !EqualMaps(rules1, rules2, SimpleConflictLoggingKeys) {
 		return false
 	}
 
@@ -3290,7 +3330,6 @@ func ValidateAndConvertJsonMapToConflictLoggingMapping(value string) (ConflictLo
 		return nil, ErrorJSONReEncodeFailed
 	}
 
-	// Because adv filtering won't work if space is removed - jsonMap should be the original version
 	jsonMap, err := ValidateAndConvertStringToJsonType(value)
 	if err != nil {
 		return nil, err

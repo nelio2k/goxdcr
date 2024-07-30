@@ -1914,18 +1914,16 @@ func (router *Router) prepareMcRequest(colIds []uint32, firstReq *base.WrappedMC
 		}
 		reqToProcess.ColInfoMtx.Unlock()
 
-		if targetManifest == nil {
-			continue
-		}
-
-		scopeName, collectionName, err := targetManifest.GetScopeAndCollectionName(colId)
-		if err == nil {
-			reqToProcess.TgtColNamespaceMtx.Lock()
-			reqToProcess.TgtColNamespace = &base.CollectionNamespace{
-				ScopeName:      scopeName,
-				CollectionName: collectionName,
+		if targetManifest != nil {
+			scopeName, collectionName, err := targetManifest.GetScopeAndCollectionName(colId)
+			if err == nil {
+				reqToProcess.TgtColNamespaceMtx.Lock()
+				reqToProcess.TgtColNamespace = &base.CollectionNamespace{
+					ScopeName:      scopeName,
+					CollectionName: collectionName,
+				}
+				reqToProcess.TgtColNamespaceMtx.Unlock()
 			}
-			reqToProcess.TgtColNamespaceMtx.Unlock()
 		}
 	}
 	if numCols > 1 {

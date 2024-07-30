@@ -1168,23 +1168,22 @@ func (genericPipeline *GenericPipeline) updateConflictLoggingRules(settings meta
 		return
 	}
 
-	conflictLoggingMap, ok = conflictLoggingIn.(map[string]interface{})
+	conflictLoggingMap, ok = base.ParseConflictLoggingInputType(conflictLoggingIn)
 	if !ok {
 		// wrong type
-		genericPipeline.logger.Warnf("conflict map %v as input, is of invalid type %v. Ignoring the update",
+		genericPipeline.logger.Errorf("conflict map %v as input, is of invalid type %v. Ignoring the update",
 			conflictLoggingIn, reflect.TypeOf(conflictLoggingIn))
 		return
 	}
 
 	if conflictLoggingMap == nil {
 		// nil is not an accepted value, should not reach here.
-		genericPipeline.logger.Warnf("conflict map is nil as input, but is cannot be nil. Ignoring %v for the update",
+		genericPipeline.logger.Errorf("conflict map is nil as input, but is cannot be nil. Ignoring %v for the update",
 			conflictLoggingIn)
 		return
 	}
 
-	// {} is disabled.
-	conflictLoggingEnabled = len(conflictLoggingMap) > 0
+	conflictLoggingEnabled = conflictLoggingMap.Enabled()
 
 	genericPipeline.conflictLoggerMtx.Lock()
 	defer genericPipeline.conflictLoggerMtx.Unlock()
@@ -1194,7 +1193,7 @@ func (genericPipeline *GenericPipeline) updateConflictLoggingRules(settings meta
 		// compute the "rules"
 		newRules, err := conflictlog.ParseRules(conflictLoggingMap)
 		if err != nil || newRules == nil {
-			genericPipeline.logger.Warnf("error converting %v to new conflict logging rules, ignoring the input and continuing with old rules. err=%v",
+			genericPipeline.logger.Errorf("error converting %v to new conflict logging rules, ignoring the input and continuing with old rules. err=%v",
 				conflictLoggingMap, err)
 			return
 		}
@@ -1203,7 +1202,7 @@ func (genericPipeline *GenericPipeline) updateConflictLoggingRules(settings meta
 		if genericPipeline.conflictLogger != nil {
 			err = genericPipeline.conflictLogger.UpdateRules(newRules)
 			if err != nil {
-				genericPipeline.logger.Warnf("error updating existing conflict logging rules to new rules %s, ignoring %v and continuing with old rules. err=%v",
+				genericPipeline.logger.Errorf("error updating existing conflict logging rules to new rules %s, ignoring %v and continuing with old rules. err=%v",
 					newRules, conflictLoggingMap, err)
 				return
 			}
@@ -1215,7 +1214,7 @@ func (genericPipeline *GenericPipeline) updateConflictLoggingRules(settings meta
 		// Option 1b: a logger doesn't exist, create a new one with the input rules.
 		clm, err := conflictlog.GetManager()
 		if err != nil {
-			genericPipeline.logger.Warnf("error getting conflict logging manager to update to new rules %s, ignoring input %v and continuing with old rules. err=%v",
+			genericPipeline.logger.Errorf("error getting conflict logging manager to update to new rules %s, ignoring input %v and continuing with old rules. err=%v",
 				newRules, conflictLoggingMap, err)
 			return
 		}

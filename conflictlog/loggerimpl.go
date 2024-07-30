@@ -307,7 +307,7 @@ func (l *loggerImpl) writeDocs(req logRequest, target base.ConflictLoggingTarget
 
 	// Write conflict record.
 	err = l.writeDocRetry(target.Bucket, func(conn Connection) error {
-		err = conn.SetMeta(req.conflictRec.Id, req.conflictRec.body, req.conflictRec.datatype, target)
+		err = conn.SetMeta(req.conflictRec.Id, req.conflictRec.Body, req.conflictRec.Datatype, target)
 		return err
 	})
 	if err != nil {
