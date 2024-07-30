@@ -14,7 +14,6 @@ const (
 	MemcachedConnUserAgent = "conflictLog"
 
 	DefaultLogCapacity          = 5
-	DefaultLoggerWorkerCount    = 3
 	DefaultNetworkRetryCount    = 6
 	DefaultNetworkRetryInterval = 10 * time.Second
 	LoggerShutdownChCap         = 10
@@ -33,4 +32,9 @@ const (
 		4 /* _xdcr_conflict xattr size */ +
 		len(base.ConflictLoggingXattrKey) +
 		len(base.ConflictLoggingXattrVal) + 2 /* null terminators one each after key and value */
+)
+
+// [TEMP] - SUMUKH TODO - can move to const when actually implemented.
+var (
+	DefaultLoggerWorkerCount = 3
 )

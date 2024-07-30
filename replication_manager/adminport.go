@@ -1420,26 +1420,35 @@ func (adminport *Adminport) doChangeConflictLogSetting(request *http.Request) (*
 		return EncodeObjectIntoResponse(errorsMap)
 	}
 
-	logger_ap.Infof("changing conflict connection type = %v", request.Form)
+	logger_ap.Infof("changing conflict logging defaults = %v", request.Form)
 	for key, valArr := range request.Form {
-		if key != "connType" {
+		switch key {
+		case "connType":
+			connType := valArr[0]
+			logger_ap.Infof("changing conflict connection type = %s", connType)
+			m, err := conflictlog.GetManager()
+			if err != nil {
+				errorsMap["error_connType"] = err
+				return EncodeObjectIntoResponse(errorsMap)
+			}
+
+			err = m.SetConnType(connType)
+			if err != nil {
+				errorsMap["error_setConnType"] = err
+				return EncodeObjectIntoResponse(errorsMap)
+			}
+		case "workerCount":
+			workerCnt := valArr[0]
+			i, err := strconv.Atoi(workerCnt)
+			if err != nil {
+				errorsMap[fmt.Sprintf("error_workerCnt=%s", workerCnt)] = err
+				return EncodeObjectIntoResponse(errorsMap)
+			}
+			logger_ap.Infof("changing worker count = %s => %v", workerCnt, i)
+			conflictlog.DefaultLoggerWorkerCount = i
+		default:
 			continue
 		}
-
-		connType := valArr[0]
-		logger_ap.Infof("changing conflict connection type = %s", connType)
-		m, err := conflictlog.GetManager()
-		if err != nil {
-			errorsMap["error"] = err
-			return EncodeObjectIntoResponse(errorsMap)
-		}
-
-		err = m.SetConnType(connType)
-		if err != nil {
-			errorsMap["error"] = err
-			return EncodeObjectIntoResponse(errorsMap)
-		}
-		break
 	}
 
 	return NewEmptyArrayResponse()
