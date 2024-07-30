@@ -1340,6 +1340,9 @@ func (xmem *XmemNozzle) batchSetMetaWithRetry(batch *dataBatch, numOfRetry int) 
 							)
 						}
 					}
+					// The log() function performs a clone of necessary information to log,
+					// safe to recycle.
+					respToGc[resp.Resp] = true
 				}
 			}
 
@@ -1395,14 +1398,6 @@ func (xmem *XmemNozzle) batchSetMetaWithRetry(batch *dataBatch, numOfRetry int) 
 							xmem.buf.cancelReservation(index_reserv_tuple[0], int(index_reserv_tuple[1]))
 						}
 						return err
-					}
-
-					for oneResp := range respToGc {
-						if batch.sendLookupMap.canRecycle(oneResp) &&
-							batch.conflictLookupMap.canRecycle(oneResp) {
-							oneResp.Recycle()
-							delete(respToGc, oneResp)
-						}
 					}
 
 					batch_replicated_count = 0
@@ -2175,7 +2170,9 @@ func (xmem *XmemNozzle) batchGet(get_map base.McRequestMap) (noRep_map map[strin
 
 	// Note that there could be some responses that could be recycled immediately, i.e. if it is an error response
 	// But, some responses (eg. of those who are skipped to send) could have been refered by some other unique-keys (other mutations with the same doc key)
-	// Store such responses here and take the call to recycle or not before the routine exits based on the refCnter
+	// Store such responses here and take the call to recycle or not before the routine exits based on the refCnter.
+
+	// do not insert the responses in respToGc that are both in sendLookupMap and conflictLookupMap.
 	respToGc := make(map[*mc.MCResponse]bool)
 	defer func() {
 		for resp := range respToGc {
@@ -2269,7 +2266,10 @@ func (xmem *XmemNozzle) batchGet(get_map base.McRequestMap) (noRep_map map[strin
 					}
 				case crMeta.CRSkip:
 					noRep_map[uniqueKey] = NotSendFailedCR
-					respToGc[resp.Resp] = true
+					if xmem.isCCR() || !logConflicts || !CDResult.IsConflict() {
+						// can only recycle if the response is not used for conflict logging
+						respToGc[resp.Resp] = true
+					}
 				case crMeta.CRMerge:
 					noRep_map[uniqueKey] = NotSendMerge
 					conflictMap[uniqueKey] = wrappedReq
