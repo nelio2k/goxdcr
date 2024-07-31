@@ -1,4 +1,4 @@
-package conflictlog
+package base
 
 var crc32tab = []uint32{
 	0x00000000, 0x77073096, 0xee0e612c, 0x990951ba,
@@ -74,6 +74,6 @@ func cbCrc(key []byte) uint32 {
 	return (^crc) >> 16
 }
 
-func getVBNo(key string, vbCount int) uint16 {
+func GetVBucketNo(key string, vbCount int) uint16 {
 	return uint16(cbCrc([]byte(key)) % uint32(vbCount))
 }

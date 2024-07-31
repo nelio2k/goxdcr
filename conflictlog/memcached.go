@@ -245,7 +245,7 @@ func (m *MemcachedConn) getConnByVB(vbno uint16, replicaNum int) (conn *mcc.Clie
 func (m *MemcachedConn) SetMeta(key string, body []byte, dataType uint8, target base.ConflictLoggingTarget) (err error) {
 	checkCache := true
 	var collId uint32
-	vbNo := getVBNo(key, 1024)
+	vbNo := base.GetVBucketNo(key, 1024)
 
 	var conn *mcc.Client
 
