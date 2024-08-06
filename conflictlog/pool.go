@@ -236,6 +236,10 @@ func (pool *connPool) Get(bucketName string, timeout time.Duration) (conn io.Clo
 	}
 
 	conn, err = pool.newConnFn(bucketName)
+	if err != nil {
+		pool.limiter.Release()
+	}
+
 	return
 }
 
