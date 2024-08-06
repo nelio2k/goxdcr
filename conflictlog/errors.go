@@ -28,4 +28,6 @@ var (
 	ErrEmptyBucketEmpty             error = errors.New("conflict logging bucket should not be empty")
 	ErrEmptyCollectionEmpty         error = errors.New("conflict logging collection should not be empty")
 	ErrNilMapping                   error = errors.New("conflict logging mapping input should not be nil")
+	ErrConnPoolGetTimeout           error = errors.New("conflict logging pool get timedout")
+	ErrSetMetaTimeout               error = errors.New("conflict logging SetMeta timedout")
 )

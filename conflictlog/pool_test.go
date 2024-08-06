@@ -33,7 +33,7 @@ func TestPool_EmptyPool(t *testing.T) {
 		}, nil
 	}
 
-	pool := newConnPool(logger, newConnFn)
+	pool := newConnPool(logger, 10, newConnFn)
 	pool.UpdateGCInterval(1 * time.Second)
 	pool.UpdateReapInterval(2 * time.Second)
 
@@ -55,7 +55,7 @@ func TestPool_GC(t *testing.T) {
 		}, nil
 	}
 
-	pool := newConnPool(logger, newConnFn)
+	pool := newConnPool(logger, 10, newConnFn)
 	pool.UpdateGCInterval(1 * time.Second)
 	pool.UpdateReapInterval(3 * time.Second)
 
@@ -63,7 +63,7 @@ func TestPool_GC(t *testing.T) {
 	bucket := "B1"
 	connList := []io.Closer{}
 	for i := 0; i < connCount; i++ {
-		conn, err := pool.Get(bucket)
+		conn, err := pool.Get(bucket, 10*time.Millisecond)
 		require.Nil(t, err)
 		connList = append(connList, conn)
 	}

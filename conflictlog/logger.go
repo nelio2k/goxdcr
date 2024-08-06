@@ -1,6 +1,8 @@
 package conflictlog
 
 import (
+	"fmt"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -37,6 +39,21 @@ type LoggerOptions struct {
 	workerCount          int
 	networkRetryCount    int
 	networkRetryInterval time.Duration
+	poolGetTimeout       time.Duration
+	setMetaTimeout       time.Duration
+}
+
+func (l *LoggerOptions) String() string {
+	b := &strings.Builder{}
+
+	b.WriteString(fmt.Sprintf("logQueueCap:%d,", l.logQueueCap))
+	b.WriteString(fmt.Sprintf("workerCount:%d,", l.workerCount))
+	b.WriteString(fmt.Sprintf("networkRetryCount:%d,", l.networkRetryCount))
+	b.WriteString(fmt.Sprintf("networkRetryInterval:%s,", l.networkRetryInterval))
+	b.WriteString(fmt.Sprintf("poolGetTimeout:%s,", l.poolGetTimeout))
+	b.WriteString(fmt.Sprintf("setMetaTimeout:%s", l.setMetaTimeout))
+
+	return b.String()
 }
 
 func WithRules(r *Rules) LoggerOpt {
@@ -72,6 +89,18 @@ func WithNetworkRetryCount(val int) LoggerOpt {
 func WithNetworkRetryInterval(val time.Duration) LoggerOpt {
 	return func(o *LoggerOptions) {
 		o.networkRetryInterval = val
+	}
+}
+
+func WithPoolGetTimeout(val time.Duration) LoggerOpt {
+	return func(o *LoggerOptions) {
+		o.poolGetTimeout = val
+	}
+}
+
+func WithSetMetaTimeout(val time.Duration) LoggerOpt {
+	return func(o *LoggerOptions) {
+		o.setMetaTimeout = val
 	}
 }
 

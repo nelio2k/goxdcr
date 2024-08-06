@@ -7,22 +7,28 @@ import (
 )
 
 const (
-	ConflictManagerLoggerName = "conflictMgr"
+	// Manager consts
+	ConflictManagerLoggerName        = "conflictMgr"
+	ConflictLoggerName        string = "conflictLogger"
+	MemcachedConnUserAgent           = "conflictLog"
+	DefaultPoolConnLimit             = 10
 
-	ConflictLoggerName string = "conflictLogger"
-
-	MemcachedConnUserAgent = "conflictLog"
-
+	// Logger consts
+	DefaultSetMetaTimeout       = 5 * time.Second
+	DefaultGetTimeout           = 5 * time.Second
+	DefaultPoolGetTimeout       = 5 * time.Second
 	DefaultLogCapacity          = 5
 	DefaultNetworkRetryCount    = 6
 	DefaultNetworkRetryInterval = 10 * time.Second
 	LoggerShutdownChCap         = 10
 
+	// ConnPool consts
 	// DefaultPoolGCInterval is the GC frequency for connection pool
 	DefaultPoolGCInterval = 60 * time.Second
 	// DefaultPoolReapInterval is the last used threshold for reaping unused connections
 	DefaultPoolReapInterval = 120 * time.Second
 
+	// ConflictRecord consts
 	SourcePrefix    string = "src"
 	TargetPrefix    string = "tgt"
 	CRDPrefix       string = "crd"

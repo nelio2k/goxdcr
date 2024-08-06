@@ -44,7 +44,7 @@ func TestLoggerImpl_closeWithOutstandingRequest(t *testing.T) {
 
 	var fakeConnectionSleep time.Duration
 
-	pool := newConnPool(nil, func(bucketName string) (io.Closer, error) {
+	pool := newConnPool(nil, 10, func(bucketName string) (io.Closer, error) {
 		return &fakeConnection{
 			sleep: &fakeConnectionSleep,
 			id:    newConnId(),
@@ -89,7 +89,7 @@ func TestLoggerImpl_closeWithOutstandingRequest(t *testing.T) {
 func TestLoggerImpl_basicClose(t *testing.T) {
 	utils := utils.NewUtilities()
 
-	pool := newConnPool(nil, newFakeConnection)
+	pool := newConnPool(nil, 10, newFakeConnection)
 
 	l, err := newLoggerImpl(nil, "1234", utils, pool)
 	require.Nil(t, err)

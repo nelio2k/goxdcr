@@ -17,6 +17,7 @@ type Manager interface {
 	ConnPool() ConnPool
 	// [TEMP]: SetConnType exists only for perf test
 	SetConnType(connType string) error
+	SetConnLimit(limit int)
 }
 
 type MemcachedAddrGetter interface {
@@ -43,6 +44,7 @@ func InitManager(loggerCtx *log.LoggerContext, utils utils.UtilsIface, memdAddrG
 		memdAddrGetter: memdAddrGetter,
 		utils:          utils,
 		manifestCache:  newManifestCache(),
+		connLimit:      DefaultPoolConnLimit,
 		connType:       "gocbcore",
 	}
 
@@ -59,6 +61,10 @@ type managerImpl struct {
 	utils          utils.UtilsIface
 	connPool       *connPool
 	manifestCache  *ManifestCache
+
+	// connLimit max number of connections
+	connLimit int
+
 	// [TEMP] connType only exists for perf test
 	connType string
 }
@@ -66,6 +72,10 @@ type managerImpl struct {
 func (m *managerImpl) NewLogger(logger *log.CommonLogger, replId string, opts ...LoggerOpt) (l Logger, err error) {
 	l, err = newLoggerImpl(logger, replId, m.utils, m.connPool, opts...)
 	return
+}
+
+func (m *managerImpl) SetConnLimit(limit int) {
+	m.connPool.SetLimit(limit)
 }
 
 func (m *managerImpl) setConnPool() {
@@ -76,7 +86,7 @@ func (m *managerImpl) setConnPool() {
 		fn = m.newMemcachedConn
 	}
 
-	m.connPool = newConnPool(m.logger, fn)
+	m.connPool = newConnPool(m.logger, m.connLimit, fn)
 	return
 }
 

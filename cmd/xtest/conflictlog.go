@@ -24,6 +24,11 @@ type ConflictLogLoadTest struct {
 	// Values: "gocbcore", "memcached"
 	ConnType string `json:"connType"`
 
+	// ConnLimit limits the number of connections
+	ConnLimit int `json:"connLimit"`
+
+	DefaultLoggerOptions *ConflictLoggerOptions `json:"defaultLoggerOptions"`
+
 	// Loggers define multiple logger loads to run simultaneuosly
 	Loggers map[string]*ConflictLoggerOptions `json:"loggers"`
 }
@@ -53,6 +58,12 @@ type ConflictLoggerOptions struct {
 
 	// WorkerCount is the logger's spawned worker count
 	WorkerCount int `json:"workerCount"`
+
+	// SetMeta timeout in milliseconds
+	SetMetaTimeout int `json:"setMetaTimeout"`
+
+	// GetPool timeout in milliseconds
+	GetPoolTimeout int `json:"getPoolTimeout"`
 }
 
 func genRandomJson(id string, min, max int) ([]byte, error) {
@@ -104,11 +115,23 @@ func runLoggerLoad(wg *sync.WaitGroup, logger *log.CommonLogger, opts *ConflictL
 		return
 	}
 
-	clog, err := m.NewLogger(logger, "1234",
+	logger.Infof("target: %v", opts.Target)
+
+	options := []conflictlog.LoggerOpt{
 		conflictlog.WithMapper(conflictlog.NewFixedMapper(logger, opts.Target)),
 		conflictlog.WithCapacity(opts.LogQueue),
 		conflictlog.WithWorkerCount(opts.WorkerCount),
-	)
+	}
+
+	if opts.SetMetaTimeout > 0 {
+		options = append(options, conflictlog.WithSetMetaTimeout(time.Duration(opts.SetMetaTimeout)*time.Millisecond))
+	}
+
+	if opts.GetPoolTimeout > 0 {
+		options = append(options, conflictlog.WithPoolGetTimeout(time.Duration(opts.GetPoolTimeout)*time.Millisecond))
+	}
+
+	clog, err := m.NewLogger(logger, "1234", options...)
 	if err != nil {
 		return
 	}
@@ -182,6 +205,7 @@ func conflictLogLoadTest(cfg Config) (err error) {
 	}
 
 	m.SetConnType(opts.ConnType)
+	m.SetConnLimit(opts.ConnLimit)
 
 	wg := &sync.WaitGroup{}
 	logger := log.NewLogger("conflictLoadTest", log.DefaultLoggerContext)
