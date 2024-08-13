@@ -105,7 +105,6 @@ const (
 	TargetTopologyLogFreq             = base.TargetTopologyLogFreqKey
 	CasDriftThresholdSecsKey          = base.CASDriftThresholdSecsKey
 	PreCheckCasDriftThresholdHoursKey = base.PreCheckCasDriftThresholdHoursKey
-	ConflictLoggingKey                = base.ConflictLoggingKey
 )
 
 // constants for parsing create/change/view replication response
@@ -228,7 +227,6 @@ var RestKeyToSettingsKeyMap = map[string]string{
 	TargetTopologyLogFreq:             metadata.TargetTopologyLogFreqKey,
 	CasDriftThresholdSecsKey:          metadata.CASDriftThresholdSecsKey,
 	PreCheckCasDriftThresholdHoursKey: metadata.PreCheckCasDriftThresholdHoursKey,
-	ConflictLoggingKey:                metadata.ConflictLoggingKey,
 }
 
 // internal replication settings key -> replication settings key in rest api
@@ -293,7 +291,6 @@ var SettingsKeyToRestKeyMap = map[string]string{
 	metadata.TargetTopologyLogFreqKey:             TargetTopologyLogFreq,
 	metadata.CASDriftThresholdSecsKey:             CasDriftThresholdSecsKey,
 	metadata.PreCheckCasDriftThresholdHoursKey:    PreCheckCasDriftThresholdHoursKey,
-	metadata.ConflictLoggingKey:                   ConflictLoggingKey,
 }
 
 // Conversion to REST for user -> pauseRequested - Pretty much a NOT operation

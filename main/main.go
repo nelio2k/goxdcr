@@ -13,13 +13,11 @@ package main
 import (
 	"flag"
 	"fmt"
+	"github.com/couchbase/goxdcr/peerToPeer"
+	"github.com/couchbase/goxdcr/streamApiWatcher"
 	"os"
 	"runtime"
 	"time"
-
-	"github.com/couchbase/goxdcr/conflictlog"
-	"github.com/couchbase/goxdcr/peerToPeer"
-	"github.com/couchbase/goxdcr/streamApiWatcher"
 
 	base "github.com/couchbase/goxdcr/base"
 	log "github.com/couchbase/goxdcr/log"
@@ -259,8 +257,6 @@ func main() {
 			fmt.Printf("Error starting P2P manager. err=%v\n", err)
 			os.Exit(1)
 		}
-
-		conflictlog.InitManager(log.DefaultLoggerContext, utils, top_svc)
 
 		// start replication manager in normal mode
 		rm.StartReplicationManager(host,

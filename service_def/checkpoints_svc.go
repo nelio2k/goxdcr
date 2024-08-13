@@ -9,10 +9,9 @@
 package service_def
 
 import (
-	"sync"
-
 	"github.com/couchbase/goxdcr/base"
 	"github.com/couchbase/goxdcr/metadata"
+	"sync"
 )
 
 type CheckpointsService interface {
