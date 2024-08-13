@@ -123,10 +123,9 @@ func (f *FilterUtilsImpl) ProcessUprEventForFiltering(uprEvent *memcached.UprEve
 	return body, nil, additionalErrDesc, totalFailedCnt
 }
 
-// check whether necessary system xattrs required for filtering exist in uprEvent
-// i.e. transaction xattrs or conflict logging xattrs
-func (f *FilterUtilsImpl) CheckForNecessarySystemXattrsInUprEvent(uprEvent *memcached.UprEvent, dp base.DataPool,
-	slicesToBeReleased *[][]byte, needToFilterBody bool) (hasTxnXattr bool, hasConflictLoggingXattr bool, body []byte, endBodyPos int, err error,
+// check whether transaction xattrs exist in uprEvent
+func (f *FilterUtilsImpl) CheckForTransactionXattrsInUprEvent(uprEvent *memcached.UprEvent, dp base.DataPool,
+	slicesToBeReleased *[][]byte, needToFilterBody bool) (hasTxnXattrs bool, body []byte, endBodyPos int, err error,
 	additionalErrDesc string, totalFailedCnt int64, uncompressedUprValue []byte) {
 	// by default body is nil and endBodyPos is -1
 	endBodyPos = -1
@@ -141,7 +140,7 @@ func (f *FilterUtilsImpl) CheckForNecessarySystemXattrsInUprEvent(uprEvent *memc
 		uncompressedUprValue = body
 	}
 
-	hasTxnXattr, hasConflictLoggingXattr, err = f.hasNecessarySystemXattrsForFiltering(uncompressedUprValue)
+	hasTxnXattrs, err = f.hasTransactionXattrs(uncompressedUprValue)
 
 	if body != nil && !needToFilterBody {
 		// if needToFilterBody is false, body does not contain extra bytes for key and cannot be shared with advanced filtering
@@ -150,34 +149,31 @@ func (f *FilterUtilsImpl) CheckForNecessarySystemXattrsInUprEvent(uprEvent *memc
 		endBodyPos = -1
 	}
 	return
+
 }
 
 // returns
-// 1. whether body has transaction xattr
-// 2. whether body has conflict logging xattr.
+// 1. whether body has transaction xattrs
 // 2. error
-func (f *FilterUtilsImpl) hasNecessarySystemXattrsForFiltering(body []byte) (bool, bool, error) {
-	var hasTxnXattr, hasConflictLoggingXattr bool
+func (f *FilterUtilsImpl) hasTransactionXattrs(body []byte) (bool, error) {
 	iterator, err := base.NewXattrIterator(body)
 	if err != nil {
-		return false, false, err
+		return false, err
 	}
 
-	for (!hasTxnXattr || !hasConflictLoggingXattr) && iterator.HasNext() {
-		key, val, err := iterator.Next()
+	for iterator.HasNext() {
+		key, _, err := iterator.Next()
 		if err != nil {
-			return false, false, err
+			return false, err
 		}
 		if base.Equals(key, base.TransactionXattrKey) {
-			// found transaction xattr
-			hasTxnXattr = true
-		} else if base.Equals(key, base.ConflictLoggingXattrKey) && base.Equals(val, base.ConflictLoggingXattrVal) {
-			// found conflict logging xattr
-			hasConflictLoggingXattr = true
+			// found transaction xattrs.
+			return true, nil
 		}
 	}
 
-	return hasTxnXattr, hasConflictLoggingXattr, nil
+	// if we get here, there are no transaction xattrs
+	return false, nil
 }
 
 // For advanced filtering, need to populate key into the actual data to be filtered
@@ -385,7 +381,7 @@ func stripAndPrependXattribute(body []byte, xattrSize uint32, dp base.DataPool, 
 		return nil, base.ErrorInvalidInput, dpFailedCnt, endBodyPos
 	}
 	firstKey := true
-	for xattrIter.HasNext() {
+	for xattrIter.HasNext() == true {
 		key, value, err := xattrIter.Next()
 		if err != nil {
 			return nil, err, dpFailedCnt, endBodyPos

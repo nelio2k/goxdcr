@@ -22,7 +22,6 @@ import (
 	"github.com/couchbase/goxdcr/capi_utils"
 	"github.com/couchbase/goxdcr/common"
 	component "github.com/couchbase/goxdcr/component"
-	"github.com/couchbase/goxdcr/conflictlog"
 	"github.com/couchbase/goxdcr/log"
 	"github.com/couchbase/goxdcr/metadata"
 	"github.com/couchbase/goxdcr/parts"
@@ -328,18 +327,11 @@ func (xdcrf *XDCRFactory) newPipelineCommon(topic string, pipelineType common.Pi
 	}
 	progress_recorder(common.ProgressNozzlesWired)
 
-	conflictLoggingMap := spec.Settings.GetConflictLoggingMapping()
-	conflictLogger, err := conflictlog.LoggerForRules(conflictLoggingMap, spec.UniqueId(), logger_ctx, xdcrf.logger)
-	if err != nil {
-		// log as warning and continue to create pipeline.
-		xdcrf.logger.Warnf("Error initialising new logger for conflict logging with input=%v, err=%v", conflictLoggingMap, err)
-	}
-
 	// construct and initializes the pipeline
 	pipeline := pp.NewPipelineWithSettingConstructor(topic, pipelineType, sourceNozzles, outNozzles, specForConstruction, targetClusterRef,
 		xdcrf.ConstructSettingsForPart, xdcrf.ConstructSettingsForConnector, xdcrf.ConstructSSLPortMap, xdcrf.ConstructUpdateSettingsForPart,
 		xdcrf.ConstructUpdateSettingsForConnector, xdcrf.SetStartSeqno, xdcrf.CheckpointBeforeStop, logger_ctx, xdcrf.PreReplicationVBMasterCheck,
-		xdcrf.MergePeerNodesCkptsResponse, xdcrf.bucketTopologySvc, xdcrf.utils, xdcrf.GeneratePrometheusStatusCb, conflictLogger)
+		xdcrf.MergePeerNodesCkptsResponse, xdcrf.bucketTopologySvc, xdcrf.utils, xdcrf.GeneratePrometheusStatusCb)
 
 	// These listeners are the driving factors of the pipeline
 	xdcrf.registerAsyncListenersOnSources(pipeline, logger_ctx)
@@ -359,13 +351,6 @@ func (xdcrf *XDCRFactory) newPipelineCommon(topic string, pipelineType common.Pi
 	registerCb := func(mainPipeline *common.Pipeline) error {
 		return xdcrf.registerServices(pipeline, logger_ctx, kv_vb_map, targetUserName, targetPassword, spec.TargetBucketName, target_kv_vb_map, targetClusterRef, targetClusterVersion, isCapiReplication, mainPipeline, sourceCRMode)
 	}
-
-	// set the getter for the out nozzles to fetch pipeline level conflict logger.
-	for _, nozzle := range outNozzles {
-		outNozzle := nozzle.(common.OutNozzle)
-		outNozzle.SetConflictLoggerGetter(pipeline.ConflictLogger)
-	}
-
 	return pipeline, registerCb, nil
 }
 
@@ -523,6 +508,7 @@ func (xdcrf *XDCRFactory) constructSourceNozzles(spec *metadata.ReplicationSpeci
 	kv_vb_map := ro.Clone()
 
 	for kvaddr, vbnos := range kv_vb_map {
+
 		numOfVbs := len(vbnos)
 		if numOfVbs == 0 {
 			continue
@@ -630,12 +616,6 @@ func (xdcrf *XDCRFactory) constructOutgoingNozzles(topic string, spec *metadata.
 
 	var vbCouchApiBaseMap map[uint16]string
 
-	sourceHostname := ""
-	for hostAddr := range kv_vb_map {
-		sourceHostname = base.GetHostName(hostAddr)
-		break
-	}
-
 	// For each destination host (kvaddr) and its vbucvket list that it has (kvVBList)
 	for kvaddr, kvVBList := range kvVBMap {
 		if isCapiReplication && len(vbCouchApiBaseMap) == 0 {
@@ -683,7 +663,7 @@ func (xdcrf *XDCRFactory) constructOutgoingNozzles(topic string, spec *metadata.
 				}
 			} else {
 				connSize := numOfOutNozzles * 2
-				outNozzle = xdcrf.constructXMEMNozzle(topic, spec.SourceBucketUUID, spec.TargetClusterUUID, kvaddr, spec.SourceBucketName, spec.TargetBucketName, spec.TargetBucketUUID, targetUserName, targetPassword, i, connSize, sourceCRMode, logger_ctx, vbList, eventsProducer, sourceClusterUUID, sourceHostname)
+				outNozzle = xdcrf.constructXMEMNozzle(topic, spec.SourceBucketUUID, spec.TargetClusterUUID, kvaddr, spec.SourceBucketName, spec.TargetBucketName, spec.TargetBucketUUID, targetUserName, targetPassword, i, connSize, sourceCRMode, targetBucketInfo, logger_ctx, vbList, eventsProducer, sourceClusterUUID)
 			}
 
 			// Add the created nozzle to the collective map of outNozzles to be returned
@@ -778,16 +758,16 @@ func (xdcrf *XDCRFactory) constructXMEMNozzle(topic string,
 	nozzle_index int,
 	connPoolSize int,
 	sourceCRMode base.ConflictResolutionMode,
+	targetBucketInfo map[string]interface{},
 	logger_ctx *log.LoggerContext,
 	vbList []uint16,
 	eventsProducer common.PipelineEventsProducer,
 	sourceClusterUUID string,
-	sourceHostname string,
 ) common.Nozzle {
 	// partIds of the xmem nozzles look like "xmem_$topic_$kvaddr_1"
 	xmemNozzle_Id := xdcrf.partId(XMEM_NOZZLE_NAME_PREFIX, topic, kvaddr, nozzle_index)
 	nozzle := parts.NewXmemNozzle(xmemNozzle_Id, xdcrf.remote_cluster_svc, sourceBucketUuid, targetClusterUuid, topic, topic, connPoolSize, kvaddr, sourceBucketName, targetBucketName,
-		targetBucketUuid, username, password, sourceCRMode, logger_ctx, xdcrf.utils, vbList, eventsProducer, sourceClusterUUID, sourceHostname)
+		targetBucketUuid, username, password, sourceCRMode, logger_ctx, xdcrf.utils, vbList, eventsProducer, sourceClusterUUID)
 	return nozzle
 }
 
@@ -895,11 +875,6 @@ func (xdcrf *XDCRFactory) constructUpdateSettingsForXmemNozzle(pipeline common.P
 	if ok {
 		xmemSettings[parts.MobileCompatible] = mobile
 	}
-	conflictLoggingMap, ok := settings[metadata.ConflictLoggingKey]
-	if ok {
-		xmemSettings[parts.ConflictLogging] = conflictLoggingMap
-	}
-
 	return xmemSettings
 }
 
@@ -1143,10 +1118,8 @@ func (xdcrf *XDCRFactory) constructSettingsForXmemNozzle(pipeline common.Pipelin
 	if val, ok := settings[base.VersionPruningWindowHrsKey]; ok {
 		xmemSettings[base.VersionPruningWindowHrsKey] = val
 	}
-
-	xmemSettings[base.ConflictLoggingKey] = metadata.GetSettingFromSettingsMap(settings, metadata.ConflictLoggingKey, base.ConflictLoggingMappingInput{})
-
 	return xmemSettings, nil
+
 }
 
 func (xdcrf *XDCRFactory) constructSettingsForCapiNozzle(pipeline common.Pipeline, settings metadata.ReplicationSettingsMap) (map[string]interface{}, error) {

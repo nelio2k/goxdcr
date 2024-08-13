@@ -1222,25 +1222,6 @@ func Uint64ToBase64(u64 uint64) []byte {
 }
 
 // This routine expect prefix 0x since this is included in KV macro expansion.
-// Should be of even length.
-func HexBigEndianToUint64(hexBE []byte) (uint64, error) {
-	if len(hexBE) <= 2 {
-		return 0, fmt.Errorf("hex big endian input value %s is too short. Leading 0x is expected", hexBE)
-	}
-	if hexBE[0] != '0' || hexBE[1] != 'x' {
-		return 0, fmt.Errorf("incorrect hex big endian input %s", hexBE)
-	}
-
-	decoded := make([]byte, MaxHexDecodedLength)
-	_, err := hex.Decode(decoded, hexBE[2:])
-	if err != nil {
-		return 0, err
-	}
-	res := binary.BigEndian.Uint64(decoded)
-	return res, nil
-}
-
-// This routine expect prefix 0x since this is included in KV macro expansion.
 func HexLittleEndianToUint64(hexLE []byte) (uint64, error) {
 	if len(hexLE) <= 2 {
 		return 0, fmt.Errorf("hex input value %s is too short. Leading 0x is expected", hexLE)
@@ -1876,15 +1857,11 @@ func ValidateAndConvertStringToJsonType(value string) (map[string]interface{}, e
 }
 
 func FindSourceBodyWithoutXattr(req *mc.MCRequest) []byte {
-	return FindDocBodyWithoutXattr(req.Body, req.DataType)
-}
-
-func FindDocBodyWithoutXattr(body []byte, datatype uint8) []byte {
-	if datatype&mcc.XattrDataType == 0 {
-		return body
+	if req.DataType&mcc.XattrDataType == 0 {
+		return req.Body
 	}
-	xattrLen := binary.BigEndian.Uint32(body[0:4])
-	return body[4+xattrLen:]
+	xattrLen := binary.BigEndian.Uint32(req.Body[0:4])
+	return req.Body[4+xattrLen:]
 }
 
 type SubdocLookupPathSpecs []SubdocLookupPathSpec
@@ -2098,23 +2075,21 @@ func (h *HighSeqnoAndVbUuidMap) Diff(prev HighSeqnoAndVbUuidMap) HighSeqnoAndVbU
 	}
 	return diffMap
 }
-func DecodeSetMetaReq(req *WrappedMCRequest) DocumentMetadata {
+func DecodeSetMetaReq(req *mc.MCRequest) DocumentMetadata {
 	ret := DocumentMetadata{}
-	ret.Key = req.Req.Key
-	ret.Flags = binary.BigEndian.Uint32(req.Req.Extras[0:4])
-	ret.Expiry = binary.BigEndian.Uint32(req.Req.Extras[4:8])
-	ret.RevSeq = binary.BigEndian.Uint64(req.Req.Extras[8:16])
-	ret.Cas = req.Req.Cas
-	ret.Deletion = (req.Req.Opcode == DELETE_WITH_META)
-	ret.DataType = req.Req.DataType
-	ret.Seqno = req.Seqno
-	ret.VbUUID = req.VbUUID
+	ret.Key = req.Key
+	ret.Flags = binary.BigEndian.Uint32(req.Extras[0:4])
+	ret.Expiry = binary.BigEndian.Uint32(req.Extras[4:8])
+	ret.RevSeq = binary.BigEndian.Uint64(req.Extras[8:16])
+	ret.Cas = req.Cas
+	ret.Deletion = (req.Opcode == DELETE_WITH_META)
+	ret.DataType = req.DataType
 
 	return ret
 }
 
 func DecodeGetMetaResp(key []byte, resp *mc.MCResponse, xattrEnabled bool) (DocumentMetadata, error) {
-	ret := DocumentMetadata{} // Seqno and Vbuuid will be 0.
+	ret := DocumentMetadata{}
 	ret.Key = key
 	extras := resp.Extras
 	ret.Deletion = (binary.BigEndian.Uint32(extras[0:4]) != 0)
@@ -2124,7 +2099,7 @@ func DecodeGetMetaResp(key []byte, resp *mc.MCResponse, xattrEnabled bool) (Docu
 	ret.Cas = resp.Cas
 	if xattrEnabled {
 		if len(extras) < 20 {
-			return ret, fmt.Errorf("received unexpected getMeta response, which does not include data type in extras. extras=%v", extras)
+			return ret, fmt.Errorf("Received unexpected getMeta response, which does not include data type in extras. extras=%v", extras)
 		}
 		ret.DataType = extras[20]
 	} else {
@@ -2137,14 +2112,18 @@ func DecodeSubDocResp(key []byte, lookupResp *SubdocLookupResponse) (DocumentMet
 	specs := lookupResp.Specs
 	resp := lookupResp.Resp
 	body := resp.Body
-	if !IsSuccessGetResponse(resp) {
-		return DocumentMetadata{}, fmt.Errorf("cannot decode subdoc lookup response because the lookup failed with status %v", resp.Status)
+	if IsSuccessGetResponse(resp) == false {
+		return DocumentMetadata{}, fmt.Errorf("Cannot decode subdoc lookup response because the lookup failed with status %v", resp.Status)
 	}
 	pos := 0
 	docMeta := DocumentMetadata{
 		Key:      key,
+		RevSeq:   0,
 		Cas:      resp.Cas,
+		Flags:    0,
+		Expiry:   0,
 		Deletion: IsDeletedSubdocLookupResponse(resp),
+		DataType: 0,
 	}
 	for i := 0; i < len(specs); i++ {
 		spec := specs[i]
@@ -2185,16 +2164,6 @@ func DecodeSubDocResp(key []byte, lookupResp *SubdocLookupResponse) (DocumentMet
 			case VXATTR_FLAGS:
 				if flag, err := strconv.ParseUint(value, 10, 32); err == nil {
 					docMeta.Flags = uint32(flag)
-				}
-			case VXATTR_SEQNO:
-				// 64 bits hex string with 0x prefix
-				if seqno, err := HexBigEndianToUint64(body[pos+1 : pos+xattrlen-1]); err == nil {
-					docMeta.Seqno = seqno
-				}
-			case VXATTR_VBUUID:
-				// 64 bits hex string with 0x prefix
-				if vbuuid, err := HexBigEndianToUint64(body[pos+1 : pos+xattrlen-1]); err == nil {
-					docMeta.VbUUID = vbuuid
 				}
 			}
 		}
@@ -2327,124 +2296,4 @@ func CheckIfHostnameIsAlternate(externalInfoGetter ExternalMgmtHostAndPortGetter
 	}
 
 	return false, nil
-}
-
-// ParseReplicationId parses the replication id string into its components
-func ParseReplicationId(id string) (targetUUID string, sourceBucket string, targetBucket string, err error) {
-	parts := strings.Split(id, KeyPartsDelimiter)
-	if len(parts) != 3 {
-		err = fmt.Errorf("Invalid replication id: %v", id)
-		return
-	}
-
-	targetUUID = parts[0]
-	sourceBucket = parts[1]
-	targetBucket = parts[2]
-	return
-}
-
-// given "[scope].[collection]", the string will be split to "[scope]" and "[collection]"
-func SeparateScopeCollection(scopeCol string) (scope string, collection string) {
-	scopeColArr := strings.Split(scopeCol, ".")
-	if len(scopeColArr) > 0 {
-		scope = scopeColArr[0]
-	}
-	if len(scopeColArr) > 1 {
-		collection = scopeColArr[1]
-	}
-	return
-}
-
-// iterator for byte encoded lists of strings for xtoc (xattrs table of content).
-// Eg: ["foo","bar"]
-type xtocIterator struct {
-	body []byte
-	pos  int
-}
-
-func NewXtocIterator(body []byte) *xtocIterator {
-	xi := xtocIterator{}
-	firstQuote := -1
-	lastQuote := -1
-
-	if body == nil {
-		xi.pos = len(body)
-		return &xi
-	}
-
-	for i := 0; i < len(body); i++ {
-		if body[i] == '"' {
-			firstQuote = i
-			break
-		}
-	}
-
-	for i := len(body) - 1; i > firstQuote; i-- {
-		if body[i] == '"' {
-			lastQuote = i
-			break
-		}
-	}
-
-	if lastQuote-firstQuote+1 > 2 {
-		xi.body = body[firstQuote : lastQuote+1]
-		xi.pos = 0
-	} else {
-		xi.pos = len(body)
-	}
-
-	return &xi
-}
-
-func (xi *xtocIterator) HasNext() bool {
-	return xi.pos < len(xi.body)
-}
-
-func (xi *xtocIterator) Next() ([]byte, error) {
-	if xi.pos >= len(xi.body) {
-		return nil, fmt.Errorf("no next item")
-	}
-
-	first, second := -1, -1
-	for i := xi.pos; i < len(xi.body) && (first == -1 || second == -1); i++ {
-		if xi.body[i] == '"' {
-			if first == -1 {
-				first = i
-			} else {
-				second = i
-			}
-		}
-	}
-
-	if first == -1 || second == -1 {
-		return nil, fmt.Errorf("invalid list, pos=%v, xi=%v", xi.pos, xi.body)
-	}
-
-	if second-first+1 <= 2 {
-		return nil, fmt.Errorf("invalid list items, pos=%v, xi=%v", xi.pos, xi.body)
-	}
-
-	xi.pos = second + 1
-
-	return xi.body[first+1 : second], nil
-}
-
-func (xi *xtocIterator) Len() (int, error) {
-	var len int
-	pos := xi.pos
-	defer func() {
-		xi.pos = pos
-	}()
-
-	l := NewXtocIterator(xi.body)
-
-	for l.HasNext() {
-		_, err := l.Next()
-		if err != nil {
-			return len, err
-		}
-		len++
-	}
-
-	return len, nil
 }

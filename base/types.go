@@ -29,7 +29,6 @@ import (
 	"github.com/couchbase/gomemcached"
 	mc "github.com/couchbase/gomemcached"
 	mcc "github.com/couchbase/gomemcached/client"
-	"github.com/couchbase/goxdcr/log"
 	"github.com/google/uuid"
 )
 
@@ -612,46 +611,6 @@ func NewCollectionNamespaceFromString(specificStr string) (CollectionNamespace, 
 	}
 }
 
-// The specificStr should follow the format of: "<scope>.<collection>" or "<scope>"
-// In other words, atleast scope needs to be present. It will disallow "<scope>."
-func NewOptionalCollectionNamespaceFromString(specificStr string) (CollectionNamespace, error) {
-	if !OptionalCollectionNamespaceRegex.MatchString(specificStr) {
-		if len(specificStr) > MaxCollectionNameBytes {
-			return CollectionNamespace{}, ErrorLengthExceeded
-		}
-		return CollectionNamespace{}, ErrorInvalidColNamespaceFormat
-	} else {
-		names := OptionalCollectionNamespaceRegex.FindStringSubmatch(specificStr)
-		if len(names) < 2 {
-			return CollectionNamespace{}, fmt.Errorf("Invalid capture for CollectionNameSpaces")
-		}
-
-		ns := CollectionNamespace{}
-
-		valid := CollectionNameValidationRegex.MatchString(names[1])
-		if !valid {
-			return CollectionNamespace{}, ErrorInvalidColNamespaceFormat
-		}
-		if len(names[1]) > MaxCollectionNameBytes {
-			return CollectionNamespace{}, ErrorLengthExceeded
-		}
-		ns.ScopeName = names[1]
-
-		if len(names) > 2 && names[2] != "" {
-			valid := CollectionNameValidationRegex.MatchString(names[2])
-			if !valid {
-				return CollectionNamespace{}, ErrorInvalidColNamespaceFormat
-			}
-			if len(names[2]) > MaxCollectionNameBytes {
-				return CollectionNamespace{}, ErrorLengthExceeded
-			}
-			ns.CollectionName = names[2]
-		}
-
-		return ns, nil
-	}
-}
-
 func NewDefaultCollectionNamespace() *CollectionNamespace {
 	ns, _ := NewCollectionNamespaceFromString(fmt.Sprintf("%v%v%v", DefaultScopeCollectionName, ScopeCollectionDelimiter, DefaultScopeCollectionName))
 	return &ns
@@ -691,25 +650,6 @@ func (c CollectionNamespace) Clone() CollectionNamespace {
 		ScopeName:      c.ScopeName,
 		CollectionName: c.CollectionName,
 	}
-}
-
-func (c CollectionNamespace) String() string {
-	if c.IsEmpty() {
-		return ""
-	}
-
-	scope := "<>"
-	collection := "<>"
-
-	if c.ScopeName != "" {
-		scope = c.ScopeName
-	}
-
-	if c.CollectionName != "" {
-		collection = c.CollectionName
-	}
-
-	return fmt.Sprintf("%s%s%s", scope, ScopeCollectionDelimiter, collection)
 }
 
 type CollectionNamespacePtrList []*CollectionNamespace
@@ -776,7 +716,6 @@ type TargetCollectionInfo struct {
 // Remember to reset the field values for recycling in MCRequestPool.cleanReq
 type WrappedMCRequest struct {
 	Seqno                      uint64
-	VbUUID                     uint64
 	Req                        *gomemcached.MCRequest
 	Start_time                 time.Time
 	UniqueKey                  string
@@ -784,8 +723,6 @@ type WrappedMCRequest struct {
 	SrcColNamespaceMtx         sync.RWMutex
 	ColInfo                    *TargetCollectionInfo
 	ColInfoMtx                 sync.RWMutex
-	TgtColNamespace            *CollectionNamespace
-	TgtColNamespaceMtx         sync.RWMutex
 	SlicesToBeReleasedByXmem   [][]byte
 	SlicesToBeReleasedByRouter [][]byte
 	SlicesToBeReleasedMtx      sync.Mutex
@@ -810,23 +747,6 @@ type WrappedMCRequest struct {
 	// In the mobile mode, we might have to recompose _mou before replicating
 	// This stores the re-composed _mou to replicate, nil if it doesn't exist or the new mou would be empty
 	MouAfterProcessing []byte
-}
-
-// If conflict logging is in progress, wait for it to complete.
-func (req *WrappedMCRequest) WaitForConflictLogging(finCh chan bool, logger *log.CommonLogger) {
-	if req == nil {
-		return
-	}
-
-	if req.HLVModeOptions.ConflictLoggerWait != nil {
-		err := req.HLVModeOptions.ConflictLoggerWait.Wait(finCh)
-		if err != nil {
-			logger.Errorf("Error during conflict logging to finish, key=%v%s%v, err=%v",
-				UdTagBegin, req.Req.Key, UdTagEnd,
-				err,
-			)
-		}
-	}
 }
 
 // set the intent to use subdoc command
@@ -1771,7 +1691,7 @@ func (x *XattrComposer) CommitRawKVPair() (int, error) {
 
 // Once all the Xattributes are finished, calculate the whole xattr section and append doc value
 // Remember to set Xattr flag
-// req and lookup are passed in for debugging info only and could be nil.
+// req and lookup are passed in for debugging info only
 func (x *XattrComposer) FinishAndAppendDocValue(val []byte, req *mc.MCRequest, lookup *SubdocLookupResponse) ([]byte, bool) {
 	if !x.atLeastOneXattr {
 		// No xattr written - do not do anything
@@ -1929,12 +1849,11 @@ func (xfi *CCRXattrFieldIterator) Next() (key, value []byte, err error) {
 }
 
 type SubdocSpecOption struct {
-	IncludeHlv            bool // Get target HLV only for CCR
-	IncludeMobileSync     bool // Get target _sync if we need to preserve target _sync
-	IncludeImportCas      bool // Include target importCas if enableCrossClusterVersioning.
-	IncludeBody           bool // Get the target body for merge
-	IncludeVXattr         bool // Get the target document metadata as Virtual so we can perform CR and format target HLV
-	ConfictLoggingEnabled bool // Get XTOC, VbUUID and seqno of target doc as a virtual xattr, needed for conflict logging
+	IncludeHlv        bool // Get target HLV only for CCR
+	IncludeMobileSync bool // Get target _sync if we need to preserve target _sync
+	IncludeImportCas  bool // Include target importCas if enableCrossClusterVersioning.
+	IncludeBody       bool // Get the target body for merge
+	IncludeVXattr     bool // Get the target document metadata as Virtual so we can perform CR and format target HLV
 }
 
 func ComposeSpecForSubdocGet(option SubdocSpecOption) (specs []SubdocLookupPathSpec) {
@@ -1954,9 +1873,6 @@ func ComposeSpecForSubdocGet(option SubdocSpecOption) (specs []SubdocLookupPathS
 	if option.IncludeVXattr {
 		specLen = specLen + 4
 	}
-	if option.ConfictLoggingEnabled {
-		specLen = specLen + 3
-	}
 	if specLen == 0 {
 		return
 	}
@@ -1968,10 +1884,9 @@ func ComposeSpecForSubdocGet(option SubdocSpecOption) (specs []SubdocLookupPathS
 		// $document.flags
 		spec = SubdocLookupPathSpec{gomemcached.SUBDOC_GET, gomemcached.SUBDOC_FLAG_XATTR_PATH, []byte(VXATTR_FLAGS)}
 		specs = append(specs, spec)
-		// $document.exptime
 		spec = SubdocLookupPathSpec{gomemcached.SUBDOC_GET, gomemcached.SUBDOC_FLAG_XATTR_PATH, []byte(VXATTR_EXPIRY)}
 		specs = append(specs, spec)
-		// $document.datatype
+		// $document.datatype.
 		spec = SubdocLookupPathSpec{gomemcached.SUBDOC_GET, gomemcached.SUBDOC_FLAG_XATTR_PATH, []byte(VXATTR_DATATYPE)}
 		specs = append(specs, spec)
 	}
@@ -1992,20 +1907,6 @@ func ComposeSpecForSubdocGet(option SubdocSpecOption) (specs []SubdocLookupPathS
 		specs = append(specs, spec)
 
 		spec = SubdocLookupPathSpec{gomemcached.SUBDOC_GET, gomemcached.SUBDOC_FLAG_XATTR_PATH, []byte(XATTR_PREVIOUSREV)}
-		specs = append(specs, spec)
-	}
-	if option.ConfictLoggingEnabled {
-		// Target doc seqno and VBUUID as needed for conflict logging.
-		// $document.vbucket_uuid
-		spec := SubdocLookupPathSpec{gomemcached.SUBDOC_GET, gomemcached.SUBDOC_FLAG_XATTR_PATH, []byte(VXATTR_VBUUID)}
-		specs = append(specs, spec)
-		// $document.seqno
-		spec = SubdocLookupPathSpec{gomemcached.SUBDOC_GET, gomemcached.SUBDOC_FLAG_XATTR_PATH, []byte(VXATTR_SEQNO)}
-		specs = append(specs, spec)
-
-		// Since xattrs needs to be logged too, get XTOC
-		// $document.XTOC
-		spec = SubdocLookupPathSpec{gomemcached.SUBDOC_GET, gomemcached.SUBDOC_FLAG_XATTR_PATH, []byte(XattributeToc)}
 		specs = append(specs, spec)
 	}
 	if option.IncludeBody {
@@ -2914,17 +2815,10 @@ type DocumentMetadata struct {
 	Deletion bool   // Existence of tombstone
 	DataType uint8  // item data type
 	Opcode   gomemcached.CommandCode
-	// Note that the following will be not set for target doc retrieved using GET_META.
-	Seqno  uint64
-	VbUUID uint64
 }
 
 func (doc_meta DocumentMetadata) String() string {
-	return fmt.Sprintf("[key=%v%s%v;revSeq=%v;cas=%v;flags=%v;expiry=%v;deletion=%v;datatype=%v]",
-		UdTagBegin, doc_meta.Key, UdTagEnd,
-		doc_meta.RevSeq, doc_meta.Cas, doc_meta.Flags,
-		doc_meta.Expiry, doc_meta.Deletion, doc_meta.DataType,
-	)
+	return fmt.Sprintf("[key=%s; revSeq=%v;cas=%v;flags=%v;expiry=%v;deletion=%v:datatype=%v]", doc_meta.Key, doc_meta.RevSeq, doc_meta.Cas, doc_meta.Flags, doc_meta.Expiry, doc_meta.Deletion, doc_meta.DataType)
 }
 
 func (doc_meta *DocumentMetadata) Clone() *DocumentMetadata {
@@ -2982,11 +2876,6 @@ type HLVModeOptions struct {
 	SendHlv      bool   // Pack the HLV and send in setWithMeta
 	PreserveSync bool   // Preserve target _sync XATTR and send it in setWithMeta.
 	ActualCas    uint64 // copy of Req.Cas, which can be used if Req.Cas is set to 0
-
-	// Handle to wait for conflict logging in progress for this request.
-	// It has a value of nil if conflict logging is not in progress.
-	ConflictLoggerWait     ConflictLoggerHandle
-	ConflictLoggingEnabled bool
 }
 
 // These options are explicitly set when SubdocOp != NotSubdoc
@@ -3127,266 +3016,3 @@ func ComposeRequestForSubdocMutation(specs []SubdocMutationPathSpec, source *mc.
 }
 
 type ExternalMgmtHostAndPortGetter func(map[string]interface{}, bool) (string, int, error)
-
-// conflict logging json input mapping from user, before converting to "Rules"
-type ConflictLoggingMappingInput map[string]interface{}
-
-// ignores unrecognised keys from comparision
-func EqualMaps(clm1, clm2 map[string]interface{}, recognisedKeys []string) bool {
-	if clm1 == nil || clm2 == nil {
-		return clm1 == nil && clm2 == nil
-	}
-
-	for _, key := range recognisedKeys {
-		val1, ok1 := clm1[key]
-		val2, ok2 := clm2[key]
-		if ok1 != ok2 {
-			return false
-		}
-
-		valStr1, ok1 := val1.(string)
-		valStr2, ok2 := val2.(string)
-		if ok1 != ok2 || valStr1 != valStr2 {
-			return false
-		}
-	}
-
-	return true
-}
-
-// ignores unrecognised keys from comparision
-func (clm ConflictLoggingMappingInput) SameAs(other interface{}) bool {
-	if clm == nil || other == nil {
-		return clm == nil && other == nil
-	}
-
-	var otherClm ConflictLoggingMappingInput
-	var ok bool
-	otherClm, ok = other.(ConflictLoggingMappingInput)
-	if !ok {
-		// if other is read from metakv for instance, the type will not be ConflictLoggingMappingInput
-		otherClm, ok = other.(map[string]interface{})
-		if !ok {
-			return false
-		}
-	}
-
-	if clm == nil || otherClm == nil {
-		return clm == nil && otherClm == nil
-	}
-
-	if len(clm) != len(otherClm) {
-		return false
-	}
-
-	// only mandatory keys recognised by conflict logging feature.
-	keys := []string{
-		CLBucketKey, CLCollectionKey,
-	}
-
-	same := EqualMaps(clm, otherClm, keys)
-	if !same {
-		return false
-	}
-
-	// special logging rules - optional.
-	loggingRules1, ok1 := clm[CLLoggingRulesKey]
-	loggingRules2, ok2 := otherClm[CLLoggingRulesKey]
-	if ok1 != ok2 {
-		return false
-	}
-
-	rules1, ok1 := loggingRules1.(map[string]interface{})
-	rules2, ok2 := loggingRules2.(map[string]interface{})
-	if ok1 != ok2 || !EqualMaps(rules1, rules2, keys) {
-		return false
-	}
-
-	return true
-}
-
-// should be in sync with conflictlog.ParseRules
-func (clm ConflictLoggingMappingInput) ValidateConflictLoggingMapValues() (err error) {
-	if clm == nil {
-		// can be {}, but not nil
-		err = fmt.Errorf("nil conflict logging map")
-		return
-	}
-
-	if len(clm) == 0 {
-		// {} means disabled, which is ok
-		return
-	}
-
-	fallbackTarget, err := ParseConflictLoggingTarget(clm)
-	if err != nil {
-		return
-	}
-
-	if !fallbackTarget.IsComplete() {
-		err = fmt.Errorf("incomplete target")
-		return
-	}
-
-	loggingRulesObj, ok := clm[CLLoggingRulesKey]
-	if !ok || loggingRulesObj == nil {
-		return
-	}
-
-	loggingRulesMap, ok := loggingRulesObj.(map[string]interface{})
-	if !ok {
-		err = fmt.Errorf("invalid logging rules")
-		return
-	}
-
-	for collectionStr, targetObj := range loggingRulesMap {
-		if collectionStr == "" {
-			err = fmt.Errorf("invalid collection for logging rules")
-			return
-		}
-
-		_, err = NewOptionalCollectionNamespaceFromString(collectionStr)
-		if err != nil {
-			err = fmt.Errorf("invalid collection for logging rules")
-			return
-		}
-
-		if targetObj != nil {
-			targetMap, ok := targetObj.(map[string]interface{})
-			if !ok {
-				err = fmt.Errorf("invalid target for logging rules")
-				return err
-			}
-
-			if len(targetMap) > 0 {
-				target, err := ParseConflictLoggingTarget(targetMap)
-				if err != nil {
-					return err
-				}
-
-				if !target.IsComplete() {
-					err = fmt.Errorf("incomplete target for logging rules")
-					return err
-				}
-			}
-		}
-	}
-
-	return nil
-}
-
-func ValidateAndConvertJsonMapToConflictLoggingMapping(value string) (ConflictLoggingMappingInput, error) {
-	if value == "null" || value == "nil" {
-		// "nil" is not a accepted value. {} is the smallest input.
-		return nil, fmt.Errorf("null or nil conflict logging mapping not accepted")
-	}
-
-	// Check for duplicated keys
-	res, err := JsonStringReEncodeTest(value)
-	if err != nil {
-		return nil, err
-	}
-	if !res {
-		return nil, ErrorJSONReEncodeFailed
-	}
-
-	// Because adv filtering won't work if space is removed - jsonMap should be the original version
-	jsonMap, err := ValidateAndConvertStringToJsonType(value)
-	if err != nil {
-		return nil, err
-	}
-
-	conflictLoggingMap := ConflictLoggingMappingInput(jsonMap)
-
-	// validate if input is valid
-	err = conflictLoggingMap.ValidateConflictLoggingMapValues()
-	if err != nil {
-		return nil, err
-	}
-
-	return conflictLoggingMap, nil
-}
-
-// Handle is returned for every conflict logging request.
-// The handle allows it caller to wait on the logging to complete (or error out)
-type ConflictLoggerHandle interface {
-	// Wait allows caller to complete the conflict logging
-	// The finch is the caller's finch. If the caller
-	// wants to exit early then the Wait will unblock as well
-	Wait(finch chan bool) error
-}
-
-// ConflictLoggingTarget describes the target bucket, scope and collection where
-// the conflicts will be logged. There are few terms:
-// Complete => The triplet (Bucket, Scope, Collection) are populated
-// Empty => All components of the triplet are empty
-type ConflictLoggingTarget struct {
-	// Bucket is the conflict bucket
-	Bucket string `json:"bucket"`
-
-	// NS is namespace which defines scope and collection
-	NS CollectionNamespace `json:"ns"`
-}
-
-func (t ConflictLoggingTarget) String() string {
-	return fmt.Sprintf("%v.%v.%v", t.Bucket, t.NS.ScopeName, t.NS.CollectionName)
-}
-
-func NewConflictLoggingTarget(bucket, scope, collection string) ConflictLoggingTarget {
-	return ConflictLoggingTarget{
-		Bucket: bucket,
-		NS: CollectionNamespace{
-			ScopeName:      scope,
-			CollectionName: collection,
-		},
-	}
-}
-
-func (t ConflictLoggingTarget) IsEmpty() bool {
-	return t.Bucket == "" && t.NS.IsEmpty()
-}
-
-// IsComplete implies that all components of the triplet (bucket, scope & collection)
-// are populated
-func (t ConflictLoggingTarget) IsComplete() bool {
-	return t.Bucket != "" && t.NS.ScopeName != "" && t.NS.CollectionName != ""
-}
-
-func (t ConflictLoggingTarget) SameAs(other ConflictLoggingTarget) bool {
-	return t.Bucket == other.Bucket && t.NS.IsSameAs(other.NS)
-}
-
-func ParseString(o interface{}) (ok bool, val string) {
-	if o == nil {
-		return
-	}
-	val, ok = o.(string)
-	return
-}
-
-func ParseConflictLoggingTarget(m map[string]interface{}) (t ConflictLoggingTarget, err error) {
-	if len(m) == 0 {
-		return
-	}
-
-	bucketObj, ok := m[CLBucketKey]
-	if ok {
-		ok, s := ParseString(bucketObj)
-		if ok {
-			t.Bucket = s
-		}
-	}
-
-	collectionObj, ok := m[CLCollectionKey]
-	if ok {
-		ok, s := ParseString(collectionObj)
-		if ok {
-			t.NS, err = NewCollectionNamespaceFromString(s)
-		} else {
-			err = fmt.Errorf("invalid collection value")
-			return
-		}
-	}
-
-	return
-}
