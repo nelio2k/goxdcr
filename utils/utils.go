@@ -719,6 +719,10 @@ func (u *Utilities) SendHELOWithFeatures(client mcc.ClientIface, userAgent strin
 		clientFeatureSet = append(clientFeatureSet, mcc.FeatureCollections)
 	}
 
+	if requestedFeatures.DataType {
+		clientFeatureSet = append(clientFeatureSet, mcc.FeatureDataType)
+	}
+
 	client.SetConnName(userAgent)
 	response, err := client.EnableFeatures(clientFeatureSet)
 

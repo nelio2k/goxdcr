@@ -26,6 +26,7 @@ import (
 	"github.com/couchbase/cbauth"
 	ap "github.com/couchbase/goxdcr/adminport"
 	"github.com/couchbase/goxdcr/base"
+	"github.com/couchbase/goxdcr/conflictlog"
 	"github.com/couchbase/goxdcr/gen_server"
 	"github.com/couchbase/goxdcr/log"
 	"github.com/couchbase/goxdcr/metadata"
@@ -37,7 +38,7 @@ import (
 	_ "net/http/pprof"
 )
 
-var StaticPaths = []string{base.RemoteClustersPath, CreateReplicationPath, SettingsReplicationsPath, AllReplicationsPath, AllReplicationInfosPath, RegexpValidationPrefix, MemStatsPath, BlockProfileStartPath, BlockProfileStopPath, XDCRInternalSettingsPath, XDCRPrometheusStatsPath, XDCRPrometheusStatsHighPath, base.XDCRPeerToPeerPath, base.XDCRConnectionPreCheckPath}
+var StaticPaths = []string{base.RemoteClustersPath, CreateReplicationPath, SettingsReplicationsPath, AllReplicationsPath, AllReplicationInfosPath, RegexpValidationPrefix, MemStatsPath, BlockProfileStartPath, BlockProfileStopPath, XDCRInternalSettingsPath, XDCRPrometheusStatsPath, XDCRPrometheusStatsHighPath, base.XDCRPeerToPeerPath, base.XDCRConnectionPreCheckPath, "xdcr/conflictlog"}
 var DynamicPathPrefixes = []string{base.RemoteClustersPath, DeleteReplicationPrefix, SettingsReplicationsPath, StatisticsPrefix, AllReplicationsPath}
 
 var logger_ap *log.CommonLogger = log.NewLogger("AdminPort", log.DefaultLoggerContext)
@@ -242,6 +243,9 @@ func (adminport *Adminport) handleRequest(
 		response, err = adminport.doPostConnectionPreCheckRequest(request)
 	case base.XDCRConnectionPreCheckPath + base.UrlDelimiter + base.MethodGet:
 		response, err = adminport.doGetConnectionPreCheckResultRequest(request)
+	// TODO: [TEMP] remove doChangeConflictLogSetting
+	case "xdcr/conflictlog" + base.UrlDelimiter + base.MethodPost:
+		response, err = adminport.doChangeConflictLogSetting(request)
 	default:
 		errOutput := base.InvalidPathInHttpRequestError(key)
 		response, err = EncodeObjectIntoResponseWithStatusCode(errOutput.Error(), http.StatusNotFound)
@@ -1399,4 +1403,53 @@ func (adminport *Adminport) doGetConnectionPreCheckResultRequest(request *http.R
 	res, done, err := adminport.p2pMgr.RetrieveConnectionPreCheckResult(taskId)
 
 	return NewConnectionPreCheckGetResponse(taskId, res, done)
+}
+
+// TODO: [TEMP] remove doChangeConflictLogSetting
+func (adminport *Adminport) doChangeConflictLogSetting(request *http.Request) (*ap.Response, error) {
+	logger_ap.Infof("doChangeConflictConnectionType\n")
+
+	response, err := authWebCreds(request, base.PermissionXDCRInternalWrite)
+	if response != nil || err != nil {
+		return response, err
+	}
+
+	errorsMap := make(map[string]error)
+	if err := request.ParseForm(); err != nil {
+		errorsMap[base.PlaceHolderFieldKey] = ErrorParsingForm
+		return EncodeObjectIntoResponse(errorsMap)
+	}
+
+	logger_ap.Infof("changing conflict logging defaults = %v", request.Form)
+	for key, valArr := range request.Form {
+		switch key {
+		case "connType":
+			connType := valArr[0]
+			logger_ap.Infof("changing conflict connection type = %s", connType)
+			m, err := conflictlog.GetManager()
+			if err != nil {
+				errorsMap["error_connType"] = err
+				return EncodeObjectIntoResponse(errorsMap)
+			}
+
+			err = m.SetConnType(connType)
+			if err != nil {
+				errorsMap["error_setConnType"] = err
+				return EncodeObjectIntoResponse(errorsMap)
+			}
+		case "workerCount":
+			workerCnt := valArr[0]
+			i, err := strconv.Atoi(workerCnt)
+			if err != nil {
+				errorsMap[fmt.Sprintf("error_workerCnt=%s", workerCnt)] = err
+				return EncodeObjectIntoResponse(errorsMap)
+			}
+			logger_ap.Infof("changing worker count = %s => %v", workerCnt, i)
+			conflictlog.DefaultLoggerWorkerCount = i
+		default:
+			continue
+		}
+	}
+
+	return NewEmptyArrayResponse()
 }

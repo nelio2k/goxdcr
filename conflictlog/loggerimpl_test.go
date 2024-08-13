@@ -1,0 +1,99 @@
+package conflictlog
+
+import (
+	"io"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/couchbase/goxdcr/base"
+	"github.com/couchbase/goxdcr/utils"
+	"github.com/stretchr/testify/require"
+)
+
+var fakeConnectionSleep time.Duration
+
+type fakeConnection struct {
+	sleep *time.Duration
+	id    int64
+}
+
+func newFakeConnection(bucketName string) (io.Closer, error) {
+	return &fakeConnection{
+		id: newConnId(),
+	}, nil
+}
+
+func (f *fakeConnection) Id() int64 {
+	return f.id
+}
+
+func (f *fakeConnection) Close() error {
+	return nil
+}
+
+func (f *fakeConnection) SetMeta(key string, val []byte, dataType uint8, target base.ConflictLoggingTarget) (err error) {
+	if f.sleep != nil {
+		time.Sleep(*f.sleep)
+	}
+	return
+}
+
+func TestLoggerImpl_closeWithOutstandingRequest(t *testing.T) {
+	utils := utils.NewUtilities()
+
+	var fakeConnectionSleep time.Duration
+
+	pool := newConnPool(nil, func(bucketName string) (io.Closer, error) {
+		return &fakeConnection{
+			sleep: &fakeConnectionSleep,
+			id:    newConnId(),
+		}, nil
+	})
+
+	fakeConnectionSleep = 1 * time.Second
+
+	l, err := newLoggerImpl(nil, "1234", utils, pool, WithCapacity(20))
+	require.Nil(t, err)
+
+	l.UpdateRules(&Rules{
+		Target: base.NewConflictLoggingTarget("B1", "S1", "C1"),
+	})
+
+	handles := []base.ConflictLoggerHandle{}
+	for i := 0; i < 10; i++ {
+		h, err := l.Log(&ConflictRecord{})
+		require.Nil(t, err)
+
+		handles = append(handles, h)
+	}
+
+	l.Close()
+
+	_, err = l.Log(&ConflictRecord{})
+	require.Equal(t, ErrLoggerClosed, err)
+	l.Close()
+
+	wg := &sync.WaitGroup{}
+	for _, h := range handles {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			err = h.Wait(nil)
+			require.Nil(t, err)
+		}()
+	}
+	wg.Wait()
+}
+
+func TestLoggerImpl_basicClose(t *testing.T) {
+	utils := utils.NewUtilities()
+
+	pool := newConnPool(nil, newFakeConnection)
+
+	l, err := newLoggerImpl(nil, "1234", utils, pool)
+	require.Nil(t, err)
+
+	l.Close()
+	l.Close()
+}

@@ -145,8 +145,12 @@ var FilterSystemScopePassthruCollections = []string{SystemCollectionMobile}
 const CollectionValidNameCharClass = "[0-9A-Za-z-_%]"
 const CollectionValidPrefixNameClass = "[0-9A-Za-z-_]"
 
+// OptionalCollectionNamespaceRegexExpr matches pattern with collection name being optional
+// E.g S1.C1, S1 but not S1.
+var OptionalCollectionNamespaceRegexExpr = fmt.Sprintf("^(?P<scope>%v+)(?:[%v](?P<collection>%v+))?$", CollectionValidNameCharClass, ScopeCollectionDelimiter, CollectionValidNameCharClass)
 var CollectionNamespaceRegexExpr = fmt.Sprintf("^(?P<scope>%v+)[%v](?P<collection>%v+)$", CollectionValidNameCharClass, ScopeCollectionDelimiter, CollectionValidNameCharClass)
 var CollectionNamespaceRegex, _ = regexp.Compile(CollectionNamespaceRegexExpr)
+var OptionalCollectionNamespaceRegex, _ = regexp.Compile(OptionalCollectionNamespaceRegexExpr)
 
 var CollectionNameValidationRegex, _ = regexp.Compile(fmt.Sprintf("^%v%v*$", CollectionValidPrefixNameClass, CollectionValidNameCharClass))
 
@@ -364,6 +368,7 @@ var ErrorSubdocLookupPathNotFound = errors.New("SUBDOC_MULTI_LOOKUP does not inc
 var ErrorUnexpectedSubdocOp = errors.New("Unexpected subdoc op was observed")
 var ErrorCasPoisoningDetected = errors.New("Document CAS is stamped with a time beyond allowable drift threshold")
 var ErrorHostNameEmpty = errors.New("Hostname is empty")
+var ErrorConflictLoggingInputInvalid = errors.New("conflict logging input json object should either contain nothing (considered to turn off) or should compulsory contain \"bucket\" and \"collection\" keys")
 
 func GetBackfillFatalDataLossError(specId string) error {
 	return fmt.Errorf("%v experienced fatal error when trying to create backfill request. To prevent data loss, the pipeline must restream from the beginning", specId)
@@ -632,35 +637,6 @@ const (
 	ConflictResolutionType_Lww    = "lww"
 	ConflictResolutionType_Custom = "custom"
 )
-
-// Return values from conflict detection
-// When detecting/resolving conflicts between source and target document, all action are taken
-// when the source cluster has larger CAS.
-type ConflictResult uint32
-
-const (
-	SendToTarget    ConflictResult = iota // Souce wins
-	Skip            ConflictResult = iota // Target wins
-	Merge           ConflictResult = iota // Conflict
-	SetBackToSource ConflictResult = iota // Source has larger CAS but target wins. This can happen when target MV wins
-	Error           ConflictResult = iota // We have an error detecting conflict. This should not happen.
-)
-
-func (cr ConflictResult) String() string {
-	switch cr {
-	case SendToTarget:
-		return "SendToTarget"
-	case Skip:
-		return "Skip"
-	case Merge:
-		return "Merge"
-	case SetBackToSource:
-		return "SetBackToSource"
-	case Error:
-		return "Error"
-	}
-	return "Unknown"
-}
 
 const EOFString = "EOF"
 
@@ -1508,6 +1484,14 @@ var ActiveTxnRecordRegexp *regexp.Regexp = regexp.MustCompile(fmt.Sprintf("%v%v%
 
 const TransactionXattrKey = "txn"
 
+const (
+	ConflictLoggingXattrKey string = "_xdcr_conflict"
+	ConflictLoggingXattrVal string = "true"
+)
+
+var ConflictLoggingXattrKeyBytes []byte = []byte(ConflictLoggingXattrKey)
+var ConflictLoggingXattrValBytes []byte = []byte(ConflictLoggingXattrVal)
+
 const BackfillPipelineTopicPrefix = "backfill_"
 
 const MobileCompatibleKey = "mobile"
@@ -1529,6 +1513,21 @@ var (
 	MobileDocPrefixSyncAtt = []byte("_sync:att")
 )
 
+// Conflict logging replication setting and associated keys
+// It will look like the following:
+//
+//	"conflictLogging": {
+//				"bucket": "bucketname"
+//				"collection": "[scope].[collection]"
+//				"loggingRules": { ... }
+//		}
+const (
+	ConflictLoggingKey string = "conflictLogging"
+	CLBucketKey        string = "bucket"
+	CLCollectionKey    string = "collection"
+	CLLoggingRulesKey  string = "loggingRules"
+)
+
 // Required for conflict resolution
 const (
 	PERIOD      = "."
@@ -1542,6 +1541,8 @@ const (
 	VXATTR_FLAGS    = "$document.flags"
 	VXATTR_EXPIRY   = "$document.exptime"
 	VXATTR_DATATYPE = "$document.datatype"
+	VXATTR_VBUUID   = "$document.vbucket_uuid"
+	VXATTR_SEQNO    = "$document.seqno"
 	// The leading "_" indicates a system XATTR
 	XATTR_MOBILE = "_sync"
 	// This is the HLV XATTR name.
@@ -1752,3 +1753,9 @@ const CASDriftLiveDetected = "One or more documents are not replicated because t
 const PreCheckCASDriftDetected = "The following VBs have time drift (nanoSecs) beyond acceptable threshold"
 
 var NWLatencyToleranceMilliSec = 10000 * time.Millisecond
+
+var BodySpec SubdocLookupPathSpec = SubdocLookupPathSpec{
+	Opcode: GET,
+	Flags:  0,
+	Path:   nil,
+}
