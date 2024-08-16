@@ -729,7 +729,7 @@ func (service *ReplicationSpecService) validateReplicationSettingsLocal(errorMap
 			return err
 		}
 		if !crossClusterVer {
-			return fmt.Errorf("conflictLogging must be {} when %v is false for the source bucket", base.EnableCrossClusterVersioningKey), nil
+			return fmt.Errorf("conflictLogging must be {} when %v is false for the source bucket", base.EnableCrossClusterVersioningKey)
 		}
 	}
 
@@ -795,7 +795,7 @@ func (service *ReplicationSpecService) validateReplicationSettingsRemote(errorMa
 			return err
 		}
 		if !crossClusterVer {
-			return fmt.Errorf("conflictLogging must be {} when %v is false for the target bucket", base.EnableCrossClusterVersioningKey), nil
+			return fmt.Errorf("conflictLogging must be {} when %v is false for the target bucket", base.EnableCrossClusterVersioningKey)
 		}
 	}
 
