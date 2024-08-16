@@ -41,6 +41,8 @@ const (
 	DCP_NOZZLE_NAME_PREFIX  = "dcp"
 	XMEM_NOZZLE_NAME_PREFIX = "xmem"
 	CAPI_NOZZLE_NAME_PREFIX = "capi"
+
+	notification_delay_factor = 0.7
 )
 
 // interface so we can autogenerate mock and do unit test
@@ -483,6 +485,9 @@ func (xdcrf *XDCRFactory) registerAsyncListenersOnTargets(pipeline common.Pipeli
 		dataSentWithSubdocCmdListener := component.NewDefaultAsyncComponentEventListenerImpl(
 			pipeline_utils.GetElementIdFromNameAndIndex(pipeline, base.DocsSentWithSubdocCmdEventListener, i),
 			pipeline.Topic(), logger_ctx)
+		dataSentWithPoisonedCasEventListener := component.NewDefaultAsyncComponentEventListenerImpl(
+			pipeline_utils.GetElementIdFromNameAndIndex(pipeline, base.DocsSentWithPoisonedCasEventListener, i),
+			pipeline.Topic(), logger_ctx)
 
 		for index := load_distribution[i][0]; index < load_distribution[i][1]; index++ {
 			out_nozzle := targets[index]
@@ -501,6 +506,7 @@ func (xdcrf *XDCRFactory) registerAsyncListenersOnTargets(pipeline common.Pipeli
 			out_nozzle.RegisterComponentEventListener(common.HlvPruned, hlvPrunedEventListener)
 			out_nozzle.RegisterComponentEventListener(common.HlvUpdated, hlvUpdatedEventListener)
 			out_nozzle.RegisterComponentEventListener(common.DocsSentWithSubdocCmd, dataSentWithSubdocCmdListener)
+			out_nozzle.RegisterComponentEventListener(common.DocsSentWithPoisonedCas, dataSentWithPoisonedCasEventListener)
 		}
 	}
 }
@@ -924,7 +930,7 @@ func (xdcrf *XDCRFactory) constructUpdateSettingsForDcpNozzle(pipeline common.Pi
 
 	statsInterval, ok := settings[metadata.PipelineStatsIntervalKey]
 	if ok {
-		dcpSettings[parts.DCP_Stats_Interval] = statsInterval
+		dcpSettings[parts.DCP_Nozzle_Stats_Interval] = statsInterval
 	}
 
 	devMainVbRollback, ok := settings[metadata.DevMainPipelineRollbackTo0VB]
@@ -995,10 +1001,29 @@ func (xdcrf *XDCRFactory) PreReplicationVBMasterCheck(pipeline common.Pipeline) 
 
 	xdcrf.logger.Infof("Running VBMasterCheck for %v with the following VBs: %v", pipeline.FullTopic(), sourceVBs)
 
-	// Update UI status to let them know that pipeline isn't technically running yet
-	eventId, replStatus, replStatusErr := xdcrf.notifyUIOfP2P(pipeline, sourceVBs)
+	notifDelay := time.Duration(notification_delay_factor * float64(metadata.GetP2PTimeoutFromSettings(pipeline.Settings())))
+	if time.Minute > notifDelay {
+		notifDelay = time.Minute
+	}
+
+	var eventId int64
+	var replStatus pp.ReplicationStatusIface
+	var replStatusErr error
+	notified := make(chan struct{})
+	timer := time.AfterFunc(notifDelay, func() {
+		// Update UI status to let them know that pipeline isn't technically running yet
+		hostName, _ := xdcrf.xdcr_topology_svc.MyHost()
+		progressMsg := fmt.Sprintf("%v: %v for the following VBs (replication will proceed shortly): %v", hostName, common.ProgressP2PComm, sourceVBs)
+		eventId, replStatus, replStatusErr = xdcrf.createUIEvent(pipeline.Topic(), progressMsg, base.LowPriorityMsg)
+		close(notified)
+	})
+
 	respMap, rpcErr := xdcrf.p2pMgr.CheckVBMaster(vbsReq, pipeline)
-	xdcrf.dismissUIOfP2P(eventId, replStatusErr, replStatus)
+	if !timer.Stop() { // UI notification is in-progress, wait before dismissing
+		<-notified
+		xdcrf.dismissUIEvent(eventId, replStatusErr, replStatus, common.ProgressP2PComm)
+	}
+
 	if rpcErr != nil {
 		// If err is because spec is deleted from under us or if it's paused, don't do anything and bail
 		replCheck, replErr := xdcrf.repl_spec_svc.ReplicationSpecReadOnly(spec.Id)
@@ -1023,7 +1048,7 @@ func (xdcrf *XDCRFactory) PreReplicationVBMasterCheck(pipeline common.Pipeline) 
 	return respMap, rpcErr
 }
 
-func (xdcrf *XDCRFactory) dismissUIOfP2P(eventId int64, replStatusErr error, replStatus pp.ReplicationStatusIface) {
+func (xdcrf *XDCRFactory) dismissUIEvent(eventId int64, replStatusErr error, replStatus pp.ReplicationStatusIface, messageHint string) {
 	if replStatusErr != nil {
 		return
 	}
@@ -1035,21 +1060,18 @@ func (xdcrf *XDCRFactory) dismissUIOfP2P(eventId int64, replStatusErr error, rep
 
 	dismissErr := replStatus.GetEventsManager().DismissEvent(int(eventId))
 	if dismissErr != nil {
-		xdcrf.logger.Warnf("Unable to dismiss event message: %v - due to err", common.ProgressP2PComm, dismissErr)
+		xdcrf.logger.Warnf("Unable to dismiss event message: %v - due to err", messageHint, dismissErr)
 	}
 }
 
-func (xdcrf *XDCRFactory) notifyUIOfP2P(pipeline common.Pipeline, vbs []uint16) (int64, pp.ReplicationStatusIface, error) {
+func (xdcrf *XDCRFactory) createUIEvent(pipelineTopic, message string, priority base.EventInfoType) (int64, pp.ReplicationStatusIface, error) {
 	var eventId int64 = -1
-	replStatus, replStatusErr := xdcrf.replStatusGetter(pipeline.Topic())
+	replStatus, replStatusErr := xdcrf.replStatusGetter(pipelineTopic)
 	if replStatusErr != nil {
 		return eventId, nil, replStatusErr
 	}
 
-	hostName, _ := xdcrf.xdcr_topology_svc.MyHost()
-	eventsMgr := replStatus.GetEventsManager()
-	progressMsg := fmt.Sprintf("%v: %v for the following VBs: %v", hostName, common.ProgressP2PComm, vbs)
-	eventId = eventsMgr.AddEvent(base.LowPriorityMsg, progressMsg, base.EventsMap{}, nil)
+	eventId = replStatus.GetEventsManager().AddEvent(priority, message, base.EventsMap{}, nil)
 	return eventId, replStatus, nil
 }
 
@@ -1217,7 +1239,7 @@ func (xdcrf *XDCRFactory) constructSettingsForDcpNozzle(pipeline common.Pipeline
 	dcpNozzleSettings[parts.DCP_DEV_BACKFILL_ROLLBACK_VB] = metadata.GetSettingFromSettingsMap(settings, metadata.DevBackfillRollbackTo0VB, -1)
 
 	dcpNozzleSettings[parts.DCP_VBTimestampUpdater] = ckpt_svc.(*pipeline_svc.CheckpointManager).UpdateVBTimestamps
-	dcpNozzleSettings[parts.DCP_Stats_Interval] = metadata.GetSettingFromSettingsMap(settings, metadata.PipelineStatsIntervalKey, repSettings.StatsInterval)
+	dcpNozzleSettings[parts.DCP_Nozzle_Stats_Interval] = metadata.GetSettingFromSettingsMap(settings, metadata.PipelineStatsIntervalKey, repSettings.StatsInterval)
 
 	if repSettings.IsCapi() {
 		// For CAPI nozzle, do not allow DCP to have compression
@@ -1414,7 +1436,7 @@ func (xdcrf *XDCRFactory) registerServices(pipeline common.Pipeline, logger_ctx 
 		if isCapi {
 			return errors.New("Custom conflict resolution cannot be used with Capi nozzle.")
 		}
-		conflictMgr := pipeline_svc.NewConflictManager(xdcrf.resolverSvc, pipeline.Specification().GetReplicationSpec().Id, xdcrf.xdcr_topology_svc, xdcrf.utils)
+		conflictMgr := pipeline_svc.NewConflictManager(xdcrf.resolverSvc, pipeline.Specification().GetReplicationSpec().Id, xdcrf.xdcr_topology_svc, logger_ctx, xdcrf.utils)
 		err := ctx.RegisterService(base.CONFLICT_MANAGER_SVC, conflictMgr)
 		if err != nil {
 			return err

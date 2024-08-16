@@ -419,9 +419,14 @@ func (genericPipeline *GenericPipeline) Start(settings metadata.ReplicationSetti
 // As part of CAS poison check, we need to make sure that given a specific VB, the max cas's between them
 // are not beyond an acceptable threshold
 func (genericPipeline *GenericPipeline) preCheckCasCheck(spec *metadata.ReplicationSpecification, genPipelineId string, errMap base.ErrorMap) base.ErrorMap {
+	if !base.IsCasPoisoningPreCheckEnabled() {
+		genericPipeline.logger.Infof("Skip cas poison precheck because it has been disabled entirely")
+		return errMap
+	}
+
 	preCheckThreshold := time.Duration(spec.Settings.GetPreCheckCasDriftThreshold()) * time.Hour
 	if preCheckThreshold == 0 {
-		genericPipeline.logger.Infof("Skip cas poison precheck because it has been disabled")
+		genericPipeline.logger.Infof("Skip cas poison precheck because it has been disabled for this pipeline")
 		return errMap
 	}
 
@@ -490,63 +495,64 @@ func (genericPipeline *GenericPipeline) preCheckCasCheck(spec *metadata.Replicat
 }
 
 func (genericPipeline *GenericPipeline) getlocalMaxCasMap(spec *metadata.ReplicationSpecification, genPipelineId string) (base.VbSeqnoMapType, base.ErrorMap) {
-	localMaxCasNotificationCh, err := genericPipeline.bucketTopologySvc.SubscribeToLocalBucketMaxVbCasStatFeed(spec, genPipelineId)
+	errMap := make(base.ErrorMap)
+	localMaxCasMap := make(base.VbSeqnoMapType)
+
+	localMaxCasNotificationCh, localMaxCasErrCh, err := genericPipeline.bucketTopologySvc.SubscribeToLocalBucketMaxVbCasStatFeed(spec, genPipelineId)
 	if err != nil {
-		errMap := make(base.ErrorMap)
 		errMap[PreCheckCasCheck] = err
 		return nil, errMap
 	}
+	defer genericPipeline.bucketTopologySvc.UnSubscribeToLocalBucketMaxVbCasStatFeed(spec, genPipelineId)
 
-	localMaxCasMap := make(base.VbSeqnoMapType)
 	var nonEmptyResultFound bool
 	for !nonEmptyResultFound {
-		maxCasNotification := <-localMaxCasNotificationCh
-		vbMaxCasMap := maxCasNotification.GetVBMaxCasStats()
-		if len(vbMaxCasMap) == 0 {
-			time.Sleep(1 * time.Second)
-		} else {
-			nonEmptyResultFound = true
-			localMaxCasMap = vbMaxCasMap.DedupAndGetMax()
-		}
-		maxCasNotification.Recycle()
-	}
+		select {
+		case maxCasNotification := <-localMaxCasNotificationCh:
+			vbMaxCasMap := maxCasNotification.GetVBMaxCasStats()
+			if len(vbMaxCasMap) != 0 {
+				nonEmptyResultFound = true
+				localMaxCasMap = vbMaxCasMap.DedupAndGetMax()
+			}
+			maxCasNotification.Recycle()
+		case err := <-localMaxCasErrCh:
+			if err != nil {
+				errMap[PreCheckCasCheck] = fmt.Errorf("failed to fetch localMaxCasMap. err=%v", err)
+				return nil, errMap
 
-	err = genericPipeline.bucketTopologySvc.UnSubscribeToLocalBucketMaxVbCasStatFeed(spec, genPipelineId)
-	if err != nil {
-		errMap := make(base.ErrorMap)
-		errMap[PreCheckCasCheck] = err
-		return nil, errMap
+			}
+		}
 	}
 	return localMaxCasMap, nil
 }
 
 func (genericPipeline *GenericPipeline) getRemoteMinCasMap(spec *metadata.ReplicationSpecification, genPipelineId string) (base.VbSeqnoMapType, base.ErrorMap) {
-	remoteMaxNotificationCh, err := genericPipeline.bucketTopologySvc.SubscribeToRemoteKVStatsFeed(spec, genPipelineId)
+	remoteMinCasMap := make(base.VbSeqnoMapType)
+	errMap := make(base.ErrorMap)
+
+	remoteMaxNotificationCh, remoteMaxCasErrCh, err := genericPipeline.bucketTopologySvc.SubscribeToRemoteKVStatsFeed(spec, genPipelineId)
 	if err != nil {
-		errMap := make(base.ErrorMap)
 		errMap[PreCheckCasCheck] = err
 		return nil, errMap
 	}
+	defer genericPipeline.bucketTopologySvc.UnSubscribeToRemoteKVStatsFeed(spec, genPipelineId)
 
-	remoteMinCasMap := make(base.VbSeqnoMapType)
 	var nonEmptyResultFound bool
 	for !nonEmptyResultFound {
-		maxCasNotification := <-remoteMaxNotificationCh
-		vbMaxCasMap := maxCasNotification.GetVBMaxCasStats()
-		if len(vbMaxCasMap) == 0 {
-			time.Sleep(1 * time.Second)
-		} else {
-			nonEmptyResultFound = true
-			remoteMinCasMap = vbMaxCasMap.DedupAndGetMin()
+		select {
+		case maxCasNotification := <-remoteMaxNotificationCh:
+			vbMaxCasMap := maxCasNotification.GetVBMaxCasStats()
+			if len(vbMaxCasMap) != 0 {
+				nonEmptyResultFound = true
+				remoteMinCasMap = vbMaxCasMap.DedupAndGetMin()
+			}
+			maxCasNotification.Recycle()
+		case err := <-remoteMaxCasErrCh:
+			if err != nil {
+				errMap[PreCheckCasCheck] = fmt.Errorf("failed to fetch RemoteMinCasMap. err=%v", err)
+				return nil, errMap
+			}
 		}
-		maxCasNotification.Recycle()
-	}
-
-	err = genericPipeline.bucketTopologySvc.UnSubscribeToRemoteKVStatsFeed(spec, genPipelineId)
-	if err != nil {
-		errMap := make(base.ErrorMap)
-		errMap[PreCheckCasCheck] = err
-		return nil, errMap
 	}
 	return remoteMinCasMap, nil
 }

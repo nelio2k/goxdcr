@@ -332,7 +332,6 @@ func InitConstants(xdcr_topology_svc service_def.XDCRCompTopologySvc, internal_s
 		time.Duration(internal_settings.Values[metadata.ReplStatusExportBrokenMapTimeoutKey].(int))*time.Second,
 		time.Duration(internal_settings.Values[metadata.TopologySvcCooldownPeriodKey].(int))*time.Second,
 		time.Duration(internal_settings.Values[metadata.TopologySvcCooldownPeriodKey].(int))*time.Second,
-		time.Duration(internal_settings.Values[metadata.HealthCheckIntervalKey].(int))*time.Second,
 		xdcr_topology_svc.IsIpv4Blocked(), xdcr_topology_svc.IsIpv6Blocked(),
 		time.Duration(internal_settings.Values[metadata.P2PCommTimeoutKey].(int))*time.Second,
 		time.Duration(internal_settings.Values[metadata.BucketTopologyGCScanTimeKey].(int))*time.Minute,
@@ -359,6 +358,7 @@ func InitConstants(xdcr_topology_svc service_def.XDCRCompTopologySvc, internal_s
 		internal_settings.Values[metadata.DatapoolLogFrequencyKey].(int),
 		internal_settings.Values[metadata.CapellaHostNameSuffixKey].(string),
 		time.Duration(internal_settings.Values[metadata.NWLatencyToleranceMilliSecKey].(int))*time.Millisecond,
+		internal_settings.Values[metadata.CasPoisoningPreCheckEnabledKey].(int),
 	)
 }
 
@@ -491,7 +491,7 @@ func (rm *replicationManager) init(
 	securitySvc service_def.SecuritySvc,
 	p2pMgr peerToPeer.P2PManager) {
 
-	rm.GenericSupervisor = *supervisor.NewGenericSupervisor(base.ReplicationManagerSupervisorId, log.DefaultLoggerContext, rm, nil, rm.utils)
+	rm.GenericSupervisor = *supervisor.NewGenericSupervisor(base.ReplicationManagerSupervisorId, log.GetOrCreateContext(base.GenericSupervisorKey), rm, nil, rm.utils)
 	rm.repl_spec_svc = repl_spec_svc
 	rm.remote_cluster_svc = remote_cluster_svc
 	rm.xdcr_topology_svc = xdcr_topology_svc
@@ -511,16 +511,16 @@ func (rm *replicationManager) init(
 
 	fac := factory.NewXDCRFactory(repl_spec_svc, remote_cluster_svc,
 		xdcr_topology_svc, checkpoint_svc, capi_svc, uilog_svc,
-		throughput_throttler_svc, log.DefaultLoggerContext, log.DefaultLoggerContext,
+		throughput_throttler_svc, log.DefaultLoggerContext, log.GetOrCreateContext(base.XDCRFactoryKey),
 		rm, rm.utils, resolverSvc, collectionsManifestSvc, rm.GetBackfillMgr, rm.backfillReplSvc,
 		rm.bucketTopologySvc, rm.p2pMgr, rm.getReplStatus)
 
-	pipelineMgrObj := pipeline_manager.NewPipelineManager(fac, repl_spec_svc, xdcr_topology_svc, remote_cluster_svc, checkpoint_svc, uilog_svc, log.DefaultLoggerContext, rm.utils, collectionsManifestSvc, rm.backfillReplSvc, &rm.eventIdAtomicWell, rm.GetBackfillMgr)
+	pipelineMgrObj := pipeline_manager.NewPipelineManager(fac, repl_spec_svc, xdcr_topology_svc, remote_cluster_svc, checkpoint_svc, uilog_svc, log.GetOrCreateContext(base.PipelineMgrKey), rm.utils, collectionsManifestSvc, rm.backfillReplSvc, &rm.eventIdAtomicWell, rm.GetBackfillMgr)
 	rm.pipelineMgr = pipelineMgrObj
 	securitySvc.SetEncryptionLevelChangeCallback("pipelineMgr", rm.pipelineMgr.HandleClusterEncryptionLevelChange)
 	rm.p2pMgr.SetPushReqMergerOnce(rm.pipelineMgr.HandlePeerCkptPush)
 
-	rm.resourceMgr = resource_manager.NewResourceManager(rm.pipelineMgr, repl_spec_svc, xdcr_topology_svc, remote_cluster_svc, checkpoint_svc, uilog_svc, throughput_throttler_svc, log.DefaultLoggerContext, rm.utils, rm.backfillReplSvc)
+	rm.resourceMgr = resource_manager.NewResourceManager(rm.pipelineMgr, repl_spec_svc, xdcr_topology_svc, remote_cluster_svc, checkpoint_svc, uilog_svc, throughput_throttler_svc, log.GetOrCreateContext(base.ResourceMgrKey), rm.utils, rm.backfillReplSvc)
 	rm.resourceMgr.Start()
 
 	rm.backfillMgr = backfill_manager.NewBackfillManager(collectionsManifestSvc, repl_spec_svc, backfillReplSvc, pipelineMgrObj, xdcr_topology_svc, checkpoint_svc, rm.bucketTopologySvc, rm.utils)
@@ -678,12 +678,52 @@ func filterSettingsChanged(changedSettingsMap metadata.ReplicationSettingsMap, o
 	return false
 }
 
+// This function determines if the specified replication settings require remote validation
+func CheckIfRemoteValidationRequired(justValidate bool, oldSettings, newSettings metadata.ReplicationSettingsMap) bool {
+	//justValidate means UI is in need of immediate update - do not perform RPC call
+	if justValidate {
+		return false
+	}
+
+	compressionType, compressionOk := newSettings[metadata.CompressionTypeKey]
+	if compressionOk {
+		oldCompressionType := oldSettings[metadata.CompressionTypeKey].(int)
+		if (base.GetCompressionType(compressionType.(int)) != base.CompressionTypeNone) &&
+			base.GetCompressionType(oldCompressionType) != base.GetCompressionType(compressionType.(int)) {
+			return true
+		}
+	}
+
+	mobile, mobileOk := newSettings[metadata.MobileCompatibleKey].(int)
+	if mobileOk {
+		oldMobileSetting := oldSettings[metadata.MobileCompatibleKey].(int)
+		if mobile != base.MobileCompatibilityOff && oldMobileSetting != mobile {
+			return true
+		}
+	}
+	// in future, if there are any other settings that require remote validation can go here
+	return false
+}
+
+// This function checks if there is a need to perform validation of replicationSettings
+func ShouldValidateReplicationSettings(settings metadata.ReplicationSettingsMap) bool {
+	for _, key := range metadata.ValidateReplicationSettings {
+		if _, ok := settings[key]; ok {
+			return true
+		}
+	}
+	return false
+}
+
 // update the per-replication settings only if justValidate is false
 // Warnings should be given only if there are no errors
 func UpdateReplicationSettings(topic string, settings metadata.ReplicationSettingsMap, realUserId *service_def.RealUserId, ips *service_def.LocalRemoteIPs, justValidate bool) (map[string]error, error, service_def.UIWarnings) {
 	logger_rm.Infof("Update replication settings for %v, settings=%v, justValidate=%v", topic, settings.CloneAndRedact(), justValidate)
 
 	var internalChangesTookPlace bool
+	var validateErr error
+	var validateRoutineErrorMap base.ErrorMap
+	var warnings service_def.UIWarnings
 
 	// read replication spec with the specified replication id
 	replSpec, err := ReplicationSpecService().ReplicationSpec(topic)
@@ -701,29 +741,21 @@ func UpdateReplicationSettings(topic string, settings metadata.ReplicationSettin
 	filterExpression := replSpec.Settings.Values[metadata.FilterExpressionKey].(string)
 	oldCompressionType := replSpec.Settings.Values[metadata.CompressionTypeKey].(int)
 	filterVersion := replSpec.Settings.Values[metadata.FilterVersionKey].(base.FilterVersionType)
+	_, CompressionOk := settings[metadata.CompressionTypeKey]
+
+	shouldValidateSettings := ShouldValidateReplicationSettings(settings)
+	if shouldValidateSettings {
+		performRemoteValidation := CheckIfRemoteValidationRequired(justValidate, replSpec.Settings.ToMap(false), settings)
+		validateRoutineErrorMap, validateErr, warnings = ReplicationSpecService().ValidateReplicationSettings(replSpecificFields.SourceBucketName, replSpecificFields.RemoteClusterName, replSpecificFields.TargetBucketName, settings, performRemoteValidation)
+		if len(validateRoutineErrorMap) > 0 {
+			return validateRoutineErrorMap, nil, nil
+		} else if validateErr != nil {
+			return nil, validateErr, nil
+		}
+	}
 
 	// update replication spec with input settings
 	changedSettingsMap, errorMap := replSpec.Settings.UpdateSettingsFromMap(settings)
-
-	var performRemoteValidation bool
-	// Only Re-evaluate Compression pre-requisites if it is turned on and actually switched algorithms to catch any cluster-wide compression changes
-	compressionType, CompressionOk := changedSettingsMap[metadata.CompressionTypeKey]
-	if !justValidate && CompressionOk && (base.GetCompressionType(compressionType.(int)) != base.CompressionTypeNone) &&
-		base.GetCompressionType(oldCompressionType) != base.GetCompressionType(compressionType.(int)) {
-		// justValidate means UI is in need of immediate update - do not perform RPC call
-		performRemoteValidation = true
-	}
-	validateRoutineErrorMap, validateErr, warnings := ReplicationSpecService().ValidateReplicationSettings(replSpecificFields.SourceBucketName, replSpecificFields.RemoteClusterName, replSpecificFields.TargetBucketName, settings, performRemoteValidation)
-	if len(validateRoutineErrorMap) > 0 {
-		return validateRoutineErrorMap, nil, nil
-	} else if validateErr != nil {
-		return nil, validateErr, nil
-	}
-
-	// If compression is SNAPPY and is not changed, take this oppurtunity to change it to AUTO
-	if oldCompressionType == base.CompressionTypeSnappy && !CompressionOk {
-		changedSettingsMap[metadata.CompressionTypeKey] = base.CompressionTypeAuto
-	}
 	if len(errorMap) != 0 {
 		return errorMap, nil, nil
 	}
@@ -735,6 +767,15 @@ func UpdateReplicationSettings(topic string, settings metadata.ReplicationSettin
 		_, errorMap = replSpec.Settings.UpdateSettingsFromMap(settings)
 		if len(errorMap) != 0 {
 			return errorMap, fmt.Errorf("Internal XDCR Error related to internal filter management: %v", errorMap), nil
+		}
+		internalChangesTookPlace = true
+	}
+	// If compression is SNAPPY and is not changed, take this oppurtunity to change it to AUTO
+	if oldCompressionType == base.CompressionTypeSnappy && !CompressionOk {
+		settings[metadata.CompressionTypeKey] = base.CompressionTypeAuto
+		_, errorMap = replSpec.Settings.UpdateSettingsFromMap(settings)
+		if len(errorMap) != 0 {
+			return errorMap, fmt.Errorf("Internal XDCR Error related to internal compression settings: %v", errorMap), nil
 		}
 		internalChangesTookPlace = true
 	}

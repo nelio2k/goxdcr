@@ -314,6 +314,18 @@
         "notes": "This usually means that one source mutation is now going to exist in two or more target collections, leading to mismatching doc counts between buckets. This can happen when migration mode is turned on, and the migration filtering expression is not specific enough, leading to a single doc matching multiple migration filtering expressions. To prevent this, ensure that the filtering expr are more specific such that each doc is migrated to only one target collection.",
         "stability": "committed"
     },
+    "xdcr_docs_compression_skipped_total": {
+        "type": "counter",
+        "help": "Total number of documents whose compression was skipped before replication, due to a larger snappy-compressed size",
+        "added": "8.0.0",
+        "labels": [
+            "sourceBucketName",
+            "targetClusterUUID",
+            "targetBucketName",
+            "pipelineType"
+        ],
+        "stability": "committed"
+    },
     "xdcr_docs_failed_cr_source_total": {
         "type": "counter",
         "help": "Number of documents (or tombstones) that were not replicated to the Target due to Conflict Resolution evaluated on the Source",
@@ -455,10 +467,34 @@
         ],
         "stability": "committed"
     },
+    "xdcr_docs_sent_with_poisonedCas_errorMode_total": {
+        "type": "counter",
+        "help": "The total number of documents that failed the set_with_meta operation due to the set CAS exceeding the acceptable threshold on the target data service.",
+        "added": "8.0.0",
+        "labels": [
+            "sourceBucketName",
+            "targetClusterUUID",
+            "targetBucketName",
+            "pipelineType"
+        ],
+        "stability": "committed"
+    },
+    "xdcr_docs_sent_with_poisonedCas_replaceMode_total": {
+        "type": "counter",
+        "help": "The total number of documents replicated to the target, where the target data service regenerated CAS values because the set CAS exceeded the acceptable threshold on the target's data service.",
+        "added": "8.0.0",
+        "labels": [
+            "sourceBucketName",
+            "targetClusterUUID",
+            "targetBucketName",
+            "pipelineType"
+        ],
+        "stability": "committed"
+    },
     "xdcr_docs_sent_with_subdoc_delete_total": {
         "type": "counter",
         "help": "The number of deletes issued using subdoc command instead of delete_with_meta to avoid cas rollback on target",
-        "added": "7.6.2",
+        "added": "7.6.3",
         "labels": [
             "sourceBucketName",
             "targetClusterUUID",
@@ -470,7 +506,7 @@
     "xdcr_docs_sent_with_subdoc_set_total": {
         "type": "counter",
         "help": "The number of sets issued using subdoc command instead of set_with_meta to avoid cas rollback on target",
-        "added": "7.6.2",
+        "added": "7.6.3",
         "labels": [
             "sourceBucketName",
             "targetClusterUUID",
@@ -667,7 +703,7 @@
     "xdcr_hlv_pruned_at_merge_total": {
         "type": "counter",
         "help": "Number of mutations with HLV pruned when it is merged with target document",
-        "added": "7.6.2",
+        "added": "7.6.3",
         "labels": [
             "sourceBucketName",
             "targetClusterUUID",
@@ -679,7 +715,7 @@
     "xdcr_hlv_pruned_total": {
         "type": "counter",
         "help": "Number of mutations with HLV pruned",
-        "added": "7.6.2",
+        "added": "7.6.3",
         "labels": [
             "sourceBucketName",
             "targetClusterUUID",
@@ -691,7 +727,7 @@
     "xdcr_hlv_updated_total": {
         "type": "counter",
         "help": "Number of mutations with HLV updated",
-        "added": "7.6.2",
+        "added": "7.6.3",
         "labels": [
             "sourceBucketName",
             "targetClusterUUID",
@@ -703,7 +739,7 @@
     "xdcr_import_docs_failed_cr_source_total": {
         "type": "counter",
         "help": "Number of mobile import mutations failed Source side Conflict Resolution. This is only counted in LWW buckets when enableCrossClusterVersioning is true",
-        "added": "7.6.2",
+        "added": "7.6.3",
         "labels": [
             "sourceBucketName",
             "targetClusterUUID",
@@ -715,7 +751,7 @@
     "xdcr_import_docs_written_total": {
         "type": "counter",
         "help": "Number of import mutations sent",
-        "added": "7.6.2",
+        "added": "7.6.3",
         "labels": [
             "sourceBucketName",
             "targetClusterUUID",
@@ -915,7 +951,7 @@
     "xdcr_source_sync_xattr_removed_total": {
         "type": "counter",
         "help": "Number of mutations with source mobile extended attributes removed",
-        "added": "7.6.2",
+        "added": "7.6.3",
         "labels": [
             "sourceBucketName",
             "targetClusterUUID",
@@ -927,7 +963,7 @@
     "xdcr_subdoc_cmd_docs_cas_changed_total": {
         "type": "counter",
         "help": "Number of Subdoc sets and delete operations that failed because the CAS on the Target changed",
-        "added": "7.6.2",
+        "added": "7.6.3",
         "labels": [
             "sourceBucketName",
             "targetClusterUUID",
@@ -976,7 +1012,7 @@
     "xdcr_target_sync_xattr_preserved_total": {
         "type": "counter",
         "help": "Number of mutations with target mobile extended attributes preserved",
-        "added": "7.6.2",
+        "added": "7.6.3",
         "labels": [
             "sourceBucketName",
             "targetClusterUUID",

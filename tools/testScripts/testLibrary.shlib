@@ -59,14 +59,15 @@ function checkItemCnt {
 			if (($itemCount != $previousItemCnt)); then
 				previousItemCnt=$itemCount
 				i=$(($i - 1))
-				echo "ERROR: Cluster $cluster bucket $bucket only has $itemCount items. Expect $expectedCnt. Items are increasing..."
+				echo "WARN: Cluster $cluster bucket $bucket only has $itemCount items. Expect $expectedCnt. Items are increasing..."
 			else
-				echo "ERROR: Cluster $cluster bucket $bucket only has $itemCount items"
+				echo "WARN: Cluster $cluster bucket $bucket only has $itemCount items"
 			fi
 		fi
 		echo "Sleeping 10 seconds and retrying..."
 		sleep 10
 	done
+	echo "ERROR: Cluster $cluster bucket $bucket has $itemCount items - failed to match expected items count of $expectedCnt"
 	read -p "Press any key once done investigating"
 	dumpDebugInfoBeforeExit
 	exit 1
@@ -74,10 +75,8 @@ function checkItemCnt {
 
 # Assumes running test script from this directory
 function getNsServerDir {
-	# i.e. Running from "/Users/neil.huang/source/couchbase/goproj/src/github.com/couchbase/goxdcr/tools/testScripts"
-	local srcTreeName=$(pwd | cut -d/ -f6-)
-	# /Users/neil.huang/source/couchbase/
-	local couchbaseDir=$(pwd | sed "s|$srcTreeName||g")
+	# Currently this test library exists under goproj/src/github.com/couchbase/goxdcr/tools/testScripts/
+	local couchbaseDir="../../../../../../../"
 	echo "${couchbaseDir}ns_server"
 	return 0
 }
@@ -101,8 +100,21 @@ function grepForErrs {
 	for dir in $(ls $logsDir); do
 		count=$(grep -c "decoding source mutation" ${logsDir}/${dir}/goxdcr.log)
 		if (($count > 0)); then
-			echo "WARNING Found errs in ${logsDir}/${dir}"
+			echo "WARNING Found err:decoding source mutation in ${logsDir}/${dir}"
 			exit 1
+		fi
+	done
+	return 0
+}
+
+function grepForPipelineFailures {
+	local ns_serverDir=$(getNsServerDir)
+	local logsDir="${ns_serverDir}/logs"
+	for dir in $(ls $logsDir); do
+		count=$(grep -c "Failed to start the pipeline" ${logsDir}/${dir}/goxdcr.log)
+		if (($count > 0)); then
+			echo "WARNING Found err:Failed to start the pipeline in ${logsDir}/${dir}/goxdcr.log"
+			return 1
 		fi
 	done
 	return 0
@@ -114,7 +126,7 @@ function grepForEINVAL {
 	for dir in $(ls $logsDir); do
 		count=$(grep -c "EINVAL" ${logsDir}/${dir}/goxdcr.log)
 		if (($count > 0)); then
-			echo "WARNING Found errs in ${logsDir}/${dir}"
+			echo "WARNING Found EINVAL in ${logsDir}/${dir}"
 			exit 1
 		fi
 	done
@@ -1308,6 +1320,7 @@ EOF
 			# Reload the node certificate from disk, for the current node:
 			curl -X POST \
 				http://$DEFAULT_ADMIN:$DEFAULT_PW@127.0.0.1:$port/node/controller/reloadCertificate
+
 		else
 			echo "Running vagrant, skipping copy for now"
 		fi

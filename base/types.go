@@ -790,6 +790,7 @@ type WrappedMCRequest struct {
 	SlicesToBeReleasedByRouter [][]byte
 	SlicesToBeReleasedMtx      sync.Mutex
 	NeedToRecompress           bool
+	SkippedRecompression       bool
 	ImportMutation             bool
 
 	// If a single source mutation is translated to multiple target requests, the additional ones are listed here
@@ -1026,6 +1027,15 @@ func (wrappedReq *WrappedMCRequest) AddByteSliceForXmemToRecycle(slice []byte) {
 	}
 	wrappedReq.SlicesToBeReleasedByXmem = append(wrappedReq.SlicesToBeReleasedByXmem, slice)
 	wrappedReq.SlicesToBeReleasedMtx.Unlock()
+}
+func (wrappedReq *WrappedMCRequest) GetSentCas() (uint64, error) {
+	var sentCas uint64
+	isSubDocOp := wrappedReq.IsSubdocOp()
+	if !isSubDocOp && len(wrappedReq.Req.Extras) >= 24 { // extras.cas is set only incase of a non-subdoc operation
+		sentCas = binary.BigEndian.Uint64(wrappedReq.Req.Extras[16:24])
+		return sentCas, nil
+	}
+	return sentCas, fmt.Errorf("extras.cas is not set in the request")
 }
 
 type McRequestMap map[string]*WrappedMCRequest
@@ -2474,60 +2484,6 @@ func GetKeysListFromStrBoolMap(a map[string]bool) []string {
 	return retList
 }
 
-type DcpStatsMapType map[string]*StringStringMap
-
-func (t *DcpStatsMapType) GetKeyList() []string {
-	if t == nil || *t == nil {
-		return nil
-	}
-	var retList []string
-	for k, _ := range *t {
-		retList = append(retList, k)
-	}
-	return retList
-}
-
-func (t *DcpStatsMapType) Clone() DcpStatsMapType {
-	if t == nil || *t == nil {
-		return nil
-	}
-
-	clonedMap := make(DcpStatsMapType)
-
-	for k, vMap := range *t {
-		if vMap == nil {
-			clonedMap[k] = nil
-		} else {
-			vMapClone := make(StringStringMap)
-			for k2, v2 := range *vMap {
-				vMapClone[k2] = v2
-			}
-			clonedMap[k] = &vMapClone
-		}
-	}
-	return clonedMap
-}
-
-func (t *DcpStatsMapType) GreenClone(dcpStatsPool func(keys []string) *DcpStatsMapType, strStrPool func(keys []string) *StringStringMap) *DcpStatsMapType {
-	if t == nil || *t == nil {
-		return nil
-	}
-
-	recycledMap := dcpStatsPool(t.GetKeyList())
-	for key, vMap := range *t {
-		if vMap == nil {
-			(*recycledMap)[key] = nil
-		} else {
-			recycledStrStr := strStrPool(GetKeysListFromStrStrMap(*vMap))
-			for key2, val2 := range *vMap {
-				(*recycledStrStr)[key2] = val2
-			}
-			(*recycledMap)[key] = recycledStrStr
-		}
-	}
-	return recycledMap
-}
-
 type BucketInfoMapType map[string]interface{}
 
 // Shallow copy clone of the values
@@ -2984,6 +2940,14 @@ const (
 	NotSubdoc    SubdocOpType = iota
 	SubdocSet    SubdocOpType = iota
 	SubdocDelete SubdocOpType = iota
+)
+
+// This denotes the target KV's Cas Poison protection Mode
+type TargetKVCasPoisonProtectionMode uint8
+
+const (
+	ErrorMode   TargetKVCasPoisonProtectionMode = iota
+	ReplaceMode TargetKVCasPoisonProtectionMode = iota
 )
 
 // HLVModeOptions indicate the options set when performing replication using HLV i.e. CCR, mobile mode etc

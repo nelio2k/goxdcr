@@ -126,124 +126,6 @@ func (_c *BucketTopologySvc_ReplicationSpecChangeCallback_Call) RunAndReturn(run
 	return _c
 }
 
-// SubscribeToLocalBucketDcpStatsFeed provides a mock function with given fields: spec, subscriberId
-func (_m *BucketTopologySvc) SubscribeToLocalBucketDcpStatsFeed(spec *metadata.ReplicationSpecification, subscriberId string) (chan service_def.SourceNotification, error) {
-	ret := _m.Called(spec, subscriberId)
-
-	if len(ret) == 0 {
-		panic("no return value specified for SubscribeToLocalBucketDcpStatsFeed")
-	}
-
-	var r0 chan service_def.SourceNotification
-	var r1 error
-	if rf, ok := ret.Get(0).(func(*metadata.ReplicationSpecification, string) (chan service_def.SourceNotification, error)); ok {
-		return rf(spec, subscriberId)
-	}
-	if rf, ok := ret.Get(0).(func(*metadata.ReplicationSpecification, string) chan service_def.SourceNotification); ok {
-		r0 = rf(spec, subscriberId)
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(chan service_def.SourceNotification)
-		}
-	}
-
-	if rf, ok := ret.Get(1).(func(*metadata.ReplicationSpecification, string) error); ok {
-		r1 = rf(spec, subscriberId)
-	} else {
-		r1 = ret.Error(1)
-	}
-
-	return r0, r1
-}
-
-// BucketTopologySvc_SubscribeToLocalBucketDcpStatsFeed_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SubscribeToLocalBucketDcpStatsFeed'
-type BucketTopologySvc_SubscribeToLocalBucketDcpStatsFeed_Call struct {
-	*mock.Call
-}
-
-// SubscribeToLocalBucketDcpStatsFeed is a helper method to define mock.On call
-//   - spec *metadata.ReplicationSpecification
-//   - subscriberId string
-func (_e *BucketTopologySvc_Expecter) SubscribeToLocalBucketDcpStatsFeed(spec interface{}, subscriberId interface{}) *BucketTopologySvc_SubscribeToLocalBucketDcpStatsFeed_Call {
-	return &BucketTopologySvc_SubscribeToLocalBucketDcpStatsFeed_Call{Call: _e.mock.On("SubscribeToLocalBucketDcpStatsFeed", spec, subscriberId)}
-}
-
-func (_c *BucketTopologySvc_SubscribeToLocalBucketDcpStatsFeed_Call) Run(run func(spec *metadata.ReplicationSpecification, subscriberId string)) *BucketTopologySvc_SubscribeToLocalBucketDcpStatsFeed_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(*metadata.ReplicationSpecification), args[1].(string))
-	})
-	return _c
-}
-
-func (_c *BucketTopologySvc_SubscribeToLocalBucketDcpStatsFeed_Call) Return(_a0 chan service_def.SourceNotification, _a1 error) *BucketTopologySvc_SubscribeToLocalBucketDcpStatsFeed_Call {
-	_c.Call.Return(_a0, _a1)
-	return _c
-}
-
-func (_c *BucketTopologySvc_SubscribeToLocalBucketDcpStatsFeed_Call) RunAndReturn(run func(*metadata.ReplicationSpecification, string) (chan service_def.SourceNotification, error)) *BucketTopologySvc_SubscribeToLocalBucketDcpStatsFeed_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// SubscribeToLocalBucketDcpStatsLegacyFeed provides a mock function with given fields: spec, subscriberId
-func (_m *BucketTopologySvc) SubscribeToLocalBucketDcpStatsLegacyFeed(spec *metadata.ReplicationSpecification, subscriberId string) (chan service_def.SourceNotification, error) {
-	ret := _m.Called(spec, subscriberId)
-
-	if len(ret) == 0 {
-		panic("no return value specified for SubscribeToLocalBucketDcpStatsLegacyFeed")
-	}
-
-	var r0 chan service_def.SourceNotification
-	var r1 error
-	if rf, ok := ret.Get(0).(func(*metadata.ReplicationSpecification, string) (chan service_def.SourceNotification, error)); ok {
-		return rf(spec, subscriberId)
-	}
-	if rf, ok := ret.Get(0).(func(*metadata.ReplicationSpecification, string) chan service_def.SourceNotification); ok {
-		r0 = rf(spec, subscriberId)
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(chan service_def.SourceNotification)
-		}
-	}
-
-	if rf, ok := ret.Get(1).(func(*metadata.ReplicationSpecification, string) error); ok {
-		r1 = rf(spec, subscriberId)
-	} else {
-		r1 = ret.Error(1)
-	}
-
-	return r0, r1
-}
-
-// BucketTopologySvc_SubscribeToLocalBucketDcpStatsLegacyFeed_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SubscribeToLocalBucketDcpStatsLegacyFeed'
-type BucketTopologySvc_SubscribeToLocalBucketDcpStatsLegacyFeed_Call struct {
-	*mock.Call
-}
-
-// SubscribeToLocalBucketDcpStatsLegacyFeed is a helper method to define mock.On call
-//   - spec *metadata.ReplicationSpecification
-//   - subscriberId string
-func (_e *BucketTopologySvc_Expecter) SubscribeToLocalBucketDcpStatsLegacyFeed(spec interface{}, subscriberId interface{}) *BucketTopologySvc_SubscribeToLocalBucketDcpStatsLegacyFeed_Call {
-	return &BucketTopologySvc_SubscribeToLocalBucketDcpStatsLegacyFeed_Call{Call: _e.mock.On("SubscribeToLocalBucketDcpStatsLegacyFeed", spec, subscriberId)}
-}
-
-func (_c *BucketTopologySvc_SubscribeToLocalBucketDcpStatsLegacyFeed_Call) Run(run func(spec *metadata.ReplicationSpecification, subscriberId string)) *BucketTopologySvc_SubscribeToLocalBucketDcpStatsLegacyFeed_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(*metadata.ReplicationSpecification), args[1].(string))
-	})
-	return _c
-}
-
-func (_c *BucketTopologySvc_SubscribeToLocalBucketDcpStatsLegacyFeed_Call) Return(_a0 chan service_def.SourceNotification, _a1 error) *BucketTopologySvc_SubscribeToLocalBucketDcpStatsLegacyFeed_Call {
-	_c.Call.Return(_a0, _a1)
-	return _c
-}
-
-func (_c *BucketTopologySvc_SubscribeToLocalBucketDcpStatsLegacyFeed_Call) RunAndReturn(run func(*metadata.ReplicationSpecification, string) (chan service_def.SourceNotification, error)) *BucketTopologySvc_SubscribeToLocalBucketDcpStatsLegacyFeed_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
 // SubscribeToLocalBucketFeed provides a mock function with given fields: spec, subscriberId
 func (_m *BucketTopologySvc) SubscribeToLocalBucketFeed(spec *metadata.ReplicationSpecification, subscriberId string) (chan service_def.SourceNotification, error) {
 	ret := _m.Called(spec, subscriberId)
@@ -442,7 +324,7 @@ func (_c *BucketTopologySvc_SubscribeToLocalBucketHighSeqnosLegacyFeed_Call) Run
 }
 
 // SubscribeToLocalBucketMaxVbCasStatFeed provides a mock function with given fields: spec, subscriberId
-func (_m *BucketTopologySvc) SubscribeToLocalBucketMaxVbCasStatFeed(spec *metadata.ReplicationSpecification, subscriberId string) (chan service_def.SourceNotification, error) {
+func (_m *BucketTopologySvc) SubscribeToLocalBucketMaxVbCasStatFeed(spec *metadata.ReplicationSpecification, subscriberId string) (chan service_def.SourceNotification, chan error, error) {
 	ret := _m.Called(spec, subscriberId)
 
 	if len(ret) == 0 {
@@ -450,8 +332,9 @@ func (_m *BucketTopologySvc) SubscribeToLocalBucketMaxVbCasStatFeed(spec *metada
 	}
 
 	var r0 chan service_def.SourceNotification
-	var r1 error
-	if rf, ok := ret.Get(0).(func(*metadata.ReplicationSpecification, string) (chan service_def.SourceNotification, error)); ok {
+	var r1 chan error
+	var r2 error
+	if rf, ok := ret.Get(0).(func(*metadata.ReplicationSpecification, string) (chan service_def.SourceNotification, chan error, error)); ok {
 		return rf(spec, subscriberId)
 	}
 	if rf, ok := ret.Get(0).(func(*metadata.ReplicationSpecification, string) chan service_def.SourceNotification); ok {
@@ -462,13 +345,21 @@ func (_m *BucketTopologySvc) SubscribeToLocalBucketMaxVbCasStatFeed(spec *metada
 		}
 	}
 
-	if rf, ok := ret.Get(1).(func(*metadata.ReplicationSpecification, string) error); ok {
+	if rf, ok := ret.Get(1).(func(*metadata.ReplicationSpecification, string) chan error); ok {
 		r1 = rf(spec, subscriberId)
 	} else {
-		r1 = ret.Error(1)
+		if ret.Get(1) != nil {
+			r1 = ret.Get(1).(chan error)
+		}
 	}
 
-	return r0, r1
+	if rf, ok := ret.Get(2).(func(*metadata.ReplicationSpecification, string) error); ok {
+		r2 = rf(spec, subscriberId)
+	} else {
+		r2 = ret.Error(2)
+	}
+
+	return r0, r1, r2
 }
 
 // BucketTopologySvc_SubscribeToLocalBucketMaxVbCasStatFeed_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SubscribeToLocalBucketMaxVbCasStatFeed'
@@ -490,12 +381,12 @@ func (_c *BucketTopologySvc_SubscribeToLocalBucketMaxVbCasStatFeed_Call) Run(run
 	return _c
 }
 
-func (_c *BucketTopologySvc_SubscribeToLocalBucketMaxVbCasStatFeed_Call) Return(_a0 chan service_def.SourceNotification, _a1 error) *BucketTopologySvc_SubscribeToLocalBucketMaxVbCasStatFeed_Call {
-	_c.Call.Return(_a0, _a1)
+func (_c *BucketTopologySvc_SubscribeToLocalBucketMaxVbCasStatFeed_Call) Return(_a0 chan service_def.SourceNotification, _a1 chan error, _a2 error) *BucketTopologySvc_SubscribeToLocalBucketMaxVbCasStatFeed_Call {
+	_c.Call.Return(_a0, _a1, _a2)
 	return _c
 }
 
-func (_c *BucketTopologySvc_SubscribeToLocalBucketMaxVbCasStatFeed_Call) RunAndReturn(run func(*metadata.ReplicationSpecification, string) (chan service_def.SourceNotification, error)) *BucketTopologySvc_SubscribeToLocalBucketMaxVbCasStatFeed_Call {
+func (_c *BucketTopologySvc_SubscribeToLocalBucketMaxVbCasStatFeed_Call) RunAndReturn(run func(*metadata.ReplicationSpecification, string) (chan service_def.SourceNotification, chan error, error)) *BucketTopologySvc_SubscribeToLocalBucketMaxVbCasStatFeed_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -560,7 +451,7 @@ func (_c *BucketTopologySvc_SubscribeToRemoteBucketFeed_Call) RunAndReturn(run f
 }
 
 // SubscribeToRemoteKVStatsFeed provides a mock function with given fields: spec, subscriberId
-func (_m *BucketTopologySvc) SubscribeToRemoteKVStatsFeed(spec *metadata.ReplicationSpecification, subscriberId string) (chan service_def.TargetNotification, error) {
+func (_m *BucketTopologySvc) SubscribeToRemoteKVStatsFeed(spec *metadata.ReplicationSpecification, subscriberId string) (chan service_def.TargetNotification, chan error, error) {
 	ret := _m.Called(spec, subscriberId)
 
 	if len(ret) == 0 {
@@ -568,8 +459,9 @@ func (_m *BucketTopologySvc) SubscribeToRemoteKVStatsFeed(spec *metadata.Replica
 	}
 
 	var r0 chan service_def.TargetNotification
-	var r1 error
-	if rf, ok := ret.Get(0).(func(*metadata.ReplicationSpecification, string) (chan service_def.TargetNotification, error)); ok {
+	var r1 chan error
+	var r2 error
+	if rf, ok := ret.Get(0).(func(*metadata.ReplicationSpecification, string) (chan service_def.TargetNotification, chan error, error)); ok {
 		return rf(spec, subscriberId)
 	}
 	if rf, ok := ret.Get(0).(func(*metadata.ReplicationSpecification, string) chan service_def.TargetNotification); ok {
@@ -580,13 +472,21 @@ func (_m *BucketTopologySvc) SubscribeToRemoteKVStatsFeed(spec *metadata.Replica
 		}
 	}
 
-	if rf, ok := ret.Get(1).(func(*metadata.ReplicationSpecification, string) error); ok {
+	if rf, ok := ret.Get(1).(func(*metadata.ReplicationSpecification, string) chan error); ok {
 		r1 = rf(spec, subscriberId)
 	} else {
-		r1 = ret.Error(1)
+		if ret.Get(1) != nil {
+			r1 = ret.Get(1).(chan error)
+		}
 	}
 
-	return r0, r1
+	if rf, ok := ret.Get(2).(func(*metadata.ReplicationSpecification, string) error); ok {
+		r2 = rf(spec, subscriberId)
+	} else {
+		r2 = ret.Error(2)
+	}
+
+	return r0, r1, r2
 }
 
 // BucketTopologySvc_SubscribeToRemoteKVStatsFeed_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SubscribeToRemoteKVStatsFeed'
@@ -608,12 +508,12 @@ func (_c *BucketTopologySvc_SubscribeToRemoteKVStatsFeed_Call) Run(run func(spec
 	return _c
 }
 
-func (_c *BucketTopologySvc_SubscribeToRemoteKVStatsFeed_Call) Return(_a0 chan service_def.TargetNotification, _a1 error) *BucketTopologySvc_SubscribeToRemoteKVStatsFeed_Call {
-	_c.Call.Return(_a0, _a1)
+func (_c *BucketTopologySvc_SubscribeToRemoteKVStatsFeed_Call) Return(_a0 chan service_def.TargetNotification, _a1 chan error, _a2 error) *BucketTopologySvc_SubscribeToRemoteKVStatsFeed_Call {
+	_c.Call.Return(_a0, _a1, _a2)
 	return _c
 }
 
-func (_c *BucketTopologySvc_SubscribeToRemoteKVStatsFeed_Call) RunAndReturn(run func(*metadata.ReplicationSpecification, string) (chan service_def.TargetNotification, error)) *BucketTopologySvc_SubscribeToRemoteKVStatsFeed_Call {
+func (_c *BucketTopologySvc_SubscribeToRemoteKVStatsFeed_Call) RunAndReturn(run func(*metadata.ReplicationSpecification, string) (chan service_def.TargetNotification, chan error, error)) *BucketTopologySvc_SubscribeToRemoteKVStatsFeed_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -708,100 +608,6 @@ func (_c *BucketTopologySvc_UnSubscribeRemoteBucketFeed_Call) Return(_a0 error) 
 }
 
 func (_c *BucketTopologySvc_UnSubscribeRemoteBucketFeed_Call) RunAndReturn(run func(*metadata.ReplicationSpecification, string) error) *BucketTopologySvc_UnSubscribeRemoteBucketFeed_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// UnSubscribeToLocalBucketDcpStatsFeed provides a mock function with given fields: spec, subscriberId
-func (_m *BucketTopologySvc) UnSubscribeToLocalBucketDcpStatsFeed(spec *metadata.ReplicationSpecification, subscriberId string) error {
-	ret := _m.Called(spec, subscriberId)
-
-	if len(ret) == 0 {
-		panic("no return value specified for UnSubscribeToLocalBucketDcpStatsFeed")
-	}
-
-	var r0 error
-	if rf, ok := ret.Get(0).(func(*metadata.ReplicationSpecification, string) error); ok {
-		r0 = rf(spec, subscriberId)
-	} else {
-		r0 = ret.Error(0)
-	}
-
-	return r0
-}
-
-// BucketTopologySvc_UnSubscribeToLocalBucketDcpStatsFeed_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'UnSubscribeToLocalBucketDcpStatsFeed'
-type BucketTopologySvc_UnSubscribeToLocalBucketDcpStatsFeed_Call struct {
-	*mock.Call
-}
-
-// UnSubscribeToLocalBucketDcpStatsFeed is a helper method to define mock.On call
-//   - spec *metadata.ReplicationSpecification
-//   - subscriberId string
-func (_e *BucketTopologySvc_Expecter) UnSubscribeToLocalBucketDcpStatsFeed(spec interface{}, subscriberId interface{}) *BucketTopologySvc_UnSubscribeToLocalBucketDcpStatsFeed_Call {
-	return &BucketTopologySvc_UnSubscribeToLocalBucketDcpStatsFeed_Call{Call: _e.mock.On("UnSubscribeToLocalBucketDcpStatsFeed", spec, subscriberId)}
-}
-
-func (_c *BucketTopologySvc_UnSubscribeToLocalBucketDcpStatsFeed_Call) Run(run func(spec *metadata.ReplicationSpecification, subscriberId string)) *BucketTopologySvc_UnSubscribeToLocalBucketDcpStatsFeed_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(*metadata.ReplicationSpecification), args[1].(string))
-	})
-	return _c
-}
-
-func (_c *BucketTopologySvc_UnSubscribeToLocalBucketDcpStatsFeed_Call) Return(_a0 error) *BucketTopologySvc_UnSubscribeToLocalBucketDcpStatsFeed_Call {
-	_c.Call.Return(_a0)
-	return _c
-}
-
-func (_c *BucketTopologySvc_UnSubscribeToLocalBucketDcpStatsFeed_Call) RunAndReturn(run func(*metadata.ReplicationSpecification, string) error) *BucketTopologySvc_UnSubscribeToLocalBucketDcpStatsFeed_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// UnSubscribeToLocalBucketDcpStatsLegacyFeed provides a mock function with given fields: spec, subscriberId
-func (_m *BucketTopologySvc) UnSubscribeToLocalBucketDcpStatsLegacyFeed(spec *metadata.ReplicationSpecification, subscriberId string) error {
-	ret := _m.Called(spec, subscriberId)
-
-	if len(ret) == 0 {
-		panic("no return value specified for UnSubscribeToLocalBucketDcpStatsLegacyFeed")
-	}
-
-	var r0 error
-	if rf, ok := ret.Get(0).(func(*metadata.ReplicationSpecification, string) error); ok {
-		r0 = rf(spec, subscriberId)
-	} else {
-		r0 = ret.Error(0)
-	}
-
-	return r0
-}
-
-// BucketTopologySvc_UnSubscribeToLocalBucketDcpStatsLegacyFeed_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'UnSubscribeToLocalBucketDcpStatsLegacyFeed'
-type BucketTopologySvc_UnSubscribeToLocalBucketDcpStatsLegacyFeed_Call struct {
-	*mock.Call
-}
-
-// UnSubscribeToLocalBucketDcpStatsLegacyFeed is a helper method to define mock.On call
-//   - spec *metadata.ReplicationSpecification
-//   - subscriberId string
-func (_e *BucketTopologySvc_Expecter) UnSubscribeToLocalBucketDcpStatsLegacyFeed(spec interface{}, subscriberId interface{}) *BucketTopologySvc_UnSubscribeToLocalBucketDcpStatsLegacyFeed_Call {
-	return &BucketTopologySvc_UnSubscribeToLocalBucketDcpStatsLegacyFeed_Call{Call: _e.mock.On("UnSubscribeToLocalBucketDcpStatsLegacyFeed", spec, subscriberId)}
-}
-
-func (_c *BucketTopologySvc_UnSubscribeToLocalBucketDcpStatsLegacyFeed_Call) Run(run func(spec *metadata.ReplicationSpecification, subscriberId string)) *BucketTopologySvc_UnSubscribeToLocalBucketDcpStatsLegacyFeed_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(*metadata.ReplicationSpecification), args[1].(string))
-	})
-	return _c
-}
-
-func (_c *BucketTopologySvc_UnSubscribeToLocalBucketDcpStatsLegacyFeed_Call) Return(_a0 error) *BucketTopologySvc_UnSubscribeToLocalBucketDcpStatsLegacyFeed_Call {
-	_c.Call.Return(_a0)
-	return _c
-}
-
-func (_c *BucketTopologySvc_UnSubscribeToLocalBucketDcpStatsLegacyFeed_Call) RunAndReturn(run func(*metadata.ReplicationSpecification, string) error) *BucketTopologySvc_UnSubscribeToLocalBucketDcpStatsLegacyFeed_Call {
 	_c.Call.Return(run)
 	return _c
 }
