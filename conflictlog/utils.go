@@ -15,15 +15,15 @@ func LoggerForRules(conflictLoggingMap base.ConflictLoggingMappingInput, replId 
 		return nil, fmt.Errorf("nil conflictLoggingMap")
 	}
 
-	conflictLoggingEnabled := conflictLoggingMap.Enabled()
-	if !conflictLoggingEnabled {
+	conflictLoggingNotDisabled := !conflictLoggingMap.Disabled()
+	if !conflictLoggingNotDisabled {
 		logger.Infof("Conflict logger will be off for pipeline=%s, with input=%v", replId, conflictLoggingMap)
-		return nil, fmt.Errorf("conflict logging disabled with input %v", conflictLoggingMap)
+		return nil, nil
 	}
 
-	var rules *Rules
+	var rules *base.ConflictLogRules
 	var err error
-	rules, err = ParseRules(conflictLoggingMap)
+	rules, err = base.ParseConflictLogRules(conflictLoggingMap)
 	if err != nil {
 		return nil, fmt.Errorf("error converting %v to rules, err=%v", conflictLoggingMap, err)
 	}

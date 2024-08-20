@@ -3149,10 +3149,6 @@ func ParseConflictLoggingInputType(in interface{}) (ConflictLoggingMappingInput,
 	return out, ok
 }
 
-func (clm ConflictLoggingMappingInput) Enabled() bool {
-	return !clm.Disabled()
-}
-
 func (clm ConflictLoggingMappingInput) Disabled() bool {
 	return ConflictLoggingOff.Same(clm)
 }
@@ -3209,76 +3205,6 @@ func (clm ConflictLoggingMappingInput) Same(otherClm ConflictLoggingMappingInput
 	return true
 }
 
-// should be in sync with conflictlog.ParseRules
-func (clm ConflictLoggingMappingInput) ValidateConflictLoggingMapValues() (err error) {
-	if clm == nil {
-		// can be {}, but not nil
-		err = fmt.Errorf("nil conflict logging map")
-		return
-	}
-
-	if len(clm) == 0 {
-		// {} means disabled, which is ok
-		return
-	}
-
-	fallbackTarget, err := ParseConflictLoggingTarget(clm)
-	if err != nil {
-		return
-	}
-
-	if !fallbackTarget.IsComplete() {
-		err = fmt.Errorf("incomplete target")
-		return
-	}
-
-	loggingRulesObj, ok := clm[CLLoggingRulesKey]
-	if !ok || loggingRulesObj == nil {
-		return
-	}
-
-	loggingRulesMap, ok := loggingRulesObj.(map[string]interface{})
-	if !ok {
-		err = fmt.Errorf("invalid logging rules")
-		return
-	}
-
-	for collectionStr, targetObj := range loggingRulesMap {
-		if collectionStr == "" {
-			err = fmt.Errorf("invalid collection for logging rules")
-			return
-		}
-
-		_, err = NewOptionalCollectionNamespaceFromString(collectionStr)
-		if err != nil {
-			err = fmt.Errorf("invalid collection for logging rules")
-			return
-		}
-
-		if targetObj != nil {
-			targetMap, ok := targetObj.(map[string]interface{})
-			if !ok {
-				err = fmt.Errorf("invalid target for logging rules")
-				return err
-			}
-
-			if len(targetMap) > 0 {
-				target, err := ParseConflictLoggingTarget(targetMap)
-				if err != nil {
-					return err
-				}
-
-				if !target.IsComplete() {
-					err = fmt.Errorf("incomplete target for logging rules")
-					return err
-				}
-			}
-		}
-	}
-
-	return nil
-}
-
 func ValidateAndConvertJsonMapToConflictLoggingMapping(value string) (ConflictLoggingMappingInput, error) {
 	if value == "null" || value == "nil" {
 		// "nil" is not a accepted value. {} is the smallest input.
@@ -3301,10 +3227,10 @@ func ValidateAndConvertJsonMapToConflictLoggingMapping(value string) (ConflictLo
 
 	conflictLoggingMap := ConflictLoggingMappingInput(jsonMap)
 
-	// validate if input is valid
-	err = conflictLoggingMap.ValidateConflictLoggingMapValues()
+	// validate if input is semantically valid
+	_, err = ParseConflictLogRules(conflictLoggingMap)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error parsing conflict logging input %v to rules, err=%v", conflictLoggingMap, err)
 	}
 
 	return conflictLoggingMap, nil
@@ -3317,79 +3243,4 @@ type ConflictLoggerHandle interface {
 	// The finch is the caller's finch. If the caller
 	// wants to exit early then the Wait will unblock as well
 	Wait(finch chan bool) error
-}
-
-// ConflictLoggingTarget describes the target bucket, scope and collection where
-// the conflicts will be logged. There are few terms:
-// Complete => The triplet (Bucket, Scope, Collection) are populated
-// Empty => All components of the triplet are empty
-type ConflictLoggingTarget struct {
-	// Bucket is the conflict bucket
-	Bucket string `json:"bucket"`
-
-	// NS is namespace which defines scope and collection
-	NS CollectionNamespace `json:"ns"`
-}
-
-func (t ConflictLoggingTarget) String() string {
-	return fmt.Sprintf("%v.%v.%v", t.Bucket, t.NS.ScopeName, t.NS.CollectionName)
-}
-
-func NewConflictLoggingTarget(bucket, scope, collection string) ConflictLoggingTarget {
-	return ConflictLoggingTarget{
-		Bucket: bucket,
-		NS: CollectionNamespace{
-			ScopeName:      scope,
-			CollectionName: collection,
-		},
-	}
-}
-
-func (t ConflictLoggingTarget) IsEmpty() bool {
-	return t.Bucket == "" && t.NS.IsEmpty()
-}
-
-// IsComplete implies that all components of the triplet (bucket, scope & collection)
-// are populated
-func (t ConflictLoggingTarget) IsComplete() bool {
-	return t.Bucket != "" && t.NS.ScopeName != "" && t.NS.CollectionName != ""
-}
-
-func (t ConflictLoggingTarget) SameAs(other ConflictLoggingTarget) bool {
-	return t.Bucket == other.Bucket && t.NS.IsSameAs(other.NS)
-}
-
-func ParseString(o interface{}) (ok bool, val string) {
-	if o == nil {
-		return
-	}
-	val, ok = o.(string)
-	return
-}
-
-func ParseConflictLoggingTarget(m map[string]interface{}) (t ConflictLoggingTarget, err error) {
-	if len(m) == 0 {
-		return
-	}
-
-	bucketObj, ok := m[CLBucketKey]
-	if ok {
-		ok, s := ParseString(bucketObj)
-		if ok {
-			t.Bucket = s
-		}
-	}
-
-	collectionObj, ok := m[CLCollectionKey]
-	if ok {
-		ok, s := ParseString(collectionObj)
-		if ok {
-			t.NS, err = NewCollectionNamespaceFromString(s)
-		} else {
-			err = fmt.Errorf("invalid collection value")
-			return
-		}
-	}
-
-	return
 }

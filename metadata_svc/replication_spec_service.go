@@ -709,7 +709,7 @@ func (service *ReplicationSpecService) validateReplicationSettingsLocal(errorMap
 	service.appendGoMaxProcsWarnings(sourceBucket, targetClusterRef, targetBucket, warnings, settings)
 
 	conflictLoggingMap, conflictLoggingMapExists := base.ParseConflictLoggingInputType(settings[metadata.ConflictLoggingKey])
-	if conflictLoggingMapExists && conflictLoggingMap.Enabled() {
+	if conflictLoggingMapExists && !conflictLoggingMap.Disabled() {
 		// Conflict logging is on. Make sure source bucket enableCrossClusterVersioning is true.
 		connstr, err := service.xdcr_comp_topology_svc.MyConnectionStr()
 		if err != nil {
@@ -788,7 +788,7 @@ func (service *ReplicationSpecService) validateReplicationSettingsRemote(errorMa
 	}
 
 	conflictLoggingMap, conflictLoggingMapExists := base.ParseConflictLoggingInputType(settings[metadata.ConflictLoggingKey])
-	if conflictLoggingMapExists && conflictLoggingMap.Enabled() {
+	if conflictLoggingMapExists && !conflictLoggingMap.Disabled() {
 		// Conflict logging is on. Make sure target bucket enableCrossClusterVersioning is true.
 		crossClusterVer, err := service.utils.GetCrossClusterVersioningFromBucketInfo(targetBucketInfo)
 		if err != nil {

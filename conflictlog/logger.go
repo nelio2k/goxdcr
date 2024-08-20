@@ -25,7 +25,7 @@ type Logger interface {
 
 	// UpdateRules allow updates to the the rules which map
 	// the conflict to the target conflict bucket
-	UpdateRules(*Rules) error
+	UpdateRules(*base.ConflictLogRules) error
 
 	// Closes the logger. Hence forth the logger will error out
 	Close() error
@@ -33,7 +33,7 @@ type Logger interface {
 
 // LoggerOptions defines optional args for a logger implementation
 type LoggerOptions struct {
-	rules                *Rules
+	rules                *base.ConflictLogRules
 	mapper               Mapper
 	logQueueCap          int
 	workerCount          int
@@ -56,7 +56,7 @@ func (l *LoggerOptions) String() string {
 	return b.String()
 }
 
-func WithRules(r *Rules) LoggerOpt {
+func WithRules(r *base.ConflictLogRules) LoggerOpt {
 	return func(o *LoggerOptions) {
 		o.rules = r
 	}
@@ -104,7 +104,7 @@ func WithSetMetaTimeout(val time.Duration) LoggerOpt {
 	}
 }
 
-func (o *LoggerOptions) SetRules(rules *Rules) {
+func (o *LoggerOptions) SetRules(rules *base.ConflictLogRules) {
 	o.rules = rules
 }
 

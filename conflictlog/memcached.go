@@ -112,7 +112,7 @@ func (conn *MemcachedConn) Id() int64 {
 // getCollectionId first attempts to get the collectionId from the cache (if checkCache=true). If not found then
 // it attempt to fetch it from the cluster using the same memcached connection. checkCache=false is generally used
 // when we know that the value is cache is stale and a fresh one has to be fetched.
-func (m *MemcachedConn) getCollectionId(conn *mcc.Client, target base.ConflictLoggingTarget, checkCache bool) (collId uint32, err error) {
+func (m *MemcachedConn) getCollectionId(conn *mcc.Client, target base.ConflictLogTarget, checkCache bool) (collId uint32, err error) {
 	var ok bool
 
 	if checkCache {
@@ -242,7 +242,7 @@ func (m *MemcachedConn) getConnByVB(vbno uint16, replicaNum int) (conn *mcc.Clie
 	return
 }
 
-func (m *MemcachedConn) SetMeta(key string, body []byte, dataType uint8, target base.ConflictLoggingTarget) (err error) {
+func (m *MemcachedConn) SetMeta(key string, body []byte, dataType uint8, target base.ConflictLogTarget) (err error) {
 	checkCache := true
 	var collId uint32
 	vbNo := base.GetVBucketNo(key, 1024)

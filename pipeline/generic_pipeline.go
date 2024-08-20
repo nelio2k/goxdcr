@@ -1189,7 +1189,7 @@ func (genericPipeline *GenericPipeline) updateConflictLoggingRules(settings meta
 		return
 	}
 
-	conflictLoggingEnabled = conflictLoggingMap.Enabled()
+	conflictLoggingEnabled = !conflictLoggingMap.Disabled()
 
 	genericPipeline.conflictLoggerMtx.Lock()
 	defer genericPipeline.conflictLoggerMtx.Unlock()
@@ -1197,7 +1197,7 @@ func (genericPipeline *GenericPipeline) updateConflictLoggingRules(settings meta
 	// Option 1: logger needs to be enabled
 	if conflictLoggingEnabled {
 		// compute the "rules"
-		newRules, err := conflictlog.ParseRules(conflictLoggingMap)
+		newRules, err := base.ParseConflictLogRules(conflictLoggingMap)
 		if err != nil || newRules == nil {
 			genericPipeline.logger.Errorf("error converting %v to new conflict logging rules, ignoring the input and continuing with old rules. err=%v",
 				conflictLoggingMap, err)

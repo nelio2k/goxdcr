@@ -35,7 +35,7 @@ type ConflictLogLoadTest struct {
 
 type ConflictLoggerOptions struct {
 	// Target is the target conflict bucket details
-	Target base.ConflictLoggingTarget `json:"target"`
+	Target base.ConflictLogTarget `json:"target"`
 
 	// DocSizeRange is the min and max size in bytes of the source & target documents
 	// in a conflict

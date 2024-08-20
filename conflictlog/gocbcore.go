@@ -95,7 +95,7 @@ func (conn *gocbCoreConn) Bucket() string {
 	return conn.bucketName
 }
 
-func (conn *gocbCoreConn) SetMeta(key string, body []byte, dataType uint8, target base.ConflictLoggingTarget) (err error) {
+func (conn *gocbCoreConn) SetMeta(key string, body []byte, dataType uint8, target base.ConflictLogTarget) (err error) {
 	//conn.logger.Infof("writing id=%d key=%s bodyLen=%d", conn.id, key, len(body))
 
 	ch := make(chan error)

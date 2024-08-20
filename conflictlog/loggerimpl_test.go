@@ -32,7 +32,7 @@ func (f *fakeConnection) Close() error {
 	return nil
 }
 
-func (f *fakeConnection) SetMeta(key string, val []byte, dataType uint8, target base.ConflictLoggingTarget) (err error) {
+func (f *fakeConnection) SetMeta(key string, val []byte, dataType uint8, target base.ConflictLogTarget) (err error) {
 	if f.sleep != nil {
 		time.Sleep(*f.sleep)
 	}
@@ -56,8 +56,8 @@ func TestLoggerImpl_closeWithOutstandingRequest(t *testing.T) {
 	l, err := newLoggerImpl(nil, "1234", utils, pool, WithCapacity(20))
 	require.Nil(t, err)
 
-	l.UpdateRules(&Rules{
-		Target: base.NewConflictLoggingTarget("B1", "S1", "C1"),
+	l.UpdateRules(&base.ConflictLogRules{
+		Target: base.NewConflictLogTarget("B1", "S1", "C1"),
 	})
 
 	handles := []base.ConflictLoggerHandle{}

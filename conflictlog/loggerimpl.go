@@ -215,7 +215,7 @@ func (l *loggerImpl) UpdateWorkerCount(newCount int) {
 }
 
 // r should be non-nil
-func (l *loggerImpl) UpdateRules(r *Rules) (err error) {
+func (l *loggerImpl) UpdateRules(r *base.ConflictLogRules) (err error) {
 	if r == nil {
 		err = ErrEmptyRules
 		return
@@ -256,7 +256,7 @@ func (l *loggerImpl) worker() {
 	}
 }
 
-func (l *loggerImpl) getTarget(rec *ConflictRecord) (t base.ConflictLoggingTarget, err error) {
+func (l *loggerImpl) getTarget(rec *ConflictRecord) (t base.ConflictLogTarget, err error) {
 	l.rulesLock.RLock()
 	defer l.rulesLock.RUnlock()
 
@@ -284,7 +284,7 @@ func (l *loggerImpl) getFromPool(bucketName string) (conn Connection, err error)
 }
 
 // setMetaTimeout is a wrapper on Connection's SetMeta using the timeout configured with the logger
-func (l *loggerImpl) setMetaTimeout(conn Connection, key string, body []byte, dataType uint8, target base.ConflictLoggingTarget) error {
+func (l *loggerImpl) setMetaTimeout(conn Connection, key string, body []byte, dataType uint8, target base.ConflictLogTarget) error {
 	resultCh := make(chan error, 1)
 	go func() {
 		err := conn.SetMeta(key, body, dataType, target)
@@ -302,7 +302,7 @@ func (l *loggerImpl) setMetaTimeout(conn Connection, key string, body []byte, da
 	}
 }
 
-func (l *loggerImpl) writeDocs(req logRequest, target base.ConflictLoggingTarget) (err error) {
+func (l *loggerImpl) writeDocs(req logRequest, target base.ConflictLogTarget) (err error) {
 
 	// Write source document.
 	err = l.writeDocRetry(target.Bucket, func(conn Connection) error {
@@ -382,12 +382,17 @@ func (l *loggerImpl) writeDocRetry(bucketName string, fn func(conn Connection) e
 func (l *loggerImpl) processReq(req logRequest) error {
 	var err error
 
-	err = req.conflictRec.PopulateData(l.replId)
+	target, err := l.getTarget(req.conflictRec)
 	if err != nil {
 		return err
 	}
 
-	target, err := l.getTarget(req.conflictRec)
+	if target.IsBlacklistTarget() {
+		// this conflict shouldn't be logged.
+		return nil
+	}
+
+	err = req.conflictRec.PopulateData(l.replId)
 	if err != nil {
 		return err
 	}
