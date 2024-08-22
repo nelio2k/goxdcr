@@ -10,15 +10,15 @@ import (
 type LoggerGetter func() Logger
 
 // returns a logger only if non-null rules are parsed without any errors.
-func LoggerForRules(conflictLoggingMap base.ConflictLoggingMappingInput, replId string, logger_ctx *log.LoggerContext, logger *log.CommonLogger) (Logger, error) {
+func NewLoggerWithRules(conflictLoggingMap base.ConflictLoggingMappingInput, replId string, logger_ctx *log.LoggerContext, logger *log.CommonLogger) (Logger, error) {
 	if conflictLoggingMap == nil {
 		return nil, fmt.Errorf("nil conflictLoggingMap")
 	}
 
-	conflictLoggingNotDisabled := !conflictLoggingMap.Disabled()
-	if !conflictLoggingNotDisabled {
+	conflictLoggingEnabled := !conflictLoggingMap.Disabled()
+	if !conflictLoggingEnabled {
 		logger.Infof("Conflict logger will be off for pipeline=%s, with input=%v", replId, conflictLoggingMap)
-		return nil, nil
+		return nil, ErrConflictLoggingIsOff
 	}
 
 	var rules *base.ConflictLogRules
@@ -54,6 +54,44 @@ func LoggerForRules(conflictLoggingMap base.ConflictLoggingMappingInput, replId 
 	logger.Infof("Conflict logger will be on for pipeline=%s, with rules=%s for input=%v", replId, rules, conflictLoggingMap)
 
 	return conflictLogger, nil
+}
+
+// updates the input logger with the new rules,
+// only if non-null rules are parsed without any errors.
+func UpdateLoggerWithRules(conflictLoggingMap base.ConflictLoggingMappingInput, exisitingLogger Logger, replId string, logger *log.CommonLogger) error {
+	if exisitingLogger == nil {
+		return fmt.Errorf("nil logger, quit updating")
+	}
+
+	if conflictLoggingMap == nil {
+		return fmt.Errorf("nil conflictLoggingMap")
+	}
+
+	conflictLoggingEnabled := !conflictLoggingMap.Disabled()
+	if !conflictLoggingEnabled {
+		logger.Infof("Conflict logger will be off with input=%v", conflictLoggingMap)
+		return ErrConflictLoggingIsOff
+	}
+
+	var rules *base.ConflictLogRules
+	var err error
+	rules, err = base.ParseConflictLogRules(conflictLoggingMap)
+	if err != nil {
+		return fmt.Errorf("error converting %v to rules, err=%v", conflictLoggingMap, err)
+	}
+
+	if rules == nil {
+		return fmt.Errorf("%v maps to nil rules", conflictLoggingMap)
+	}
+
+	err = exisitingLogger.UpdateRules(rules)
+	if err != nil {
+		return fmt.Errorf("error updating %s rules, err=%v", rules, err)
+	}
+
+	logger.Infof("Conflict logger updated for pipeline=%s, with rules=%s for input=%v", replId, rules, conflictLoggingMap)
+
+	return nil
 }
 
 // Inserts "_xdcr_conflict": true to the input byte slice.

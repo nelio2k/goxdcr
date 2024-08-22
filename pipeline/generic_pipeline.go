@@ -1166,15 +1166,13 @@ func (genericPipeline *GenericPipeline) updatePipelineSettings(settings metadata
 }
 
 func (genericPipeline *GenericPipeline) updateConflictLoggingRules(settings metadata.ReplicationSettingsMap) {
-	var conflictLoggingEnabled bool
-	var conflictLoggingMap base.ConflictLoggingMappingInput
 	conflictLoggingIn, ok := settings[base.ConflictLoggingKey]
 	if !ok {
 		// just didn't have this setting as update - no need to warn.
 		return
 	}
 
-	conflictLoggingMap, ok = base.ParseConflictLoggingInputType(conflictLoggingIn)
+	conflictLoggingMap, ok := base.ParseConflictLoggingInputType(conflictLoggingIn)
 	if !ok {
 		// wrong type
 		genericPipeline.logger.Errorf("conflict map %v as input, is of invalid type %v. Ignoring the update",
@@ -1189,70 +1187,47 @@ func (genericPipeline *GenericPipeline) updateConflictLoggingRules(settings meta
 		return
 	}
 
-	conflictLoggingEnabled = !conflictLoggingMap.Disabled()
+	conflictLoggingEnabled := !conflictLoggingMap.Disabled()
+	spec := genericPipeline.spec.GetReplicationSpec()
 
 	genericPipeline.conflictLoggerMtx.Lock()
 	defer genericPipeline.conflictLoggerMtx.Unlock()
 
-	// Option 1: logger needs to be enabled
+	// the conflict logger instance will be nil
+	// if conflict logging feature is off right now for this pipeline.
+	conflictLoggingIsOff := genericPipeline.conflictLogger == nil
+
+	// Option 1: conflict logging needs to be enabled
 	if conflictLoggingEnabled {
-		// compute the "rules"
-		newRules, err := base.ParseConflictLogRules(conflictLoggingMap)
-		if err != nil || newRules == nil {
-			genericPipeline.logger.Errorf("error converting %v to new conflict logging rules, ignoring the input and continuing with old rules. err=%v",
+		if conflictLoggingIsOff {
+			// Option 1a: conflict logging needs to be enabled, but it is off right now.
+			newConflictLogger, err := conflictlog.NewLoggerWithRules(conflictLoggingMap, spec.UniqueId(), genericPipeline.logger.LoggerContext(), genericPipeline.logger)
+			if err != nil {
+				genericPipeline.logger.Errorf("error creating a conflict logger for new rules, ignoring input %v and continuing with old rules. err=%v", conflictLoggingMap, err)
+				return
+			}
+			genericPipeline.conflictLogger = newConflictLogger
+			return
+		}
+
+		// Option 1b: conflict logging needs to be enabled, but it is on right now.
+		err := conflictlog.UpdateLoggerWithRules(conflictLoggingMap, genericPipeline.conflictLogger, spec.UniqueId(), genericPipeline.logger)
+		if err != nil {
+			genericPipeline.logger.Errorf("error updating existing conflict logging rules, ignoring %v and continuing with old rules. err=%v",
 				conflictLoggingMap, err)
 			return
 		}
-
-		// Option 1a: a logger already existed, just update it with the new rules
-		if genericPipeline.conflictLogger != nil {
-			err = genericPipeline.conflictLogger.UpdateRules(newRules)
-			if err != nil {
-				genericPipeline.logger.Errorf("error updating existing conflict logging rules to new rules %s, ignoring %v and continuing with old rules. err=%v",
-					newRules, conflictLoggingMap, err)
-				return
-			}
-			genericPipeline.logger.Infof("updated conflict logging rules to %s with input %v",
-				newRules, conflictLoggingMap)
-			return
-		}
-
-		// Option 1b: a logger doesn't exist, create a new one with the input rules.
-		clm, err := conflictlog.GetManager()
-		if err != nil {
-			genericPipeline.logger.Errorf("error getting conflict logging manager to update to new rules %s, ignoring input %v and continuing with old rules. err=%v",
-				newRules, conflictLoggingMap, err)
-			return
-		}
-
-		spec := genericPipeline.spec.GetReplicationSpec()
-		logger := log.NewLogger(conflictlog.ConflictLoggerName, genericPipeline.logger.LoggerContext())
-
-		newConflictLogger, err := clm.NewLogger(
-			logger,
-			spec.UniqueId(),
-			conflictlog.WithMapper(conflictlog.NewConflictMapper(logger)),
-			conflictlog.WithCapacity(1000), // SUMUKH TODO - make the default size configurable.
-			conflictlog.WithRules(newRules),
-		)
-		if err != nil {
-			genericPipeline.logger.Errorf("error initialising a conflict logger for new rules %s, ignoring input %v and continuing with old rules. err=%v", newRules, conflictLoggingMap, err)
-			return
-		}
-
-		genericPipeline.conflictLogger = newConflictLogger
-		genericPipeline.logger.Infof("created conflict logger with rules %s with input %v", newRules, conflictLoggingMap)
 		return
 	}
 
-	// Option 2: logger is to be disabled.
-	if genericPipeline.conflictLogger == nil {
-		// Option 2a: logger is already disabled.
+	// Option 2: conflict logging is to be disabled.
+	if conflictLoggingIsOff {
+		// Option 2a: conflict logging needs to be disabled, but is already disabled right now.
 		genericPipeline.logger.Infof("conflict logger already disabled and will remain disabled with input %v", conflictLoggingMap)
 		return
 	}
 
-	// Option 2b: logger is currently enabled, disable it.
+	// Option 2b: conflict logging is on right now and is to be disabled.
 	err := genericPipeline.conflictLogger.Close()
 	if err != nil {
 		genericPipeline.logger.Errorf("error closing conflict logger with input %v, err=%v", conflictLoggingMap, err)

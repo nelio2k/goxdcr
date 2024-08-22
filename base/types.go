@@ -3150,6 +3150,19 @@ func ParseConflictLoggingInputType(in interface{}) (ConflictLoggingMappingInput,
 }
 
 func (clm ConflictLoggingMappingInput) Disabled() bool {
+	// check explicitly for "disabled" key first.
+	if clm != nil {
+		disabledVal, ok := clm[CLDisabledKey]
+		if ok {
+			disabled, ok := disabledVal.(bool)
+			if ok {
+				return disabled
+			}
+		}
+	}
+
+	// if there is no "disabled" key or is of invalid type/value,
+	// then check if the mapping itself is a ConflictLoggingOff value.
 	return ConflictLoggingOff.Same(clm)
 }
 

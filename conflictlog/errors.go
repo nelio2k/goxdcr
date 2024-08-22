@@ -15,4 +15,5 @@ var (
 	ErrNotMyBucket           error = errors.New("not my bucket")
 	ErrConnPoolGetTimeout    error = errors.New("conflict logging pool get timedout")
 	ErrSetMetaTimeout        error = errors.New("conflict logging SetMeta timedout")
+	ErrConflictLoggingIsOff  error = errors.New("conflict logging is off")
 )

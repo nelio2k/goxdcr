@@ -1522,6 +1522,7 @@ const (
 	CLBucketKey        string = "bucket"
 	CLCollectionKey    string = "collection"
 	CLLoggingRulesKey  string = "loggingRules"
+	CLDisabledKey      string = "disabled"
 )
 
 // simple keys inside conflict logging mapping. It excludes loggingRules key.

@@ -331,8 +331,8 @@ func (xdcrf *XDCRFactory) newPipelineCommon(topic string, pipelineType common.Pi
 	progress_recorder(common.ProgressNozzlesWired)
 
 	conflictLoggingMap := spec.Settings.GetConflictLoggingMapping()
-	conflictLogger, err := conflictlog.LoggerForRules(conflictLoggingMap, spec.UniqueId(), logger_ctx, xdcrf.logger)
-	if err != nil {
+	conflictLogger, err := conflictlog.NewLoggerWithRules(conflictLoggingMap, spec.UniqueId(), logger_ctx, xdcrf.logger)
+	if err != nil && err != conflictlog.ErrConflictLoggingIsOff {
 		// log the error and continue to create pipeline.
 		xdcrf.logger.Errorf("Error initialising new logger for conflict logging with input=%v, err=%v", conflictLoggingMap, err)
 	}
