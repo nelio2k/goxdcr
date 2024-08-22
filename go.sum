@@ -65,6 +65,8 @@ github.com/couchbase/go-couchbase v0.1.1 h1:ClFXELcKj/ojyoTYbsY34QUrrYCBi/1G749s
 github.com/couchbase/go-couchbase v0.1.1/go.mod h1:+/bddYDxXsf9qt0xpDUtRR47A2GjaXmGGAqQ/k3GJ8A=
 github.com/couchbase/go_json v0.0.0-20220330123059-4473a21887c8 h1:hn5GPc8cOEPj8fxfWHjxLwzlBrMUuU0OhA79WKyIE9k=
 github.com/couchbase/go_json v0.0.0-20220330123059-4473a21887c8/go.mod h1:1xwhLcrm2GkYUcq4NZKlyxFZALR8O0yZQTSEaKDw1L8=
+github.com/couchbase/gocb/v2 v2.2.5 h1:nD6Gvm52myMt1BETAujMwZtjIAyhWroXcp7Nwg/u4Hk=
+github.com/couchbase/gocb/v2 v2.2.5/go.mod h1:0mDbAX4DQ+bsqUgga2aUcdwRpEx6HzO0xSuyq+DTTI8=
 github.com/couchbase/gocb/v2 v2.5.4 h1:7aWoVvg/C6OL3QZyZXzTNuMLbtYhipJV/QOkyqR4jqY=
 github.com/couchbase/gocb/v2 v2.5.4/go.mod h1:alZpkl4KFJc9fhCmeftbIewDdQiIh5hoMUpjiE+dM2g=
 github.com/couchbase/gocbcore/v10 v10.1.6/go.mod h1:qkPnOBziCs0guMEEvd0cRFo+AjOW0yEL99cU3I4n3Ao=
@@ -430,6 +432,8 @@ golang.org/x/sys v0.17.0/go.mod h1:/VUhepiaJMQUp4+oa/7Zr1D23ma6VTLIYjOOTFZPUcA=
 golang.org/x/sys v0.20.0/go.mod h1:/VUhepiaJMQUp4+oa/7Zr1D23ma6VTLIYjOOTFZPUcA=
 golang.org/x/sys v0.22.0 h1:RI27ohtqKCnwULzJLqkv897zojh5/DwS/ENaMzUOaWI=
 golang.org/x/sys v0.22.0/go.mod h1:/VUhepiaJMQUp4+oa/7Zr1D23ma6VTLIYjOOTFZPUcA=
+golang.org/x/sys v0.23.0 h1:YfKFowiIMvtgl1UERQoTPPToxltDeZfbj4H7dVUCwmM=
+golang.org/x/sys v0.23.0/go.mod h1:/VUhepiaJMQUp4+oa/7Zr1D23ma6VTLIYjOOTFZPUcA=
 golang.org/x/telemetry v0.0.0-20240228155512-f48c80bd79b2/go.mod h1:TeRTkGYfJXctD9OcfyVLyj2J3IxLnKwHJR8f4D8a3YE=
 golang.org/x/term v0.0.0-20201126162022-7de9c90e9dd1/go.mod h1:bj7SfCRtBDWHUb9snDiAeCFNEtKQo2Wmx5Cou7ajbmo=
 golang.org/x/term v0.0.0-20210927222741-03fcf44c2211/go.mod h1:jbD1KX2456YbFQfuXm/mYQcufACuNUgVhRMnK/tPxf8=
