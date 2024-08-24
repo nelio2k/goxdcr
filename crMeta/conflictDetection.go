@@ -61,7 +61,7 @@ func DetectConflict(source *CRMetadata, target *CRMetadata) (ConflictDetectionRe
 	}
 
 	c1 := sourceHLV.Contains(targetHLV)
-	c2 := sourceHLV.Contains(targetHLV)
+	c2 := targetHLV.Contains(sourceHLV)
 	if c1 && c2 {
 		return CDEqual, nil
 	} else if c1 {
