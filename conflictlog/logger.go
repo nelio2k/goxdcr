@@ -41,6 +41,7 @@ type LoggerOptions struct {
 	networkRetryInterval time.Duration
 	poolGetTimeout       time.Duration
 	setMetaTimeout       time.Duration
+	skipTlsVerify        bool
 }
 
 func (l *LoggerOptions) String() string {
@@ -51,7 +52,8 @@ func (l *LoggerOptions) String() string {
 	b.WriteString(fmt.Sprintf("networkRetryCount:%d,", l.networkRetryCount))
 	b.WriteString(fmt.Sprintf("networkRetryInterval:%s,", l.networkRetryInterval))
 	b.WriteString(fmt.Sprintf("poolGetTimeout:%s,", l.poolGetTimeout))
-	b.WriteString(fmt.Sprintf("setMetaTimeout:%s", l.setMetaTimeout))
+	b.WriteString(fmt.Sprintf("setMetaTimeout:%s,", l.setMetaTimeout))
+	b.WriteString(fmt.Sprintf("skipTlsVerify:%v", l.skipTlsVerify))
 
 	return b.String()
 }
@@ -101,6 +103,12 @@ func WithPoolGetTimeout(val time.Duration) LoggerOpt {
 func WithSetMetaTimeout(val time.Duration) LoggerOpt {
 	return func(o *LoggerOptions) {
 		o.setMetaTimeout = val
+	}
+}
+
+func WithSkipTlsVerify(v bool) LoggerOpt {
+	return func(o *LoggerOptions) {
+		o.skipTlsVerify = v
 	}
 }
 

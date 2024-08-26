@@ -4,59 +4,27 @@
     "debugPort": 7171,
     "memcachedAddr": "127.0.0.1:12000",
 
+    "clientCertFile": "/Users/sudeepjathar/cb/clog/ns_server/data/n_0/config/certs/client_chain.pem",
+    "clientKeyFile":  "/Users/sudeepjathar/cb/clog/ns_server/data/n_0/config/certs/client_pkey.pem",
+    "clusterCAFile":  "/Users/sudeepjathar/cb/clog/ns_server/data/n_0/config/certs/ca.pem",
+
+    "encryptionLevelStrict": true,
+
     "conflictLogLoadTest": {
         "connType": "memcached",
         "connLimit": 1,
         "loggers": {
             "logger-1": {
-                "docLoadCount": 100000,
+                "docLoadCount": 100,
                 "xmemCount": 4,
-                "batchCount": 100,
+                "batchCount": 1,
 
                 "logQueue": 1000,
                 "workerCount": 3,
                 "setMetaTimeout": 500,
                 "getPoolTimeout": 500,
 
-                "docSizeRange": [1024, 4096],
-                "target": {
-                    "bucket": "B1",
-                    "ns": {
-                        "ScopeName": "S1",
-                        "CollectionName": "C1"
-                    }
-                }
-            },
-            "logger-2": {
-                "docLoadCount": 100000,
-                "xmemCount": 4,
-                "batchCount": 100,
-
-                "logQueue": 1000,
-                "workerCount": 3,
-                "setMetaTimeout": 500,
-                "getPoolTimeout": 500,
-
-                "docSizeRange": [1024, 4096],
-                "target": {
-                    "bucket": "B1",
-                    "ns": {
-                        "ScopeName": "S1",
-                        "CollectionName": "C1"
-                    }
-                }
-            },
-            "logger-3": {
-                "docLoadCount": 100000,
-                "xmemCount": 4,
-                "batchCount": 100,
-
-                "logQueue": 1000,
-                "workerCount": 3,
-                "setMetaTimeout": 500,
-                "getPoolTimeout": 500,
-
-                "docSizeRange": [1024, 4096],
+                "docSizeRange": [1024, 2048],
                 "target": {
                     "bucket": "B1",
                     "ns": {

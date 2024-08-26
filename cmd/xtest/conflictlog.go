@@ -171,6 +171,7 @@ func runLoggerLoad(wg *sync.WaitGroup, logger *log.CommonLogger, opts *ConflictL
 					return
 				}
 
+				logger.Infof("writing to conflict log")
 				h, err := clog.Log(crd)
 				if err != nil {
 					logger.Errorf("error in sending conflict log err=%v", err)

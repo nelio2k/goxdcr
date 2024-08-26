@@ -1423,6 +1423,19 @@ func (adminport *Adminport) doChangeConflictLogSetting(request *http.Request) (*
 	logger_ap.Infof("changing conflict logging defaults = %v", request.Form)
 	for key, valArr := range request.Form {
 		switch key {
+		case "skipTlsVerify":
+			val := valArr[0]
+			tlsVerify := false
+			if val == "true" {
+				tlsVerify = true
+			}
+
+			m, err := conflictlog.GetManager()
+			if err != nil {
+				errorsMap["error_connType"] = err
+				return EncodeObjectIntoResponse(errorsMap)
+			}
+			m.SetSkipTlsVerify(tlsVerify)
 		case "connType":
 			connType := valArr[0]
 			logger_ap.Infof("changing conflict connection type = %s", connType)

@@ -13,13 +13,16 @@ import (
 	_ "net/http/pprof"
 )
 
-const ConnStr = "localhost:12000"
-const Bucket = "B1"
-
-var gKey = "abcd"
-
 type MemAddrGetter struct {
 	addr string
+}
+
+type EncLevelGetter struct {
+	strict bool
+}
+
+func (e *EncLevelGetter) IsMyClusterEncryptionLevelStrict() bool {
+	return e.strict
 }
 
 func (m *MemAddrGetter) MyMemcachedAddr() (string, error) {
@@ -43,9 +46,6 @@ func loadConfigFile(filepath string) (cfg Config, err error) {
 }
 
 func main() {
-
-	//...
-
 	if len(os.Args[1:]) < 1 {
 		fmt.Println("missing config json file")
 		os.Exit(1)
@@ -76,8 +76,20 @@ func main() {
 	addrGetter := &MemAddrGetter{
 		addr: cfg.MemcachedAddr,
 	}
+
+	encLevelGetter := &EncLevelGetter{
+		strict: cfg.EncryptionLevelStrict,
+	}
+
 	utils := utils.NewUtilities()
-	conflictlog.InitManager(log.DefaultLoggerContext, utils, addrGetter)
+
+	clientCerts := &conflictlog.ClientCerts{
+		ClientCertFile: cfg.ClientCertFile,
+		ClientKeyFile:  cfg.ClientKeyFile,
+		ClusterCAFile:  cfg.ClusterCAFile,
+	}
+
+	conflictlog.InitManager(log.DefaultLoggerContext, utils, addrGetter, encLevelGetter, clientCerts)
 
 	switch cfg.Name {
 	case "conflictLogLoadTest":
