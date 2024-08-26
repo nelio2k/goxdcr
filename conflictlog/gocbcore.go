@@ -2,6 +2,7 @@ package conflictlog
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"strings"
 	"time"
 
@@ -23,9 +24,10 @@ type gocbCoreConn struct {
 	logger         *log.CommonLogger
 	timeout        time.Duration
 	finch          chan bool
+	certs          *ClientCerts
 }
 
-func NewGocbConn(logger *log.CommonLogger, memdAddrGetter MemcachedAddrGetter, bucketName string) (conn *gocbCoreConn, err error) {
+func NewGocbConn(logger *log.CommonLogger, memdAddrGetter MemcachedAddrGetter, bucketName string, certs *ClientCerts) (conn *gocbCoreConn, err error) {
 	connId := newConnId()
 
 	logger.Infof("creating new gocbcore connection id=%d", connId)
@@ -37,6 +39,7 @@ func NewGocbConn(logger *log.CommonLogger, memdAddrGetter MemcachedAddrGetter, b
 		//sudeep todo: make it configurable
 		timeout: 60 * time.Second,
 		finch:   make(chan bool),
+		certs:   certs,
 	}
 
 	err = conn.setupAgent()
@@ -47,6 +50,18 @@ func NewGocbConn(logger *log.CommonLogger, memdAddrGetter MemcachedAddrGetter, b
 	return
 }
 
+func (conn *gocbCoreConn) getCACertPool() (*x509.CertPool, error) {
+	caCert, err := conn.certs.LoadCACert()
+	if err != nil {
+		return nil, err
+	}
+
+	caCertPool := x509.NewCertPool()
+	caCertPool.AppendCertsFromPEM(caCert)
+
+	return caCertPool, nil
+}
+
 func (conn *gocbCoreConn) setupAgent() (err error) {
 	memdAddr, err := conn.memdAddrGetter.MyMemcachedAddr()
 	if err != nil {
@@ -54,18 +69,33 @@ func (conn *gocbCoreConn) setupAgent() (err error) {
 	}
 
 	auth := &MemcachedAuthProvider{
-		logger: conn.logger,
+		logger:      conn.logger,
+		clientCerts: conn.certs,
+	}
+
+	var caCertProvider func() *x509.CertPool
+	if conn.certs != nil {
+		caPool, err := conn.getCACertPool()
+		if err != nil {
+			return err
+		}
+
+		caCertProvider = func() *x509.CertPool {
+			return caPool
+		}
 	}
 
 	config := &gocbcore.AgentConfig{
-		MemdAddrs:      []string{memdAddr},
-		Auth:           auth,
-		BucketName:     conn.bucketName,
-		UserAgent:      MemcachedConnUserAgent,
-		UseCollections: true,
-		UseTLS:         false,
-		UseCompression: true,
-		AuthMechanisms: []gocbcore.AuthMechanism{gocbcore.PlainAuthMechanism},
+		MemdAddrs:              []string{memdAddr},
+		Auth:                   auth,
+		BucketName:             conn.bucketName,
+		UserAgent:              MemcachedConnUserAgent,
+		UseCollections:         true,
+		UseTLS:                 conn.certs != nil,
+		UseCompression:         true,
+		AuthMechanisms:         []gocbcore.AuthMechanism{gocbcore.PlainAuthMechanism},
+		TLSRootCAProvider:      caCertProvider,
+		InitialBootstrapNonTLS: true,
 
 		// use KvPoolSize=1 to ensure only one connection is created by the agent
 		KvPoolSize: 1,
@@ -96,8 +126,6 @@ func (conn *gocbCoreConn) Bucket() string {
 }
 
 func (conn *gocbCoreConn) SetMeta(key string, body []byte, dataType uint8, target base.ConflictLogTarget) (err error) {
-	//conn.logger.Infof("writing id=%d key=%s bodyLen=%d", conn.id, key, len(body))
-
 	ch := make(chan error)
 
 	opts := gocbcore.SetMetaOptions{
@@ -137,7 +165,8 @@ func (conn *gocbCoreConn) Close() error {
 }
 
 type MemcachedAuthProvider struct {
-	logger *log.CommonLogger
+	logger      *log.CommonLogger
+	clientCerts *ClientCerts
 }
 
 func (auth *MemcachedAuthProvider) Credentials(req gocbcore.AuthCredsRequest) (
@@ -158,14 +187,25 @@ func (auth *MemcachedAuthProvider) Credentials(req gocbcore.AuthCredsRequest) (
 }
 
 func (auth *MemcachedAuthProvider) SupportsNonTLS() bool {
-	return true
+	return !auth.SupportsTLS()
 }
 
 func (auth *MemcachedAuthProvider) SupportsTLS() bool {
-	return false
+	return auth.clientCerts != nil
 }
 
 func (auth *MemcachedAuthProvider) Certificate(req gocbcore.AuthCertRequest) (*tls.Certificate, error) {
-	// If the internal client certificate has been set, use it for client authentication.
-	return nil, nil
+	if auth.clientCerts == nil {
+		return nil, nil
+	}
+
+	auth.logger.Infof("loading client certificates")
+
+	clientCert, clientKey, err := auth.clientCerts.LoadCert()
+	if err != nil {
+		return nil, err
+	}
+
+	cert, err := tls.X509KeyPair(clientCert, clientKey)
+	return &cert, nil
 }

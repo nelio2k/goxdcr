@@ -26,7 +26,7 @@ func gocbcoreTest(cfg Config) (err error) {
 		addr: opts.Addr,
 	}
 
-	conn, err := conflictlog.NewGocbConn(logger, memdAddrGetter, opts.Target.Bucket)
+	conn, err := conflictlog.NewGocbConn(logger, memdAddrGetter, opts.Target.Bucket, nil)
 	if err != nil {
 		return
 	}
