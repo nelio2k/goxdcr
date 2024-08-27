@@ -18,21 +18,21 @@ import (
 	"sync"
 	"time"
 
-	"github.com/couchbase/goxdcr/base"
-	"github.com/couchbase/goxdcr/capi_utils"
-	"github.com/couchbase/goxdcr/common"
-	component "github.com/couchbase/goxdcr/component"
-	"github.com/couchbase/goxdcr/log"
-	"github.com/couchbase/goxdcr/metadata"
-	"github.com/couchbase/goxdcr/parts"
-	"github.com/couchbase/goxdcr/peerToPeer"
-	pp "github.com/couchbase/goxdcr/pipeline"
-	pctx "github.com/couchbase/goxdcr/pipeline_ctx"
-	"github.com/couchbase/goxdcr/pipeline_svc"
-	"github.com/couchbase/goxdcr/pipeline_utils"
-	"github.com/couchbase/goxdcr/service_def"
-	"github.com/couchbase/goxdcr/service_impl"
-	utilities "github.com/couchbase/goxdcr/utils"
+	"github.com/couchbase/goxdcr/v8/base"
+	"github.com/couchbase/goxdcr/v8/capi_utils"
+	"github.com/couchbase/goxdcr/v8/common"
+	component "github.com/couchbase/goxdcr/v8/component"
+	"github.com/couchbase/goxdcr/v8/log"
+	"github.com/couchbase/goxdcr/v8/metadata"
+	"github.com/couchbase/goxdcr/v8/parts"
+	"github.com/couchbase/goxdcr/v8/peerToPeer"
+	pp "github.com/couchbase/goxdcr/v8/pipeline"
+	pctx "github.com/couchbase/goxdcr/v8/pipeline_ctx"
+	"github.com/couchbase/goxdcr/v8/pipeline_svc"
+	"github.com/couchbase/goxdcr/v8/pipeline_utils"
+	"github.com/couchbase/goxdcr/v8/service_def"
+	"github.com/couchbase/goxdcr/v8/service_impl"
+	utilities "github.com/couchbase/goxdcr/v8/utils"
 )
 
 const (
@@ -131,6 +131,11 @@ func (xdcrf *XDCRFactory) NewPipeline(topic string, progress_recorder common.Pip
 	if err != nil {
 		xdcrf.logger.Errorf("Failed to get replication specification for pipeline %v, err=%v\n", topic, err)
 		return nil, err
+	}
+	// Before this function is called, Pipeline updater checks for replication activeness.
+	// Check for activeness again incase the spec changed.
+	if !spec.Settings.Active {
+		return nil, base.ErrorReplicationSpecNotActive
 	}
 
 	pipeline, registerCb, err := xdcrf.newPipelineCommon(topic, common.MainPipeline, spec, progress_recorder)
@@ -333,7 +338,7 @@ func (xdcrf *XDCRFactory) newPipelineCommon(topic string, pipelineType common.Pi
 	pipeline := pp.NewPipelineWithSettingConstructor(topic, pipelineType, sourceNozzles, outNozzles, specForConstruction, targetClusterRef,
 		xdcrf.ConstructSettingsForPart, xdcrf.ConstructSettingsForConnector, xdcrf.ConstructSSLPortMap, xdcrf.ConstructUpdateSettingsForPart,
 		xdcrf.ConstructUpdateSettingsForConnector, xdcrf.SetStartSeqno, xdcrf.CheckpointBeforeStop, logger_ctx, xdcrf.PreReplicationVBMasterCheck,
-		xdcrf.MergePeerNodesCkptsResponse, xdcrf.bucketTopologySvc, xdcrf.utils, xdcrf.GeneratePrometheusStatusCb)
+		xdcrf.MergePeerNodesCkptsResponse, xdcrf.bucketTopologySvc, xdcrf.utils, xdcrf.PrometheusStatusUpdater)
 
 	// These listeners are the driving factors of the pipeline
 	xdcrf.registerAsyncListenersOnSources(pipeline, logger_ctx)
@@ -1823,35 +1828,29 @@ func (xdcrf *XDCRFactory) fetchCkptsAndFilterBasedOnExpiration(pipelineTopic str
 	return
 }
 
-func (xdcrf *XDCRFactory) GeneratePrometheusStatusCb(pipeline common.Pipeline) pp.PrometheusPipelineStatusCb {
-	callbacks := make(pp.PrometheusPipelineStatusCb, base.PipelineStatusMax)
-
-	for i := 0; i < int(base.PipelineStatusMax); i++ {
-		var cb func()
-		switch i {
-		case int(base.PipelineStatusRunning):
-			cb = func() {
-				pipeline.RuntimeContext().Service(base.STATISTICS_MGR_SVC).(*pipeline_svc.StatisticsManager).UpdateSettings(metadata.ReplicationSettingsMap{
-					service_def.PIPELINE_STATUS: int(base.PipelineStatusRunning),
-				})
-			}
-		case int(base.PipelineStatusPaused):
-			cb = func() {
-				pipeline.RuntimeContext().Service(base.STATISTICS_MGR_SVC).(*pipeline_svc.StatisticsManager).UpdateSettings(metadata.ReplicationSettingsMap{
-					service_def.PIPELINE_STATUS: int(base.PipelineStatusPaused),
-				})
-			}
-		case int(base.PipelineStatusError):
-			cb = func() {
-				pipeline.RuntimeContext().Service(base.STATISTICS_MGR_SVC).(*pipeline_svc.StatisticsManager).UpdateSettings(metadata.ReplicationSettingsMap{
-					service_def.PIPELINE_STATUS: int(base.PipelineStatusError),
-				})
-			}
-		}
-		callbacks[i] = cb
+func (xdcrf *XDCRFactory) PrometheusStatusUpdater(pipeline common.Pipeline, status base.PipelineStatusGauge) error {
+	if pipeline == nil {
+		return fmt.Errorf("pipeline is nil")
 	}
 
-	return callbacks
+	runtimeCtx := pipeline.RuntimeContext()
+	if runtimeCtx == nil {
+		return fmt.Errorf("runtime context is nil")
+	}
+
+	statsMgrIface := runtimeCtx.Service(base.STATISTICS_MGR_SVC)
+	if statsMgrIface == nil {
+		return fmt.Errorf("%v is nil", base.STATISTICS_MGR_SVC)
+	}
+
+	statsMgr, valid := statsMgrIface.(*pipeline_svc.StatisticsManager)
+	if !valid {
+		//should never happen
+		return fmt.Errorf("%v is of type %T, but expected *pipeline_svc.StatisticsManager", base.STATISTICS_MGR_SVC, statsMgrIface)
+	}
+	return statsMgr.UpdateSettings(metadata.ReplicationSettingsMap{
+		service_def.PIPELINE_STATUS: int(status),
+	})
 }
 
 func (xdcrf *XDCRFactory) GetEventsProducer(topic string) (common.PipelineEventsProducer, error) {
