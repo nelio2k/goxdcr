@@ -11,8 +11,8 @@ package service_def
 import (
 	"sync"
 
-	"github.com/couchbase/goxdcr/base"
-	"github.com/couchbase/goxdcr/metadata"
+	"github.com/couchbase/goxdcr/v8/base"
+	"github.com/couchbase/goxdcr/v8/metadata"
 )
 
 type CheckpointsService interface {

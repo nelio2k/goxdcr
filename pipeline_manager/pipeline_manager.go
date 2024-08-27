@@ -17,19 +17,18 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/couchbase/goxdcr/base"
-	"github.com/couchbase/goxdcr/common"
-	"github.com/couchbase/goxdcr/log"
-	"github.com/couchbase/goxdcr/metadata"
-	"github.com/couchbase/goxdcr/parts"
-	"github.com/couchbase/goxdcr/peerToPeer"
-	"github.com/couchbase/goxdcr/pipeline"
-	"github.com/couchbase/goxdcr/pipeline_svc"
-	"github.com/couchbase/goxdcr/service_def"
-	utilities "github.com/couchbase/goxdcr/utils"
+	"github.com/couchbase/goxdcr/v8/base"
+	"github.com/couchbase/goxdcr/v8/common"
+	"github.com/couchbase/goxdcr/v8/log"
+	"github.com/couchbase/goxdcr/v8/metadata"
+	"github.com/couchbase/goxdcr/v8/parts"
+	"github.com/couchbase/goxdcr/v8/peerToPeer"
+	"github.com/couchbase/goxdcr/v8/pipeline"
+	"github.com/couchbase/goxdcr/v8/pipeline_svc"
+	"github.com/couchbase/goxdcr/v8/service_def"
+	utilities "github.com/couchbase/goxdcr/v8/utils"
 )
 
-var ReplicationSpecNotActive error = errors.New("Replication specification not found or no longer active")
 var ReplicationStatusNotFound error = errors.New("Error: Replication Status is missing when starting pipeline.")
 var UpdaterStoppedError error = errors.New("Updater already stopped")
 var MainPipelineNotRunning error = errors.New("Main pipeline is not running")
@@ -1746,7 +1745,7 @@ func (r *PipelineUpdater) run() {
 			case opts := <-r.backfillStopCh:
 				if r.rep_status == nil || r.rep_status.BackfillPipeline() == nil {
 					r.logger.Warnf("Backfill pipeline for %v is already stopped", r.pipeline_name)
-					if r.checkReplicationActiveness() == ReplicationSpecNotActive {
+					if r.checkReplicationActiveness() == base.ErrorReplicationSpecNotActive {
 						// Do not let any potential restart timers fire after a permanent stop has been issued
 						stoppedInTime := r.cancelFutureBackfillStart()
 						if !stoppedInTime {
@@ -1887,7 +1886,7 @@ func allErrorsAreAllowed(errMap base.ErrorMap) bool {
 
 func allowableErrorCodes(err error) bool {
 	if err == nil ||
-		err == ReplicationSpecNotActive ||
+		err == base.ErrorReplicationSpecNotActive ||
 		err == service_def.MetadataNotFoundErr ||
 		err == ErrorNoKVService {
 		return true
@@ -2020,7 +2019,7 @@ func (r *PipelineUpdater) update() base.ErrorMap {
 RE:
 	if len(errMap) == 0 {
 		r.logger.Infof("Replication %v has been updated. Back to business\n", r.pipeline_name)
-	} else if base.CheckErrorMapForError(errMap, ReplicationSpecNotActive, true /*exactMatch*/) {
+	} else if base.CheckErrorMapForError(errMap, base.ErrorReplicationSpecNotActive, true /*exactMatch*/) {
 		r.logger.Infof("Replication %v has been paused. no need to update\n", r.pipeline_name)
 		// It is possible that pipeline is set "paused" and won't be started again so now is the time
 		// to execute callbacks if any
@@ -2185,7 +2184,7 @@ func (r *PipelineUpdater) raiseCompressionWarningIfNeeded() {
 func (r *PipelineUpdater) checkReplicationActiveness() (err error) {
 	spec, err := r.pipelineMgr.GetReplSpecSvc().ReplicationSpec(r.pipeline_name)
 	if err != nil || spec == nil || !spec.Settings.Active {
-		err = ReplicationSpecNotActive
+		err = base.ErrorReplicationSpecNotActive
 	}
 	return
 }

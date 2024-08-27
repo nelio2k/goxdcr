@@ -8,7 +8,7 @@
 
 package common
 
-import "github.com/couchbase/goxdcr/conflictlog"
+import "github.com/couchbase/goxdcr/v8/conflictlog"
 
 // Nozzle models the openning that data streaming out of the source system
 // and the outlet where the data flowing into the target system.

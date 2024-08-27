@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/couchbase/goxdcr/conflictlog"
-	"github.com/couchbase/goxdcr/log"
-	"github.com/couchbase/goxdcr/utils"
+	"github.com/couchbase/goxdcr/v8/conflictlog"
+	"github.com/couchbase/goxdcr/v8/log"
+	"github.com/couchbase/goxdcr/v8/utils"
 
 	"net/http"
 	_ "net/http/pprof"

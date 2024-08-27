@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/couchbase/goxdcr/log"
+	"github.com/couchbase/goxdcr/v8/log"
 	"github.com/stretchr/testify/require"
 )
 

@@ -14,9 +14,9 @@ import (
 	"fmt"
 
 	mc "github.com/couchbase/gomemcached"
-	"github.com/couchbase/goxdcr/base"
-	"github.com/couchbase/goxdcr/hlv"
-	"github.com/couchbase/goxdcr/log"
+	"github.com/couchbase/goxdcr/v8/base"
+	"github.com/couchbase/goxdcr/v8/hlv"
+	"github.com/couchbase/goxdcr/v8/log"
 )
 
 // Return values from conflict detection.
@@ -92,26 +92,40 @@ func DetectConflictIfNeeded(req *base.WrappedMCRequest, resp *mc.MCResponse, spe
 	var err error
 
 	if resp.Opcode == base.GET_WITH_META {
+		// GET_WITH_META will also be used when only ECCV is on (mobile is off) and cas < max_cas.
+		// source HLV is not parsed and target HLV is not fetched.
+
 		// non-hlv based replications
 		// No conflict detection required
 		sourceDocMeta = base.DecodeSetMetaReq(req)
 		targetDocMeta, err = base.DecodeGetMetaResp(req.Req.Key, resp, xattrEnabled)
 		if err != nil {
-			err = fmt.Errorf("error decoding GET_META response for key=%v%s%v, respBody=%v%v%v, xattrEnabled=%v",
+			err = fmt.Errorf("error decoding GET_META response for key=%v%s%v, respBody=%v%v%v, xattrEnabled=%v, err=%v",
 				base.UdTagBegin, req.Req.Key, base.UdTagEnd,
 				base.UdTagBegin, resp.Body, base.UdTagEnd,
-				xattrEnabled)
+				xattrEnabled, err)
 			return CDError, sourceDocMeta, targetDocMeta, err
 		}
 
 		return CDNone, sourceDocMeta, targetDocMeta, nil
 	}
 
+	// We always parse the HLV in the source mutation for CR, if mobile is on, given that there could
+	// be import on source cluster and it could be an active site in the mixed mode of the SGW+XDCR active-passive
+	// setup, which is supported.
+	// However for the target doc, we only fetch HLV if cas >= max_cas and if ECCV is on.
+	// For the following cases, we don't fetch target HLV:
+	// 1. mobile is on, ECCV is on and cas < max_cas (mixed mode) - this is fine as long as it was an
+	// active-passive setup when this mutation was created.
+	// 2. mobile is on, but ECCV is off - not supported and can lead to data loss as import on target can win CR.
+	// Hence, target is not expected to have import in mixed mode, assuming that it is a passive site in the mixed
+	// mode. Doing import on target, which is a passive site during mixed mode may cause data loss.
+
 	if resp.Opcode != mc.SUBDOC_MULTI_LOOKUP {
-		err = fmt.Errorf("unknown response %v for CR, for key=%v%s%v, req=%v%s%v, reqBody=%v%v%v", resp.Opcode,
+		err = fmt.Errorf("unknown response %v for CR, for key=%v%s%v, req=%v%s%v, reqBody=%v%v%v, err=%v", resp.Opcode,
 			base.UdTagBegin, req.Req.Key, base.UdTagEnd,
 			base.UdTagBegin, req.Req, base.UdTagEnd,
-			base.UdTagBegin, req.Req.Body, base.UdTagEnd)
+			base.UdTagBegin, req.Req.Body, base.UdTagEnd, err)
 		return CDError, sourceDocMeta, targetDocMeta, err
 	}
 
@@ -119,31 +133,31 @@ func DetectConflictIfNeeded(req *base.WrappedMCRequest, resp *mc.MCResponse, spe
 	sourceDoc = NewSourceDocument(req, sourceId)
 	sourceMeta, err = sourceDoc.GetMetadata(uncompressFunc)
 	if err != nil {
-		err = fmt.Errorf("error decoding source mutation for key=%v%s%v, req=%v%s%v, reqBody=%v%v%v",
+		err = fmt.Errorf("error decoding source mutation for key=%v%s%v, req=%v%s%v, reqBody=%v%v%v, err=%v",
 			base.UdTagBegin, req.Req.Key, base.UdTagEnd,
 			base.UdTagBegin, req.Req, base.UdTagEnd,
-			base.UdTagBegin, req.Req.Body, base.UdTagEnd)
+			base.UdTagBegin, req.Req.Body, base.UdTagEnd, err)
 		return CDError, sourceDocMeta, targetDocMeta, err
 	}
 	sourceDocMeta = *sourceMeta.docMeta
 
 	// target document metadata
-	targetDoc, err = NewTargetDocument(req.Req.Key, resp, specs, targetId, xattrEnabled, true)
+	targetDoc, err = NewTargetDocument(req.Req.Key, resp, specs, targetId, xattrEnabled, req.HLVModeOptions.IncludeTgtHlv)
 	if err == base.ErrorDocumentNotFound {
 		return CDNone, sourceDocMeta, targetDocMeta, err
 	} else if err != nil {
-		err = fmt.Errorf("error creating target document for key=%v%s%v, respBody=%v, resp=%s, specs=%v, xattrEnabled=%v",
+		err = fmt.Errorf("error creating target document for key=%v%s%v, respBody=%v, resp=%s, specs=%v, xattrEnabled=%v, err=%v",
 			base.UdTagBegin, req.Req.Key, base.UdTagEnd,
-			resp.Body, resp.Status, specs, xattrEnabled)
+			resp.Body, resp.Status, specs, xattrEnabled, err)
 		return CDError, sourceDocMeta, targetDocMeta, err
 	}
 	targetMeta, err = targetDoc.GetMetadata()
 	if err == base.ErrorDocumentNotFound {
 		return CDNone, sourceDocMeta, targetDocMeta, err
 	} else if err != nil {
-		err = fmt.Errorf("error decoding target SUBDOC_MULTI_LOOKUP response for key=%v%s%v, respBody=%v, resp=%s, specs=%v, xattrEnabled=%v",
+		err = fmt.Errorf("error decoding target SUBDOC_MULTI_LOOKUP response for key=%v%s%v, respBody=%v, resp=%s, specs=%v, xattrEnabled=%v, err=%v",
 			base.UdTagBegin, req.Req.Key, base.UdTagEnd,
-			resp.Body, resp.Status, specs, xattrEnabled)
+			resp.Body, resp.Status, specs, xattrEnabled, err)
 		return CDError, sourceDocMeta, targetDocMeta, err
 	}
 	targetDocMeta = *targetMeta.docMeta
@@ -156,9 +170,9 @@ func DetectConflictIfNeeded(req *base.WrappedMCRequest, resp *mc.MCResponse, spe
 	if needToDetectConflict {
 		cdResult, err = DetectConflict(sourceMeta, targetMeta)
 		if err != nil {
-			err = fmt.Errorf("error detecting conflict key=%v%s%v, sourceMeta=%s, targetMeta=%s",
+			err = fmt.Errorf("error detecting conflict key=%v%s%v, sourceMeta=%s, targetMeta=%s, err=%v",
 				base.UdTagBegin, req.Req.Key, base.UdTagEnd,
-				sourceMeta, targetMeta)
+				sourceMeta, targetMeta, err)
 			return CDError, sourceDocMeta, targetDocMeta, err
 		}
 	}

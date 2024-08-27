@@ -1,8 +1,8 @@
 package conflictlog
 
 import (
-	"github.com/couchbase/goxdcr/base"
-	"github.com/couchbase/goxdcr/log"
+	"github.com/couchbase/goxdcr/v8/base"
+	"github.com/couchbase/goxdcr/v8/log"
 )
 
 // Mapper evaluates and routes the conflict to the right target bucket

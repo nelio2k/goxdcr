@@ -15,15 +15,15 @@ import (
 	"sync"
 	"time"
 
-	"github.com/couchbase/goxdcr/base"
-	"github.com/couchbase/goxdcr/common"
-	"github.com/couchbase/goxdcr/conflictlog"
-	"github.com/couchbase/goxdcr/log"
-	"github.com/couchbase/goxdcr/metadata"
-	"github.com/couchbase/goxdcr/parts"
-	"github.com/couchbase/goxdcr/peerToPeer"
-	"github.com/couchbase/goxdcr/service_def"
-	utilities "github.com/couchbase/goxdcr/utils"
+	"github.com/couchbase/goxdcr/v8/base"
+	"github.com/couchbase/goxdcr/v8/common"
+	"github.com/couchbase/goxdcr/v8/conflictlog"
+	"github.com/couchbase/goxdcr/v8/log"
+	"github.com/couchbase/goxdcr/v8/metadata"
+	"github.com/couchbase/goxdcr/v8/parts"
+	"github.com/couchbase/goxdcr/v8/peerToPeer"
+	"github.com/couchbase/goxdcr/v8/service_def"
+	utilities "github.com/couchbase/goxdcr/v8/utils"
 )
 
 var ErrorKey = "Error"
@@ -62,7 +62,7 @@ type VBMasterCheckFunc func(common.Pipeline) (map[string]*peerToPeer.VBMasterChe
 
 type MergeVBMasterRespCkptsFunc func(common.Pipeline, peerToPeer.PeersVBMasterCheckRespMap) error
 
-type PrometheusPipelineStatusCb []func()
+type PrometheusStatusUpdater func(pipeline common.Pipeline, status base.PipelineStatusGauge) error
 
 // GenericPipeline is the generic implementation of a data processing pipeline
 //
@@ -144,7 +144,7 @@ type GenericPipeline struct {
 	sourceTopologyProgressMsg string
 	targetTopologyProgressMsg string
 
-	statusCallbacks PrometheusPipelineStatusCb
+	prometheusStatusUpdater PrometheusStatusUpdater
 
 	// Conflict logger for the pipeline
 	conflictLogger    conflictlog.Logger
@@ -270,10 +270,16 @@ func (genericPipeline *GenericPipeline) Start(settings metadata.ReplicationSetti
 		if len(errMap) > 0 {
 			genericPipeline.logger.Errorf("%v failed to start, err=%v", genericPipeline.InstanceId(), errMap)
 			genericPipeline.ReportProgress(fmt.Sprintf("Pipeline failed to start, err=%v", errMap))
-			genericPipeline.statusCallbacks[base.PipelineStatusError]()
+			err := genericPipeline.prometheusStatusUpdater(genericPipeline, base.PipelineStatusError)
+			if err != nil {
+				genericPipeline.logger.Errorf("failed to update prometheus status. err=%v", err)
+			}
 		} else {
 			// Only set to running if there is no error starting the pipeline
-			genericPipeline.statusCallbacks[base.PipelineStatusRunning]()
+			err := genericPipeline.prometheusStatusUpdater(genericPipeline, base.PipelineStatusRunning)
+			if err != nil {
+				genericPipeline.logger.Errorf("failed to update prometheus status. err=%v", err)
+			}
 		}
 	}(genericPipeline, errMap)
 
@@ -735,7 +741,10 @@ func (genericPipeline *GenericPipeline) Stop() base.ErrorMap {
 			// Only mark the pipeline paused if the user requested it (or auto paused)
 			// Otherwise, any stop() could be called during error phase and we want to keep
 			// the pipeline in error phase
-			genericPipeline.statusCallbacks[base.PipelineStatusPaused]()
+			err := genericPipeline.prometheusStatusUpdater(genericPipeline, base.PipelineStatusPaused)
+			if err != nil {
+				genericPipeline.logger.Errorf("failed to update prometheus status. err=%v", err)
+			}
 		}
 	}
 
@@ -826,7 +835,7 @@ func NewPipelineWithSettingConstructor(t string, pipelineType common.PipelineTyp
 	connectorSettingsConstructor ConnectorSettingsConstructor, sslPortMapConstructor SSLPortMapConstructor, partsUpdateSettingsConstructor PartsUpdateSettingsConstructor,
 	connectorUpdateSetting_constructor ConnectorsUpdateSettingsConstructor, startingSeqnoConstructor StartingSeqnoConstructor, checkpoint_func CheckpointFunc,
 	logger_context *log.LoggerContext, vbMasterCheckFunc VBMasterCheckFunc, mergeCkptFunc MergeVBMasterRespCkptsFunc, bucketTopologySvc service_def.BucketTopologySvc,
-	utils utilities.UtilsIface, prometheusStatusCbConstructor func(pipeline common.Pipeline) PrometheusPipelineStatusCb, conflictLogger conflictlog.Logger) *GenericPipeline {
+	utils utilities.UtilsIface, prometheusStatusUpdater func(pipeline common.Pipeline, status base.PipelineStatusGauge) error, conflictLogger conflictlog.Logger) *GenericPipeline {
 
 	pipeline := &GenericPipeline{topic: t,
 		sources:                            sources,
@@ -849,11 +858,11 @@ func NewPipelineWithSettingConstructor(t string, pipelineType common.PipelineTyp
 		vbMasterCheckFunc:                  vbMasterCheckFunc,
 		mergeCkptFunc:                      mergeCkptFunc,
 		utils:                              utils,
+		prometheusStatusUpdater:            prometheusStatusUpdater,
 		conflictLogger:                     conflictLogger,
 	}
 
 	// NOTE: Calling initialize here as part of constructor
-	pipeline.statusCallbacks = prometheusStatusCbConstructor(pipeline)
 	pipeline.initialize()
 	pipeline.logger.Debugf("Pipeline %s has been initialized with a part setting constructor %v", t, partsSettingsConstructor)
 

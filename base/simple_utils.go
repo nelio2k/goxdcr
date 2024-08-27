@@ -36,7 +36,7 @@ import (
 
 	mc "github.com/couchbase/gomemcached"
 	mcc "github.com/couchbase/gomemcached/client"
-	"github.com/couchbase/goxdcr/log"
+	"github.com/couchbase/goxdcr/v8/log"
 	"github.com/couchbaselabs/gojsonsm"
 )
 
@@ -2169,7 +2169,7 @@ func DecodeSubDocResp(key []byte, lookupResp *SubdocLookupResponse) (DocumentMet
 		xattrlen := int(binary.BigEndian.Uint32(body[pos : pos+4]))
 		if pos+xattrlen > len(body) {
 			// This should never happen
-			return DocumentMetadata{}, fmt.Errorf("Returned value length %v for subdoc_get path %v exceeds body length", xattrlen, spec.Path)
+			return DocumentMetadata{}, fmt.Errorf("returned value length %v for subdoc_get path %v exceeds body length", xattrlen, spec.Path)
 		}
 		pos = pos + 4
 		value := string(body[pos : pos+xattrlen])
@@ -2178,7 +2178,7 @@ func DecodeSubDocResp(key []byte, lookupResp *SubdocLookupResponse) (DocumentMet
 			case VXATTR_REVID:
 				if xattrlen < MinRevIdLengthWithQuotes {
 					// This should never happen
-					return DocumentMetadata{}, fmt.Errorf("Unexpected return value length %v for subdoc_get path %v", xattrlen, VXATTR_REVID)
+					return DocumentMetadata{}, fmt.Errorf("unexpected return value length %v for subdoc_get path %v", xattrlen, VXATTR_REVID)
 				}
 				// KV returns $document.revid as a string. So skip the quotes in the return value
 				if revid, err := strconv.ParseUint(value[1:xattrlen-1], 10, 64); err == nil {

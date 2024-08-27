@@ -1,7 +1,7 @@
 package conflictlog
 
 import (
-	"github.com/couchbase/goxdcr/base"
+	"github.com/couchbase/goxdcr/v8/base"
 )
 
 // BucketInfo, VBucketServerMap are the structs for the bucket topology json returned
