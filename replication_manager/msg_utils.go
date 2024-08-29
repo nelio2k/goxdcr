@@ -20,12 +20,12 @@ import (
 	"strconv"
 	"sync/atomic"
 
-	ap "github.com/couchbase/goxdcr/adminport"
-	"github.com/couchbase/goxdcr/base"
-	base2 "github.com/couchbase/goxdcr/base/helpers"
-	"github.com/couchbase/goxdcr/log"
-	"github.com/couchbase/goxdcr/metadata"
-	"github.com/couchbase/goxdcr/service_def"
+	ap "github.com/couchbase/goxdcr/v8/adminport"
+	"github.com/couchbase/goxdcr/v8/base"
+	base2 "github.com/couchbase/goxdcr/v8/base/helpers"
+	"github.com/couchbase/goxdcr/v8/log"
+	"github.com/couchbase/goxdcr/v8/metadata"
+	"github.com/couchbase/goxdcr/v8/service_def"
 )
 
 // xdcr prefix for internal settings keys
@@ -106,6 +106,7 @@ const (
 	CasDriftThresholdSecsKey          = base.CASDriftThresholdSecsKey
 	PreCheckCasDriftThresholdHoursKey = base.PreCheckCasDriftThresholdHoursKey
 	ConflictLoggingKey                = base.ConflictLoggingKey
+	GenericServicesLogLevelKey        = metadata.GenericServicesLogLevelKey
 )
 
 // constants for parsing create/change/view replication response
@@ -168,17 +169,17 @@ var MissingOldSettingsInRequest = errors.New("Invalid http request. No old repli
 
 // replication settings key in rest api -> internal replication settings key
 var RestKeyToSettingsKeyMap = map[string]string{
-	base.DevMainPipelineSendDelay:      metadata.DevMainPipelineSendDelay,
-	base.DevBackfillPipelineSendDelay:  metadata.DevBackfillPipelineSendDelay,
-	base.DevMainPipelineRollbackTo0VB:  metadata.DevMainPipelineRollbackTo0VB,
-	base.DevBackfillRollbackTo0VB:      metadata.DevBackfillRollbackTo0VB,
-	base.DevCkptMgrForceGCWaitSec:      metadata.DevCkptMgrForceGCWaitSec,
-	base.DevColManifestSvcDelaySec:     metadata.DevColManifestSvcDelaySec,
-	base.DevNsServerPortSpecifier:      metadata.DevNsServerPortSpecifier,
-	base.DevBucketTopologyLegacyDelay:  metadata.DevBucketTopologyLegacyDelay,
-	base.DevBackfillReplUpdateDelay:    metadata.DevBackfillReplUpdateDelay,
-	base.DevCasDriftForceDocKey:        metadata.DevCasDriftForceDocKey,
-	base.DevPreCheckCasDriftForceVbKey: metadata.DevPreCheckCasDriftForceVbKey,
+	base.DevMainPipelineSendDelay:        metadata.DevMainPipelineSendDelay,
+	base.DevBackfillPipelineSendDelay:    metadata.DevBackfillPipelineSendDelay,
+	base.DevMainPipelineRollbackTo0VB:    metadata.DevMainPipelineRollbackTo0VB,
+	base.DevBackfillRollbackTo0VB:        metadata.DevBackfillRollbackTo0VB,
+	base.DevCkptMgrForceGCWaitSec:        metadata.DevCkptMgrForceGCWaitSec,
+	base.DevColManifestSvcDelaySec:       metadata.DevColManifestSvcDelaySec,
+	base.DevNsServerPortSpecifier:        metadata.DevNsServerPortSpecifier,
+	base.DevBackfillReplUpdateDelay:      metadata.DevBackfillReplUpdateDelay,
+	base.DevCasDriftForceDocKey:          metadata.DevCasDriftForceDocKey,
+	base.DevPreCheckCasDriftForceVbKey:   metadata.DevPreCheckCasDriftForceVbKey,
+	base.DevPreCheckMaxCasErrorInjection: metadata.DevPreCheckMaxCasErrorInjection,
 
 	base.Type:                         metadata.ReplicationTypeKey,
 	FilterExpression:                  metadata.FilterExpressionKey,
@@ -229,21 +230,22 @@ var RestKeyToSettingsKeyMap = map[string]string{
 	CasDriftThresholdSecsKey:          metadata.CASDriftThresholdSecsKey,
 	PreCheckCasDriftThresholdHoursKey: metadata.PreCheckCasDriftThresholdHoursKey,
 	ConflictLoggingKey:                metadata.ConflictLoggingKey,
+	GenericServicesLogLevelKey:        metadata.GenericServicesLogLevelKey,
 }
 
 // internal replication settings key -> replication settings key in rest api
 var SettingsKeyToRestKeyMap = map[string]string{
-	metadata.DevMainPipelineSendDelay:      base.DevMainPipelineSendDelay,
-	metadata.DevBackfillPipelineSendDelay:  base.DevBackfillPipelineSendDelay,
-	metadata.DevMainPipelineRollbackTo0VB:  base.DevMainPipelineRollbackTo0VB,
-	metadata.DevBackfillRollbackTo0VB:      base.DevBackfillRollbackTo0VB,
-	metadata.DevCkptMgrForceGCWaitSec:      base.DevCkptMgrForceGCWaitSec,
-	metadata.DevColManifestSvcDelaySec:     base.DevColManifestSvcDelaySec,
-	metadata.DevNsServerPortSpecifier:      base.DevNsServerPortSpecifier,
-	metadata.DevBucketTopologyLegacyDelay:  base.DevBucketTopologyLegacyDelay,
-	metadata.DevBackfillReplUpdateDelay:    base.DevBackfillReplUpdateDelay,
-	metadata.DevCasDriftForceDocKey:        base.DevCasDriftForceDocKey,
-	metadata.DevPreCheckCasDriftForceVbKey: base.DevPreCheckCasDriftForceVbKey,
+	metadata.DevMainPipelineSendDelay:        base.DevMainPipelineSendDelay,
+	metadata.DevBackfillPipelineSendDelay:    base.DevBackfillPipelineSendDelay,
+	metadata.DevMainPipelineRollbackTo0VB:    base.DevMainPipelineRollbackTo0VB,
+	metadata.DevBackfillRollbackTo0VB:        base.DevBackfillRollbackTo0VB,
+	metadata.DevCkptMgrForceGCWaitSec:        base.DevCkptMgrForceGCWaitSec,
+	metadata.DevColManifestSvcDelaySec:       base.DevColManifestSvcDelaySec,
+	metadata.DevNsServerPortSpecifier:        base.DevNsServerPortSpecifier,
+	metadata.DevBackfillReplUpdateDelay:      base.DevBackfillReplUpdateDelay,
+	metadata.DevCasDriftForceDocKey:          base.DevCasDriftForceDocKey,
+	metadata.DevPreCheckCasDriftForceVbKey:   base.DevPreCheckCasDriftForceVbKey,
+	metadata.DevPreCheckMaxCasErrorInjection: base.DevPreCheckMaxCasErrorInjection,
 
 	metadata.ReplicationTypeKey:                   base.Type,
 	metadata.FilterExpressionKey:                  FilterExpression,
@@ -294,6 +296,7 @@ var SettingsKeyToRestKeyMap = map[string]string{
 	metadata.CASDriftThresholdSecsKey:             CasDriftThresholdSecsKey,
 	metadata.PreCheckCasDriftThresholdHoursKey:    PreCheckCasDriftThresholdHoursKey,
 	metadata.ConflictLoggingKey:                   ConflictLoggingKey,
+	metadata.GenericServicesLogLevelKey:           GenericServicesLogLevelKey,
 }
 
 // Conversion to REST for user -> pauseRequested - Pretty much a NOT operation
@@ -327,7 +330,7 @@ var SettingsValueToRestValueMap = map[string]map[interface{}]interface{}{
 	MobileCompatibleKey:      MobileCompatibilityTypeToRESTValueMap,
 }
 
-var logger_msgutil *log.CommonLogger = log.NewLogger("MsgUtils", log.DefaultLoggerContext)
+var logger_msgutil *log.CommonLogger = log.NewLogger(base.MsgUtilsKey, log.GetOrCreateContext(base.MsgUtilsKey))
 
 func NewGetRemoteClustersResponse(remoteClusters map[string]*metadata.RemoteClusterReference) (*ap.Response, error) {
 	remoteClusterArr := make([]map[string]interface{}, 0)

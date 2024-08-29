@@ -36,7 +36,7 @@ import (
 
 	mc "github.com/couchbase/gomemcached"
 	mcc "github.com/couchbase/gomemcached/client"
-	"github.com/couchbase/goxdcr/log"
+	"github.com/couchbase/goxdcr/v8/log"
 	"github.com/couchbaselabs/gojsonsm"
 )
 
@@ -1221,14 +1221,18 @@ func Uint64ToBase64(u64 uint64) []byte {
 	return encoded
 }
 
+func InvalidHexStringError(hexVal []byte, littleEndian bool) error {
+	return fmt.Errorf("input hex string %s (littleEndian? %v) is too short or incorrect. Leading 0x is expected", hexVal, littleEndian)
+}
+
 // This routine expect prefix 0x since this is included in KV macro expansion.
 // Should be of even length.
 func HexBigEndianToUint64(hexBE []byte) (uint64, error) {
 	if len(hexBE) <= 2 {
-		return 0, fmt.Errorf("hex big endian input value %s is too short. Leading 0x is expected", hexBE)
+		return 0, InvalidHexStringError(hexBE, false)
 	}
 	if hexBE[0] != '0' || hexBE[1] != 'x' {
-		return 0, fmt.Errorf("incorrect hex big endian input %s", hexBE)
+		return 0, InvalidHexStringError(hexBE, false)
 	}
 
 	decoded := make([]byte, MaxHexDecodedLength)
@@ -1243,10 +1247,10 @@ func HexBigEndianToUint64(hexBE []byte) (uint64, error) {
 // This routine expect prefix 0x since this is included in KV macro expansion.
 func HexLittleEndianToUint64(hexLE []byte) (uint64, error) {
 	if len(hexLE) <= 2 {
-		return 0, fmt.Errorf("hex input value %s is too short. Leading 0x is expected", hexLE)
+		return 0, InvalidHexStringError(hexLE, true)
 	}
 	if hexLE[0] != '0' || hexLE[1] != 'x' {
-		return 0, fmt.Errorf("incorrect hex little endian input %s", hexLE)
+		return 0, InvalidHexStringError(hexLE, true)
 	}
 
 	// Decoding the hexLE will need the string to be of even length
@@ -1889,6 +1893,18 @@ func FindDocBodyWithoutXattr(body []byte, datatype uint8) []byte {
 
 type SubdocLookupPathSpecs []SubdocLookupPathSpec
 
+func (ss *SubdocLookupPathSpecs) String() string {
+	if ss == nil {
+		return ""
+	}
+	s := ""
+	for _, oneSpec := range *ss {
+		s += oneSpec.String() + " |"
+	}
+
+	return s
+}
+
 func (ss *SubdocLookupPathSpecs) Size() int {
 	var totalSize int
 	if ss == nil {
@@ -2114,7 +2130,7 @@ func DecodeSetMetaReq(req *WrappedMCRequest) DocumentMetadata {
 }
 
 func DecodeGetMetaResp(key []byte, resp *mc.MCResponse, xattrEnabled bool) (DocumentMetadata, error) {
-	ret := DocumentMetadata{} // Seqno and Vbuuid will be 0.
+	ret := DocumentMetadata{} // Seqno and Vbuuid will be not be set.
 	ret.Key = key
 	extras := resp.Extras
 	ret.Deletion = (binary.BigEndian.Uint32(extras[0:4]) != 0)
@@ -2153,7 +2169,7 @@ func DecodeSubDocResp(key []byte, lookupResp *SubdocLookupResponse) (DocumentMet
 		xattrlen := int(binary.BigEndian.Uint32(body[pos : pos+4]))
 		if pos+xattrlen > len(body) {
 			// This should never happen
-			return DocumentMetadata{}, fmt.Errorf("Returned value length %v for subdoc_get path %v exceeds body length", xattrlen, spec.Path)
+			return DocumentMetadata{}, fmt.Errorf("returned value length %v for subdoc_get path %v exceeds body length", xattrlen, spec.Path)
 		}
 		pos = pos + 4
 		value := string(body[pos : pos+xattrlen])
@@ -2162,7 +2178,7 @@ func DecodeSubDocResp(key []byte, lookupResp *SubdocLookupResponse) (DocumentMet
 			case VXATTR_REVID:
 				if xattrlen < MinRevIdLengthWithQuotes {
 					// This should never happen
-					return DocumentMetadata{}, fmt.Errorf("Unexpected return value length %v for subdoc_get path %v", xattrlen, VXATTR_REVID)
+					return DocumentMetadata{}, fmt.Errorf("unexpected return value length %v for subdoc_get path %v", xattrlen, VXATTR_REVID)
 				}
 				// KV returns $document.revid as a string. So skip the quotes in the return value
 				if revid, err := strconv.ParseUint(value[1:xattrlen-1], 10, 64); err == nil {

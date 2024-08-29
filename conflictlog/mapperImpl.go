@@ -1,8 +1,8 @@
 package conflictlog
 
 import (
-	"github.com/couchbase/goxdcr/base"
-	"github.com/couchbase/goxdcr/log"
+	"github.com/couchbase/goxdcr/v8/base"
+	"github.com/couchbase/goxdcr/v8/log"
 )
 
 // ConflictMapper impements Mapper interface.
@@ -15,7 +15,7 @@ func NewConflictMapper(logger *log.CommonLogger) *conflictMapper {
 }
 
 // returns the "target" to which the conflict record needs to be routed.
-func (m *conflictMapper) Map(rules *Rules, c Conflict) (target base.ConflictLoggingTarget, err error) {
+func (m *conflictMapper) Map(rules *base.ConflictLogRules, c Conflict) (target base.ConflictLogTarget, err error) {
 	if rules == nil {
 		err = ErrEmptyRules
 		return
@@ -25,7 +25,7 @@ func (m *conflictMapper) Map(rules *Rules, c Conflict) (target base.ConflictLogg
 	target = rules.Target
 
 	// Check for special "loggingRules" if any
-	if rules.Mapping == nil {
+	if len(rules.Mapping) == 0 {
 		// consider as no loggingRules.
 		return
 	}
@@ -35,8 +35,17 @@ func (m *conflictMapper) Map(rules *Rules, c Conflict) (target base.ConflictLogg
 		CollectionName: c.Collection(),
 	}
 
-	// SUMUKH TODO - complex rules mapping.
+	// look for exact match
+	// This is have highest precedence over scope only match or fallback target.
 	targetOverride, ok := rules.Mapping[source]
+	if ok {
+		target = targetOverride
+		return
+	}
+
+	// look for scope only match.
+	source.CollectionName = ""
+	targetOverride, ok = rules.Mapping[source]
 	if ok {
 		target = targetOverride
 	}

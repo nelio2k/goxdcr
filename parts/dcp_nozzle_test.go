@@ -22,13 +22,13 @@ import (
 	mc "github.com/couchbase/gomemcached"
 	mcReal "github.com/couchbase/gomemcached/client"
 	mcMock "github.com/couchbase/gomemcached/client/mocks"
-	"github.com/couchbase/goxdcr/base"
-	common "github.com/couchbase/goxdcr/common"
-	"github.com/couchbase/goxdcr/log"
-	"github.com/couchbase/goxdcr/metadata"
-	service_def "github.com/couchbase/goxdcr/service_def/mocks"
-	utilsReal "github.com/couchbase/goxdcr/utils"
-	utilsMock "github.com/couchbase/goxdcr/utils/mocks"
+	"github.com/couchbase/goxdcr/v8/base"
+	common "github.com/couchbase/goxdcr/v8/common"
+	"github.com/couchbase/goxdcr/v8/log"
+	"github.com/couchbase/goxdcr/v8/metadata"
+	service_def "github.com/couchbase/goxdcr/v8/service_def/mocks"
+	utilsReal "github.com/couchbase/goxdcr/v8/utils"
+	utilsMock "github.com/couchbase/goxdcr/v8/utils/mocks"
 	"github.com/stretchr/testify/assert"
 	mock "github.com/stretchr/testify/mock"
 )
@@ -63,7 +63,7 @@ func setupBoilerPlate() (*service_def.XDCRCompTopologySvc,
 	settingsMap[DCP_VBTimestampUpdater] = vbReturner
 
 	// statsInterval needs to be fed something
-	settingsMap[DCP_Stats_Interval] = 88888888
+	settingsMap[DCP_Nozzle_Stats_Interval] = 88888888
 
 	// Enable compression by default
 	settingsMap[SETTING_COMPRESSION_TYPE] = (base.CompressionType)(base.CompressionTypeSnappy)

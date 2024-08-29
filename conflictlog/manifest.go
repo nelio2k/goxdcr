@@ -3,7 +3,7 @@ package conflictlog
 import (
 	"sync"
 
-	"github.com/couchbase/goxdcr/metadata"
+	"github.com/couchbase/goxdcr/v8/metadata"
 )
 
 // NOTE: The cache implementation, although specific for colleciton manifest can be

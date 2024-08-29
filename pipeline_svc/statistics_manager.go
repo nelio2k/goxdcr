@@ -20,17 +20,17 @@ import (
 
 	mc "github.com/couchbase/gomemcached"
 	mcc "github.com/couchbase/gomemcached/client"
-	"github.com/couchbase/goxdcr/base"
-	"github.com/couchbase/goxdcr/base/filter"
-	"github.com/couchbase/goxdcr/common"
-	component "github.com/couchbase/goxdcr/component"
-	"github.com/couchbase/goxdcr/log"
-	"github.com/couchbase/goxdcr/metadata"
-	"github.com/couchbase/goxdcr/parts"
-	pipeline_pkg "github.com/couchbase/goxdcr/pipeline"
-	"github.com/couchbase/goxdcr/pipeline_utils"
-	"github.com/couchbase/goxdcr/service_def"
-	utilities "github.com/couchbase/goxdcr/utils"
+	"github.com/couchbase/goxdcr/v8/base"
+	"github.com/couchbase/goxdcr/v8/base/filter"
+	"github.com/couchbase/goxdcr/v8/common"
+	component "github.com/couchbase/goxdcr/v8/component"
+	"github.com/couchbase/goxdcr/v8/log"
+	"github.com/couchbase/goxdcr/v8/metadata"
+	"github.com/couchbase/goxdcr/v8/parts"
+	pipeline_pkg "github.com/couchbase/goxdcr/v8/pipeline"
+	"github.com/couchbase/goxdcr/v8/pipeline_utils"
+	"github.com/couchbase/goxdcr/v8/service_def"
+	utilities "github.com/couchbase/goxdcr/v8/utils"
 	"github.com/rcrowley/go-metrics"
 )
 
@@ -51,7 +51,7 @@ var StatsToInitializeForPausedReplications = []string{service_def.DOCS_WRITTEN_M
 var StatsToClearForPausedReplications = []string{service_def.SIZE_REP_QUEUE_METRIC, service_def.DOCS_REP_QUEUE_METRIC, service_def.DOCS_LATENCY_METRIC, service_def.META_LATENCY_METRIC,
 	service_def.TIME_COMMITING_METRIC, service_def.NUM_FAILEDCKPTS_METRIC, service_def.RATE_DOC_CHECKS_METRIC, service_def.RATE_OPT_REPD_METRIC, service_def.RATE_RECEIVED_DCP_METRIC,
 	service_def.RATE_REPLICATED_METRIC, service_def.BANDWIDTH_USAGE_METRIC, service_def.THROTTLE_LATENCY_METRIC, service_def.THROUGHPUT_THROTTLE_LATENCY_METRIC, service_def.GET_DOC_LATENCY_METRIC,
-	service_def.MERGE_LATENCY_METRIC, service_def.DOCS_CLONED_METRIC, service_def.DATA_REPLICATED_UNCOMPRESSED_METRIC, service_def.DELETION_CLONED_METRIC, service_def.TARGET_TMPFAIL_METRIC,
+	service_def.MERGE_LATENCY_METRIC, service_def.DOCS_CLONED_METRIC, service_def.DATA_REPLICATED_UNCOMPRESSED_METRIC, service_def.DOCS_COMPRESSION_SKIPPED_METRIC, service_def.DELETION_CLONED_METRIC, service_def.TARGET_TMPFAIL_METRIC,
 	service_def.HLV_UPDATED_METRIC, service_def.HLV_PRUNED_METRIC, service_def.IMPORT_DOCS_WRITTEN_METRIC, service_def.IMPORT_DOCS_FAILED_CR_SOURCE_METRIC, service_def.SOURCE_SYNC_XATTR_REMOVED_METRIC,
 	service_def.TARGET_SYNC_XATTR_PRESERVED_METRIC, service_def.TARGET_EACCESS_METRIC, service_def.HLV_PRUNED_AT_MERGE_METRIC}
 
@@ -107,6 +107,7 @@ var OverviewMetricKeys = map[string]service_def.MetricType{
 	service_def.TARGET_DOCS_SKIPPED_METRIC:          service_def.MetricTypeCounter,
 	service_def.DOCS_FAILED_CR_TARGET_METRIC:        service_def.MetricTypeCounter,
 	service_def.DATA_REPLICATED_UNCOMPRESSED_METRIC: service_def.MetricTypeCounter,
+	service_def.DOCS_COMPRESSION_SKIPPED_METRIC:     service_def.MetricTypeCounter,
 	service_def.PIPELINE_STATUS:                     service_def.MetricTypeGauge,
 	service_def.PIPELINE_ERRORS:                     service_def.MetricTypeGauge,
 	service_def.TARGET_TMPFAIL_METRIC:               service_def.MetricTypeCounter,
@@ -148,6 +149,8 @@ var OverviewMetricKeys = map[string]service_def.MetricType{
 	service_def.DOCS_SENT_WITH_SUBDOC_SET:           service_def.MetricTypeCounter,
 	service_def.DOCS_SENT_WITH_SUBDOC_DELETE:        service_def.MetricTypeCounter,
 	service_def.DOCS_FILTERED_CAS_POISONING_METRIC:  service_def.MetricTypeCounter,
+	service_def.DOCS_SENT_WITH_POISONED_CAS_ERROR:   service_def.MetricTypeCounter,
+	service_def.DOCS_SENT_WITH_POISONED_CAS_REPLACE: service_def.MetricTypeCounter,
 }
 
 var RouterVBMetricKeys = []string{service_def.DOCS_FILTERED_METRIC, service_def.DOCS_UNABLE_TO_FILTER_METRIC, service_def.EXPIRY_FILTERED_METRIC,
@@ -156,7 +159,8 @@ var RouterVBMetricKeys = []string{service_def.DOCS_FILTERED_METRIC, service_def.
 	service_def.DOCS_FILTERED_MOBILE_METRIC, service_def.DOCS_FILTERED_USER_DEFINED_METRIC, service_def.DOCS_FILTERED_CAS_POISONING_METRIC}
 
 var OutNozzleVBMetricKeys = []string{service_def.GUARDRAIL_RESIDENT_RATIO_METRIC, service_def.GUARDRAIL_DATA_SIZE_METRIC, service_def.GUARDRAIL_DISK_SPACE_METRIC,
-	service_def.DOCS_SENT_WITH_SUBDOC_SET, service_def.DOCS_SENT_WITH_SUBDOC_DELETE}
+	service_def.DOCS_SENT_WITH_SUBDOC_SET, service_def.DOCS_SENT_WITH_SUBDOC_DELETE,
+	service_def.DOCS_SENT_WITH_POISONED_CAS_ERROR, service_def.DOCS_SENT_WITH_POISONED_CAS_REPLACE}
 
 var VBMetricKeys []string
 var compileVBMetricKeyOnce sync.Once
@@ -199,6 +203,8 @@ func NewVBStatsMapFromCkpt(ckptDoc *metadata.CheckpointsDoc, agreedIndex int) ba
 	vbStatMap[service_def.DOCS_SENT_WITH_SUBDOC_SET] = base.Uint64ToInt64(record.DocsSentWithSubdocSetCnt)
 	vbStatMap[service_def.DOCS_SENT_WITH_SUBDOC_DELETE] = base.Uint64ToInt64(record.DocsSentWithSubdocDeleteCnt)
 	vbStatMap[service_def.DOCS_FILTERED_CAS_POISONING_METRIC] = base.Uint64ToInt64(record.CasPoisonCnt)
+	vbStatMap[service_def.DOCS_SENT_WITH_POISONED_CAS_ERROR] = base.Uint64ToInt64(record.DocsSentWithPoisonedCasErrorMode)
+	vbStatMap[service_def.DOCS_SENT_WITH_POISONED_CAS_REPLACE] = base.Uint64ToInt64(record.DocsSentWithPoisonedCasReplaceMode)
 	return vbStatMap
 }
 
@@ -723,6 +729,13 @@ func (stats_mgr *StatisticsManager) processCalculatedStats(overview_expvar_map *
 	theoreticalUncompressedDataReplicatedVar := new(expvar.Int)
 	theoreticalUncompressedDataReplicatedVar.Set(theoreticalUncompressedDataReplicated)
 	overview_expvar_map.Set(service_def.DATA_REPLICATED_UNCOMPRESSED_METRIC, theoreticalUncompressedDataReplicatedVar)
+
+	// calculate docs_compression_skipped
+	docsCompressionSkippedVar := new(expvar.Int)
+	docsCompressionSkippedVar.Set(
+		stats_mgr.getOverviewRegistry().Get(service_def.DOCS_COMPRESSION_SKIPPED_METRIC).(metrics.Counter).Count(),
+	)
+	overview_expvar_map.Set(service_def.DOCS_COMPRESSION_SKIPPED_METRIC, docsCompressionSkippedVar)
 
 	//calculate rate_doc_checks
 	var rate_doc_checks float64
@@ -1528,6 +1541,8 @@ func (outNozzle_collector *outNozzleCollector) Mount(pipeline common.Pipeline, s
 		registry.Register(service_def.SUBDOC_CMD_DOCS_CAS_CHANGED_METRIC, subdoc_cmd_cas_changed)
 		data_replicated_uncompressed := metrics.NewCounter()
 		registry.Register(service_def.DATA_REPLICATED_UNCOMPRESSED_METRIC, data_replicated_uncompressed)
+		docs_compression_skipped := metrics.NewCounter()
+		registry.Register(service_def.DOCS_COMPRESSION_SKIPPED_METRIC, docs_compression_skipped)
 		eaccessReceived := metrics.NewCounter()
 		registry.Register(service_def.TARGET_EACCESS_METRIC, eaccessReceived)
 		tmpfailReceived := metrics.NewCounter()
@@ -1556,6 +1571,10 @@ func (outNozzle_collector *outNozzleCollector) Mount(pipeline common.Pipeline, s
 		registry.Register(service_def.DOCS_SENT_WITH_SUBDOC_SET, docsSentWithSubdocSet)
 		docsSentWithSubdocDelete := metrics.NewCounter()
 		registry.Register(service_def.DOCS_SENT_WITH_SUBDOC_DELETE, docsSentWithSubdocDelete)
+		docsSentWithPoisonedCasError := metrics.NewCounter()
+		registry.Register(service_def.DOCS_SENT_WITH_POISONED_CAS_ERROR, docsSentWithPoisonedCasError)
+		docsSentWithPoisonedCasReplace := metrics.NewCounter()
+		registry.Register(service_def.DOCS_SENT_WITH_POISONED_CAS_REPLACE, docsSentWithPoisonedCasReplace)
 
 		metric_map := make(map[string]interface{})
 		metric_map[service_def.SIZE_REP_QUEUE_METRIC] = size_rep_queue
@@ -1590,6 +1609,7 @@ func (outNozzle_collector *outNozzleCollector) Mount(pipeline common.Pipeline, s
 		metric_map[service_def.ADD_DOCS_CAS_CHANGED_METRIC] = add_cas_changed
 		metric_map[service_def.SUBDOC_CMD_DOCS_CAS_CHANGED_METRIC] = subdoc_cmd_cas_changed
 		metric_map[service_def.DATA_REPLICATED_UNCOMPRESSED_METRIC] = data_replicated_uncompressed
+		metric_map[service_def.DOCS_COMPRESSION_SKIPPED_METRIC] = docs_compression_skipped
 		metric_map[service_def.TARGET_EACCESS_METRIC] = eaccessReceived
 		metric_map[service_def.TARGET_TMPFAIL_METRIC] = tmpfailReceived
 		metric_map[service_def.GUARDRAIL_RESIDENT_RATIO_METRIC] = guardRailRR
@@ -1604,6 +1624,8 @@ func (outNozzle_collector *outNozzleCollector) Mount(pipeline common.Pipeline, s
 		metric_map[service_def.HLV_UPDATED_METRIC] = hlvUpdated
 		metric_map[service_def.DOCS_SENT_WITH_SUBDOC_SET] = docsSentWithSubdocSet
 		metric_map[service_def.DOCS_SENT_WITH_SUBDOC_DELETE] = docsSentWithSubdocDelete
+		metric_map[service_def.DOCS_SENT_WITH_POISONED_CAS_ERROR] = docsSentWithPoisonedCasError
+		metric_map[service_def.DOCS_SENT_WITH_POISONED_CAS_REPLACE] = docsSentWithPoisonedCasReplace
 
 		listOfVBs := part.ResponsibleVBs()
 		outNozzle_collector.vbMetricHelper.Register(outNozzle_collector.Id(), listOfVBs, part.Id(), OutNozzleVBMetricKeys)
@@ -1626,6 +1648,7 @@ func (outNozzle_collector *outNozzleCollector) Mount(pipeline common.Pipeline, s
 	pipeline_utils.RegisterAsyncComponentEventHandler(async_listener_map, base.HlvUpdatedEventListener, outNozzle_collector)
 	pipeline_utils.RegisterAsyncComponentEventHandler(async_listener_map, base.HlvPrunedEventListener, outNozzle_collector)
 	pipeline_utils.RegisterAsyncComponentEventHandler(async_listener_map, base.DocsSentWithSubdocCmdEventListener, outNozzle_collector)
+	pipeline_utils.RegisterAsyncComponentEventHandler(async_listener_map, base.DocsSentWithPoisonedCasEventListener, outNozzle_collector)
 
 	return nil
 }
@@ -1661,6 +1684,9 @@ func (outNozzle_collector *outNozzleCollector) ProcessEvent(event *common.Event)
 		metricMap[service_def.DOCS_WRITTEN_METRIC].(metrics.Counter).Inc(1)
 		metricMap[service_def.DATA_REPLICATED_METRIC].(metrics.Counter).Inc(int64(req_size))
 		metricMap[service_def.DATA_REPLICATED_UNCOMPRESSED_METRIC].(metrics.Counter).Inc(int64(event_otherInfo.UncompressedReqSize))
+		if event_otherInfo.SkippedRecompression {
+			metricMap[service_def.DOCS_COMPRESSION_SKIPPED_METRIC].(metrics.Counter).Inc(1)
+		}
 		if opti_replicated {
 			metricMap[service_def.DOCS_OPT_REPD_METRIC].(metrics.Counter).Inc(1)
 		}
@@ -1856,8 +1882,23 @@ func (outNozzle_collector *outNozzleCollector) ProcessEvent(event *common.Event)
 			outNozzle_collector.stats_mgr.logger.Errorf(err.Error())
 			return err
 		}
+	case common.DocsSentWithPoisonedCas:
+		protectionMode := event.Data.(base.TargetKVCasPoisonProtectionMode)
+		switch protectionMode {
+		case base.ErrorMode:
+			metricMap[service_def.DOCS_SENT_WITH_POISONED_CAS_ERROR].(metrics.Counter).Inc(1)
+			err := outNozzle_collector.handleVBEvent(event, service_def.DOCS_SENT_WITH_POISONED_CAS_ERROR)
+			if err != nil {
+				return err
+			}
+		case base.ReplaceMode:
+			metricMap[service_def.DOCS_SENT_WITH_POISONED_CAS_REPLACE].(metrics.Counter).Inc(1)
+			err := outNozzle_collector.handleVBEvent(event, service_def.DOCS_SENT_WITH_POISONED_CAS_REPLACE)
+			if err != nil {
+				return err
+			}
+		}
 	}
-
 	return nil
 }
 
@@ -1866,6 +1907,10 @@ func (outNozzle_collector *outNozzleCollector) handleVBEvent(event *common.Event
 	case service_def.DOCS_SENT_WITH_SUBDOC_SET:
 		fallthrough
 	case service_def.DOCS_SENT_WITH_SUBDOC_DELETE:
+		fallthrough
+	case service_def.DOCS_SENT_WITH_POISONED_CAS_ERROR:
+		fallthrough
+	case service_def.DOCS_SENT_WITH_POISONED_CAS_REPLACE:
 		fallthrough
 	case service_def.GUARDRAIL_DISK_SPACE_METRIC:
 		fallthrough

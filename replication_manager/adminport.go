@@ -24,16 +24,16 @@ import (
 	"time"
 
 	"github.com/couchbase/cbauth"
-	ap "github.com/couchbase/goxdcr/adminport"
-	"github.com/couchbase/goxdcr/base"
-	"github.com/couchbase/goxdcr/conflictlog"
-	"github.com/couchbase/goxdcr/gen_server"
-	"github.com/couchbase/goxdcr/log"
-	"github.com/couchbase/goxdcr/metadata"
-	"github.com/couchbase/goxdcr/peerToPeer"
-	"github.com/couchbase/goxdcr/pipeline_utils"
-	"github.com/couchbase/goxdcr/service_def"
-	utilities "github.com/couchbase/goxdcr/utils"
+	ap "github.com/couchbase/goxdcr/v8/adminport"
+	"github.com/couchbase/goxdcr/v8/base"
+	"github.com/couchbase/goxdcr/v8/conflictlog"
+	"github.com/couchbase/goxdcr/v8/gen_server"
+	"github.com/couchbase/goxdcr/v8/log"
+	"github.com/couchbase/goxdcr/v8/metadata"
+	"github.com/couchbase/goxdcr/v8/peerToPeer"
+	"github.com/couchbase/goxdcr/v8/pipeline_utils"
+	"github.com/couchbase/goxdcr/v8/service_def"
+	utilities "github.com/couchbase/goxdcr/v8/utils"
 
 	_ "net/http/pprof"
 )
@@ -41,7 +41,7 @@ import (
 var StaticPaths = []string{base.RemoteClustersPath, CreateReplicationPath, SettingsReplicationsPath, AllReplicationsPath, AllReplicationInfosPath, RegexpValidationPrefix, MemStatsPath, BlockProfileStartPath, BlockProfileStopPath, XDCRInternalSettingsPath, XDCRPrometheusStatsPath, XDCRPrometheusStatsHighPath, base.XDCRPeerToPeerPath, base.XDCRConnectionPreCheckPath, "xdcr/conflictlog"}
 var DynamicPathPrefixes = []string{base.RemoteClustersPath, DeleteReplicationPrefix, SettingsReplicationsPath, StatisticsPrefix, AllReplicationsPath}
 
-var logger_ap *log.CommonLogger = log.NewLogger("AdminPort", log.DefaultLoggerContext)
+var logger_ap *log.CommonLogger = log.NewLogger(base.AdminPortKey, log.GetOrCreateContext(base.AdminPortKey))
 
 /*
 ***********************************
@@ -69,7 +69,7 @@ func NewAdminport(laddr string, xdcrRestPort, kvAdminPort uint16, finch chan boo
 	var error_handler_func gen_server.Error_Handler_Func
 
 	server := gen_server.NewGenServer(&msg_callback_func,
-		&exit_callback_func, &error_handler_func, log.DefaultLoggerContext, "Adminport", utilsIn)
+		&exit_callback_func, &error_handler_func, log.GetOrCreateContext(base.AdminPortKey), base.AdminPortKey, utilsIn)
 
 	adminport := &Adminport{
 		sourceKVHost:        laddr,
@@ -1423,6 +1423,19 @@ func (adminport *Adminport) doChangeConflictLogSetting(request *http.Request) (*
 	logger_ap.Infof("changing conflict logging defaults = %v", request.Form)
 	for key, valArr := range request.Form {
 		switch key {
+		case "skipTlsVerify":
+			val := valArr[0]
+			tlsVerify := false
+			if val == "true" {
+				tlsVerify = true
+			}
+
+			m, err := conflictlog.GetManager()
+			if err != nil {
+				errorsMap["error_connType"] = err
+				return EncodeObjectIntoResponse(errorsMap)
+			}
+			m.SetSkipTlsVerify(tlsVerify)
 		case "connType":
 			connType := valArr[0]
 			logger_ap.Infof("changing conflict connection type = %s", connType)

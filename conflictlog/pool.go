@@ -6,7 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/couchbase/goxdcr/log"
+	"github.com/couchbase/goxdcr/v8/base"
+	"github.com/couchbase/goxdcr/v8/log"
 )
 
 var _ ConnPool = (*connPool)(nil)
@@ -31,7 +32,7 @@ type ConnPool interface {
 	// Get returns an object from the pool. If there is none then it creates
 	// one by calling newConnFn() and returns it. It is guaranteed that either
 	// an error or a non-nil connection object will be returned
-	Get(bucketName string) (conn io.Closer, err error)
+	Get(bucketName string, timeout time.Duration) (conn io.Closer, err error)
 
 	// Put releases the connection back to the pool for reuse. It is caller's job
 	// to ensure that right bucket name is passed here. The damaged == true tells the pool
@@ -47,10 +48,10 @@ type ConnPool interface {
 	// Duration <= 0 has no effect and its ignored
 	UpdateReapInterval(d time.Duration)
 
-	// UpdateLimit sets the upper limit of number of active connections in the pool and
+	// SetLimit sets the upper limit of number of active connections in the pool and
 	// created but not released back to the pool. On reaching the max connections the Get()
 	// will block. Value <= has no effect and its ignored
-	UpdateLimit(n int)
+	SetLimit(n int)
 
 	// Close reaps all the connections which are in the pool. It does not deal with connections
 	// which are not yet released back to the pool. The caller should ensure this.
@@ -82,9 +83,8 @@ type connPool struct {
 	// connection should be reaped
 	reapInterval time.Duration
 
-	// limit is the max number of outstanding connections
-	// NOT IN USE AT THE MOMENT
-	limit int
+	// Limiter is a semaphore to limit the connection count
+	limiter *base.Semaphore
 
 	finch chan bool
 
@@ -141,7 +141,7 @@ func (l *connList) closeAll() {
 }
 
 // newConnPool creates a new connection pool
-func newConnPool(logger *log.CommonLogger, newConnFn func(bucketName string) (io.Closer, error)) *connPool {
+func newConnPool(logger *log.CommonLogger, limit int, newConnFn func(bucketName string) (io.Closer, error)) *connPool {
 	p := &connPool{
 		logger:       logger,
 		buckets:      map[string]*connList{},
@@ -150,6 +150,7 @@ func newConnPool(logger *log.CommonLogger, newConnFn func(bucketName string) (io
 		gcTicker:     time.NewTicker(DefaultPoolGCInterval),
 		reapInterval: DefaultPoolReapInterval,
 		finch:        make(chan bool, 1),
+		limiter:      base.NewSemaphore(limit),
 	}
 
 	go p.gc()
@@ -218,9 +219,14 @@ func (pool *connPool) UpdateReapInterval(d time.Duration) {
 // Get returns an object from the pool. If there is none then it creates
 // one by calling newConnFn() and returns it. It is guaranteed that either
 // an error or a non-nil connection object will be returned
-func (pool *connPool) Get(bucketName string) (conn io.Closer, err error) {
+func (pool *connPool) Get(bucketName string, timeout time.Duration) (conn io.Closer, err error) {
 	if pool.closed {
 		err = ErrClosedConnPool
+		return
+	}
+
+	if !pool.limiter.AcquireWithTimeout(timeout) {
+		err = ErrConnPoolGetTimeout
 		return
 	}
 
@@ -230,15 +236,22 @@ func (pool *connPool) Get(bucketName string) (conn io.Closer, err error) {
 	}
 
 	conn, err = pool.newConnFn(bucketName)
+	if err != nil {
+		pool.limiter.Release()
+	}
+
 	return
 }
 
 // Put releases the connection back to the pool for reuse. It is caller's job
 // to ensure that right bucket name is passed here.
 func (pool *connPool) Put(bucketName string, conn io.Closer, damaged bool) {
-	if damaged { // this implies damaged connection
-		// NOT IMPLEMENTED YET. As of now we ignore it and not put the damaged connection
-		// in the pool. We simply handle it as no-op and let the caller Get() new connection
+	defer pool.limiter.Release()
+
+	if damaged {
+		// We do nothing here except to close the connection & release back to the limiter (see defer)
+		// We have to release back to make way for a new connection to replace the damaged one.
+		conn.Close()
 		return
 	}
 
@@ -268,17 +281,16 @@ func (pool *connPool) Close() error {
 	return nil
 }
 
-// UpdateLimit sets the upper limit of number of active connections in the pool and
+// SetLimit sets the upper limit of number of active connections in the pool and
 // created but not released back to the pool. On reaching the max connections the Get()
 // will block
-func (pool *connPool) UpdateLimit(n int) {
+func (pool *connPool) SetLimit(n int) {
 	if n <= 0 {
 		return
 	}
 
-	pool.mu.Lock()
-	pool.limit = n
-	pool.mu.Unlock()
+	// There is no need for a pool level lock as SetLimit is thread safe
+	pool.limiter.SetLimit(n)
 }
 
 // reapConnList collects all the connection lists which have not been used for the reapInterval time

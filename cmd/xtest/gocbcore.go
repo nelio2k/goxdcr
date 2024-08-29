@@ -4,17 +4,17 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/couchbase/goxdcr/base"
-	"github.com/couchbase/goxdcr/conflictlog"
-	"github.com/couchbase/goxdcr/log"
+	"github.com/couchbase/goxdcr/v8/base"
+	"github.com/couchbase/goxdcr/v8/conflictlog"
+	"github.com/couchbase/goxdcr/v8/log"
 )
 
 type GocbcoreTest struct {
-	Addr   string                     `json:"addr"`
-	Target base.ConflictLoggingTarget `json:"target"`
-	Count  int                        `json:"count"`
-	Key    string                     `json:"key"`
-	Doc    map[string]interface{}     `json:"doc"`
+	Addr   string                 `json:"addr"`
+	Target base.ConflictLogTarget `json:"target"`
+	Count  int                    `json:"count"`
+	Key    string                 `json:"key"`
+	Doc    map[string]interface{} `json:"doc"`
 }
 
 func gocbcoreTest(cfg Config) (err error) {
@@ -26,7 +26,7 @@ func gocbcoreTest(cfg Config) (err error) {
 		addr: opts.Addr,
 	}
 
-	conn, err := conflictlog.NewGocbConn(logger, memdAddrGetter, opts.Target.Bucket)
+	conn, err := conflictlog.NewGocbConn(logger, memdAddrGetter, opts.Target.Bucket, nil)
 	if err != nil {
 		return
 	}

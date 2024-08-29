@@ -15,15 +15,15 @@ import (
 	"sync"
 	"time"
 
-	"github.com/couchbase/goxdcr/base"
-	"github.com/couchbase/goxdcr/common"
-	"github.com/couchbase/goxdcr/conflictlog"
-	"github.com/couchbase/goxdcr/log"
-	"github.com/couchbase/goxdcr/metadata"
-	"github.com/couchbase/goxdcr/parts"
-	"github.com/couchbase/goxdcr/peerToPeer"
-	"github.com/couchbase/goxdcr/service_def"
-	utilities "github.com/couchbase/goxdcr/utils"
+	"github.com/couchbase/goxdcr/v8/base"
+	"github.com/couchbase/goxdcr/v8/common"
+	"github.com/couchbase/goxdcr/v8/conflictlog"
+	"github.com/couchbase/goxdcr/v8/log"
+	"github.com/couchbase/goxdcr/v8/metadata"
+	"github.com/couchbase/goxdcr/v8/parts"
+	"github.com/couchbase/goxdcr/v8/peerToPeer"
+	"github.com/couchbase/goxdcr/v8/service_def"
+	utilities "github.com/couchbase/goxdcr/v8/utils"
 )
 
 var ErrorKey = "Error"
@@ -62,7 +62,7 @@ type VBMasterCheckFunc func(common.Pipeline) (map[string]*peerToPeer.VBMasterChe
 
 type MergeVBMasterRespCkptsFunc func(common.Pipeline, peerToPeer.PeersVBMasterCheckRespMap) error
 
-type PrometheusPipelineStatusCb []func()
+type PrometheusStatusUpdater func(pipeline common.Pipeline, status base.PipelineStatusGauge) error
 
 // GenericPipeline is the generic implementation of a data processing pipeline
 //
@@ -144,7 +144,7 @@ type GenericPipeline struct {
 	sourceTopologyProgressMsg string
 	targetTopologyProgressMsg string
 
-	statusCallbacks PrometheusPipelineStatusCb
+	prometheusStatusUpdater PrometheusStatusUpdater
 
 	// Conflict logger for the pipeline
 	conflictLogger    conflictlog.Logger
@@ -270,10 +270,16 @@ func (genericPipeline *GenericPipeline) Start(settings metadata.ReplicationSetti
 		if len(errMap) > 0 {
 			genericPipeline.logger.Errorf("%v failed to start, err=%v", genericPipeline.InstanceId(), errMap)
 			genericPipeline.ReportProgress(fmt.Sprintf("Pipeline failed to start, err=%v", errMap))
-			genericPipeline.statusCallbacks[base.PipelineStatusError]()
+			err := genericPipeline.prometheusStatusUpdater(genericPipeline, base.PipelineStatusError)
+			if err != nil {
+				genericPipeline.logger.Errorf("failed to update prometheus status. err=%v", err)
+			}
 		} else {
 			// Only set to running if there is no error starting the pipeline
-			genericPipeline.statusCallbacks[base.PipelineStatusRunning]()
+			err := genericPipeline.prometheusStatusUpdater(genericPipeline, base.PipelineStatusRunning)
+			if err != nil {
+				genericPipeline.logger.Errorf("failed to update prometheus status. err=%v", err)
+			}
 		}
 	}(genericPipeline, errMap)
 
@@ -419,9 +425,14 @@ func (genericPipeline *GenericPipeline) Start(settings metadata.ReplicationSetti
 // As part of CAS poison check, we need to make sure that given a specific VB, the max cas's between them
 // are not beyond an acceptable threshold
 func (genericPipeline *GenericPipeline) preCheckCasCheck(spec *metadata.ReplicationSpecification, genPipelineId string, errMap base.ErrorMap) base.ErrorMap {
+	if !base.IsCasPoisoningPreCheckEnabled() {
+		genericPipeline.logger.Infof("Skip cas poison precheck because it has been disabled entirely")
+		return errMap
+	}
+
 	preCheckThreshold := time.Duration(spec.Settings.GetPreCheckCasDriftThreshold()) * time.Hour
 	if preCheckThreshold == 0 {
-		genericPipeline.logger.Infof("Skip cas poison precheck because it has been disabled")
+		genericPipeline.logger.Infof("Skip cas poison precheck because it has been disabled for this pipeline")
 		return errMap
 	}
 
@@ -490,63 +501,64 @@ func (genericPipeline *GenericPipeline) preCheckCasCheck(spec *metadata.Replicat
 }
 
 func (genericPipeline *GenericPipeline) getlocalMaxCasMap(spec *metadata.ReplicationSpecification, genPipelineId string) (base.VbSeqnoMapType, base.ErrorMap) {
-	localMaxCasNotificationCh, err := genericPipeline.bucketTopologySvc.SubscribeToLocalBucketMaxVbCasStatFeed(spec, genPipelineId)
+	errMap := make(base.ErrorMap)
+	localMaxCasMap := make(base.VbSeqnoMapType)
+
+	localMaxCasNotificationCh, localMaxCasErrCh, err := genericPipeline.bucketTopologySvc.SubscribeToLocalBucketMaxVbCasStatFeed(spec, genPipelineId)
 	if err != nil {
-		errMap := make(base.ErrorMap)
 		errMap[PreCheckCasCheck] = err
 		return nil, errMap
 	}
+	defer genericPipeline.bucketTopologySvc.UnSubscribeToLocalBucketMaxVbCasStatFeed(spec, genPipelineId)
 
-	localMaxCasMap := make(base.VbSeqnoMapType)
 	var nonEmptyResultFound bool
 	for !nonEmptyResultFound {
-		maxCasNotification := <-localMaxCasNotificationCh
-		vbMaxCasMap := maxCasNotification.GetVBMaxCasStats()
-		if len(vbMaxCasMap) == 0 {
-			time.Sleep(1 * time.Second)
-		} else {
-			nonEmptyResultFound = true
-			localMaxCasMap = vbMaxCasMap.DedupAndGetMax()
-		}
-		maxCasNotification.Recycle()
-	}
+		select {
+		case maxCasNotification := <-localMaxCasNotificationCh:
+			vbMaxCasMap := maxCasNotification.GetVBMaxCasStats()
+			if len(vbMaxCasMap) != 0 {
+				nonEmptyResultFound = true
+				localMaxCasMap = vbMaxCasMap.DedupAndGetMax()
+			}
+			maxCasNotification.Recycle()
+		case err := <-localMaxCasErrCh:
+			if err != nil {
+				errMap[PreCheckCasCheck] = fmt.Errorf("failed to fetch localMaxCasMap. err=%v", err)
+				return nil, errMap
 
-	err = genericPipeline.bucketTopologySvc.UnSubscribeToLocalBucketMaxVbCasStatFeed(spec, genPipelineId)
-	if err != nil {
-		errMap := make(base.ErrorMap)
-		errMap[PreCheckCasCheck] = err
-		return nil, errMap
+			}
+		}
 	}
 	return localMaxCasMap, nil
 }
 
 func (genericPipeline *GenericPipeline) getRemoteMinCasMap(spec *metadata.ReplicationSpecification, genPipelineId string) (base.VbSeqnoMapType, base.ErrorMap) {
-	remoteMaxNotificationCh, err := genericPipeline.bucketTopologySvc.SubscribeToRemoteKVStatsFeed(spec, genPipelineId)
+	remoteMinCasMap := make(base.VbSeqnoMapType)
+	errMap := make(base.ErrorMap)
+
+	remoteMaxNotificationCh, remoteMaxCasErrCh, err := genericPipeline.bucketTopologySvc.SubscribeToRemoteKVStatsFeed(spec, genPipelineId)
 	if err != nil {
-		errMap := make(base.ErrorMap)
 		errMap[PreCheckCasCheck] = err
 		return nil, errMap
 	}
+	defer genericPipeline.bucketTopologySvc.UnSubscribeToRemoteKVStatsFeed(spec, genPipelineId)
 
-	remoteMinCasMap := make(base.VbSeqnoMapType)
 	var nonEmptyResultFound bool
 	for !nonEmptyResultFound {
-		maxCasNotification := <-remoteMaxNotificationCh
-		vbMaxCasMap := maxCasNotification.GetVBMaxCasStats()
-		if len(vbMaxCasMap) == 0 {
-			time.Sleep(1 * time.Second)
-		} else {
-			nonEmptyResultFound = true
-			remoteMinCasMap = vbMaxCasMap.DedupAndGetMin()
+		select {
+		case maxCasNotification := <-remoteMaxNotificationCh:
+			vbMaxCasMap := maxCasNotification.GetVBMaxCasStats()
+			if len(vbMaxCasMap) != 0 {
+				nonEmptyResultFound = true
+				remoteMinCasMap = vbMaxCasMap.DedupAndGetMin()
+			}
+			maxCasNotification.Recycle()
+		case err := <-remoteMaxCasErrCh:
+			if err != nil {
+				errMap[PreCheckCasCheck] = fmt.Errorf("failed to fetch RemoteMinCasMap. err=%v", err)
+				return nil, errMap
+			}
 		}
-		maxCasNotification.Recycle()
-	}
-
-	err = genericPipeline.bucketTopologySvc.UnSubscribeToRemoteKVStatsFeed(spec, genPipelineId)
-	if err != nil {
-		errMap := make(base.ErrorMap)
-		errMap[PreCheckCasCheck] = err
-		return nil, errMap
 	}
 	return remoteMinCasMap, nil
 }
@@ -729,7 +741,10 @@ func (genericPipeline *GenericPipeline) Stop() base.ErrorMap {
 			// Only mark the pipeline paused if the user requested it (or auto paused)
 			// Otherwise, any stop() could be called during error phase and we want to keep
 			// the pipeline in error phase
-			genericPipeline.statusCallbacks[base.PipelineStatusPaused]()
+			err := genericPipeline.prometheusStatusUpdater(genericPipeline, base.PipelineStatusPaused)
+			if err != nil {
+				genericPipeline.logger.Errorf("failed to update prometheus status. err=%v", err)
+			}
 		}
 	}
 
@@ -820,7 +835,7 @@ func NewPipelineWithSettingConstructor(t string, pipelineType common.PipelineTyp
 	connectorSettingsConstructor ConnectorSettingsConstructor, sslPortMapConstructor SSLPortMapConstructor, partsUpdateSettingsConstructor PartsUpdateSettingsConstructor,
 	connectorUpdateSetting_constructor ConnectorsUpdateSettingsConstructor, startingSeqnoConstructor StartingSeqnoConstructor, checkpoint_func CheckpointFunc,
 	logger_context *log.LoggerContext, vbMasterCheckFunc VBMasterCheckFunc, mergeCkptFunc MergeVBMasterRespCkptsFunc, bucketTopologySvc service_def.BucketTopologySvc,
-	utils utilities.UtilsIface, prometheusStatusCbConstructor func(pipeline common.Pipeline) PrometheusPipelineStatusCb, conflictLogger conflictlog.Logger) *GenericPipeline {
+	utils utilities.UtilsIface, prometheusStatusUpdater func(pipeline common.Pipeline, status base.PipelineStatusGauge) error, conflictLogger conflictlog.Logger) *GenericPipeline {
 
 	pipeline := &GenericPipeline{topic: t,
 		sources:                            sources,
@@ -843,11 +858,11 @@ func NewPipelineWithSettingConstructor(t string, pipelineType common.PipelineTyp
 		vbMasterCheckFunc:                  vbMasterCheckFunc,
 		mergeCkptFunc:                      mergeCkptFunc,
 		utils:                              utils,
+		prometheusStatusUpdater:            prometheusStatusUpdater,
 		conflictLogger:                     conflictLogger,
 	}
 
 	// NOTE: Calling initialize here as part of constructor
-	pipeline.statusCallbacks = prometheusStatusCbConstructor(pipeline)
 	pipeline.initialize()
 	pipeline.logger.Debugf("Pipeline %s has been initialized with a part setting constructor %v", t, partsSettingsConstructor)
 
@@ -1160,94 +1175,68 @@ func (genericPipeline *GenericPipeline) updatePipelineSettings(settings metadata
 }
 
 func (genericPipeline *GenericPipeline) updateConflictLoggingRules(settings metadata.ReplicationSettingsMap) {
-	var conflictLoggingEnabled bool
-	var conflictLoggingMap base.ConflictLoggingMappingInput
 	conflictLoggingIn, ok := settings[base.ConflictLoggingKey]
 	if !ok {
 		// just didn't have this setting as update - no need to warn.
 		return
 	}
 
-	conflictLoggingMap, ok = conflictLoggingIn.(map[string]interface{})
+	conflictLoggingMap, ok := base.ParseConflictLoggingInputType(conflictLoggingIn)
 	if !ok {
 		// wrong type
-		genericPipeline.logger.Warnf("conflict map %v as input, is of invalid type %v. Ignoring the update",
+		genericPipeline.logger.Errorf("conflict map %v as input, is of invalid type %v. Ignoring the update",
 			conflictLoggingIn, reflect.TypeOf(conflictLoggingIn))
 		return
 	}
 
 	if conflictLoggingMap == nil {
 		// nil is not an accepted value, should not reach here.
-		genericPipeline.logger.Warnf("conflict map is nil as input, but is cannot be nil. Ignoring %v for the update",
+		genericPipeline.logger.Errorf("conflict map is nil as input, but is cannot be nil. Ignoring %v for the update",
 			conflictLoggingIn)
 		return
 	}
 
-	// {} is disabled.
-	conflictLoggingEnabled = len(conflictLoggingMap) > 0
+	conflictLoggingEnabled := !conflictLoggingMap.Disabled()
+	spec := genericPipeline.spec.GetReplicationSpec()
 
 	genericPipeline.conflictLoggerMtx.Lock()
 	defer genericPipeline.conflictLoggerMtx.Unlock()
 
-	// Option 1: logger needs to be enabled
+	// the conflict logger instance will be nil
+	// if conflict logging feature is off right now for this pipeline.
+	conflictLoggingIsOff := genericPipeline.conflictLogger == nil
+
+	// Option 1: conflict logging needs to be enabled
 	if conflictLoggingEnabled {
-		// compute the "rules"
-		newRules, err := conflictlog.ParseRules(conflictLoggingMap)
-		if err != nil || newRules == nil {
-			genericPipeline.logger.Warnf("error converting %v to new conflict logging rules, ignoring the input and continuing with old rules. err=%v",
+		if conflictLoggingIsOff {
+			// Option 1a: conflict logging needs to be enabled, but it is off right now.
+			newConflictLogger, err := conflictlog.NewLoggerWithRules(conflictLoggingMap, spec.UniqueId(), genericPipeline.logger.LoggerContext(), genericPipeline.logger)
+			if err != nil {
+				genericPipeline.logger.Errorf("error creating a conflict logger for new rules, ignoring input %v and continuing with old rules. err=%v", conflictLoggingMap, err)
+				return
+			}
+			genericPipeline.conflictLogger = newConflictLogger
+			return
+		}
+
+		// Option 1b: conflict logging needs to be enabled, but it is on right now.
+		err := conflictlog.UpdateLoggerWithRules(conflictLoggingMap, genericPipeline.conflictLogger, spec.UniqueId(), genericPipeline.logger)
+		if err != nil {
+			genericPipeline.logger.Errorf("error updating existing conflict logging rules, ignoring %v and continuing with old rules. err=%v",
 				conflictLoggingMap, err)
 			return
 		}
-
-		// Option 1a: a logger already existed, just update it with the new rules
-		if genericPipeline.conflictLogger != nil {
-			err = genericPipeline.conflictLogger.UpdateRules(newRules)
-			if err != nil {
-				genericPipeline.logger.Warnf("error updating existing conflict logging rules to new rules %s, ignoring %v and continuing with old rules. err=%v",
-					newRules, conflictLoggingMap, err)
-				return
-			}
-			genericPipeline.logger.Infof("updated conflict logging rules to %s with input %v",
-				newRules, conflictLoggingMap)
-			return
-		}
-
-		// Option 1b: a logger doesn't exist, create a new one with the input rules.
-		clm, err := conflictlog.GetManager()
-		if err != nil {
-			genericPipeline.logger.Warnf("error getting conflict logging manager to update to new rules %s, ignoring input %v and continuing with old rules. err=%v",
-				newRules, conflictLoggingMap, err)
-			return
-		}
-
-		spec := genericPipeline.spec.GetReplicationSpec()
-		logger := log.NewLogger(conflictlog.ConflictLoggerName, genericPipeline.logger.LoggerContext())
-
-		newConflictLogger, err := clm.NewLogger(
-			logger,
-			spec.UniqueId(),
-			conflictlog.WithMapper(conflictlog.NewConflictMapper(logger)),
-			conflictlog.WithCapacity(1000), // SUMUKH TODO - make the default size configurable.
-			conflictlog.WithRules(newRules),
-		)
-		if err != nil {
-			genericPipeline.logger.Errorf("error initialising a conflict logger for new rules %s, ignoring input %v and continuing with old rules. err=%v", newRules, conflictLoggingMap, err)
-			return
-		}
-
-		genericPipeline.conflictLogger = newConflictLogger
-		genericPipeline.logger.Infof("created conflict logger with rules %s with input %v", newRules, conflictLoggingMap)
 		return
 	}
 
-	// Option 2: logger is to be disabled.
-	if genericPipeline.conflictLogger == nil {
-		// Option 2a: logger is already disabled.
+	// Option 2: conflict logging is to be disabled.
+	if conflictLoggingIsOff {
+		// Option 2a: conflict logging needs to be disabled, but is already disabled right now.
 		genericPipeline.logger.Infof("conflict logger already disabled and will remain disabled with input %v", conflictLoggingMap)
 		return
 	}
 
-	// Option 2b: logger is currently enabled, disable it.
+	// Option 2b: conflict logging is on right now and is to be disabled.
 	err := genericPipeline.conflictLogger.Close()
 	if err != nil {
 		genericPipeline.logger.Errorf("error closing conflict logger with input %v, err=%v", conflictLoggingMap, err)

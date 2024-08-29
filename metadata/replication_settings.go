@@ -15,23 +15,23 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/couchbase/goxdcr/base"
-	"github.com/couchbase/goxdcr/log"
+	"github.com/couchbase/goxdcr/v8/base"
+	"github.com/couchbase/goxdcr/v8/log"
 )
 
 // keys for replication settings
 const (
-	DevMainPipelineSendDelay      = base.DevMainPipelineSendDelay
-	DevBackfillPipelineSendDelay  = base.DevBackfillPipelineSendDelay
-	DevBackfillRollbackTo0VB      = base.DevBackfillRollbackTo0VB
-	DevMainPipelineRollbackTo0VB  = base.DevMainPipelineRollbackTo0VB
-	DevCkptMgrForceGCWaitSec      = base.DevCkptMgrForceGCWaitSec
-	DevColManifestSvcDelaySec     = base.DevColManifestSvcDelaySec
-	DevNsServerPortSpecifier      = base.DevNsServerPortSpecifier
-	DevBucketTopologyLegacyDelay  = base.DevBucketTopologyLegacyDelay
-	DevBackfillReplUpdateDelay    = base.DevBackfillReplUpdateDelay
-	DevCasDriftForceDocKey        = base.DevCasDriftForceDocKey
-	DevPreCheckCasDriftForceVbKey = base.DevPreCheckCasDriftForceVbKey
+	DevMainPipelineSendDelay        = base.DevMainPipelineSendDelay
+	DevBackfillPipelineSendDelay    = base.DevBackfillPipelineSendDelay
+	DevBackfillRollbackTo0VB        = base.DevBackfillRollbackTo0VB
+	DevMainPipelineRollbackTo0VB    = base.DevMainPipelineRollbackTo0VB
+	DevCkptMgrForceGCWaitSec        = base.DevCkptMgrForceGCWaitSec
+	DevColManifestSvcDelaySec       = base.DevColManifestSvcDelaySec
+	DevNsServerPortSpecifier        = base.DevNsServerPortSpecifier
+	DevBackfillReplUpdateDelay      = base.DevBackfillReplUpdateDelay
+	DevCasDriftForceDocKey          = base.DevCasDriftForceDocKey
+	DevPreCheckCasDriftForceVbKey   = base.DevPreCheckCasDriftForceVbKey
+	DevPreCheckMaxCasErrorInjection = base.DevPreCheckMaxCasErrorInjection
 
 	ReplicationTypeKey                = "replication_type"
 	FilterExpressionKey               = "filter_expression"
@@ -139,8 +139,8 @@ var HiddenSettings = []string{FilterVersionKey, FilterSkipRestreamKey, FilterExp
 	CollectionsSkipSourceCheckKey, CollectionsManualBackfillKey, CollectionsDelAllBackfillKey,
 	CollectionsDelVbBackfillKey, DismissEventKey, DevMainPipelineSendDelay, DevBackfillPipelineSendDelay,
 	DevMainPipelineRollbackTo0VB, DevBackfillRollbackTo0VB, DevCkptMgrForceGCWaitSec, DevColManifestSvcDelaySec,
-	DevNsServerPortSpecifier, FilterSystemScopeKey, DevBucketTopologyLegacyDelay, DevBackfillReplUpdateDelay,
-	SourceTopologyChangeStatusKey, TargetTopologyChangeStatusKey, DevCasDriftForceDocKey, DevPreCheckCasDriftForceVbKey}
+	DevNsServerPortSpecifier, FilterSystemScopeKey, DevBackfillReplUpdateDelay,
+	SourceTopologyChangeStatusKey, TargetTopologyChangeStatusKey, DevCasDriftForceDocKey, DevPreCheckCasDriftForceVbKey, DevPreCheckMaxCasErrorInjection}
 
 // Temporary settings are supposed to be used only for validation purposes. Once they are done, they should be removed and not interpreted or persisted downstream
 var TemporaryValidationSettings = []string{CollectionsSkipSourceCheckKey, CollectionsManualBackfillKey,
@@ -158,6 +158,9 @@ var MultiValueMap map[string]string = map[string]string{
 	CollectionsMgtMigrateKey: CollectionsMgtMultiKey,
 	CollectionsMgtOsoKey:     CollectionsMgtMultiKey,
 }
+
+// settings that require validation
+var ValidateReplicationSettings = []string{FilterExpressionKey, MobileCompatibleKey, base.MergeFunctionMappingKey, CompressionTypeKey}
 
 var MaxBatchCount = 10000
 
@@ -179,6 +182,7 @@ var XDCRDevNsServerPortSpecifierConfig = &SettingsConfig{0 /*not specified*/, &R
 var XDCRDevBackfillReplUpdateDelayConfig = &SettingsConfig{0 /*not specified*/, &Range{0, 100000}}
 var XDCRDevCasDriftForceDocConfig = &SettingsConfig{"", nil}
 var XDCRDevPreCheckCasDriftForceVBConfig = &SettingsConfig{-1, &Range{-1, 1023}}
+var XDCRDevPreCheckMaxCasErrorInjectionConfig = &SettingsConfig{false, nil}
 
 var ReplicationTypeConfig = &SettingsConfig{ReplicationTypeXmem, nil}
 var FilterExpressionConfig = &SettingsConfig{"", nil}
@@ -235,9 +239,6 @@ var FilterSystemScopeConfig = &SettingsConfig{true, nil}
 
 var MobileCompatibilityConfig = &SettingsConfig{base.MobileCompatibilityOff, &Range{base.MobileCompatibilityStartMarker, base.MobileCompatibilityEndMarker}}
 
-// In seconds
-var XDCRDevBucketTopologyLevacyDelayConfig = &SettingsConfig{0, &Range{0, 600}}
-
 var EnableDcpPurgeRollbackConfig = &SettingsConfig{false, nil}
 
 var TargetTopologyLogFrequencyConfig = &SettingsConfig{base.TargetTopologyLogFreqVal, &Range{0, 60480}}
@@ -246,22 +247,22 @@ var TargetTopologyLogFrequencyConfig = &SettingsConfig{base.TargetTopologyLogFre
 var CasDriftThresholdSecsConfig = &SettingsConfig{100, &Range{0, math.MaxInt}}
 var PreCheckCasDriftThresholdHoursConfig = &SettingsConfig{8760 /*1 year*/, &Range{0, math.MaxInt}}
 
-var ConflictLoggingConfig = &SettingsConfig{base.ConflictLoggingMappingInput{}, nil}
+var ConflictLoggingConfig = &SettingsConfig{base.ConflictLoggingOff, nil}
 
 // Note that any keys that are in the MultiValueMap should not belong here
 // Read How MultiValueMap is parsed in code for more details
 var ReplicationSettingsConfigMap = map[string]*SettingsConfig{
-	DevMainPipelineSendDelay:      XDCRDevMainPipelineSendDelayConfig,
-	DevBackfillPipelineSendDelay:  XDCRDevBackfillPipelineSendDelayConfig,
-	DevMainPipelineRollbackTo0VB:  XDCRDevMainPipelineRollbackConfig,
-	DevBackfillRollbackTo0VB:      XDCRDevBackfillPipelineRollbackConfig,
-	DevCkptMgrForceGCWaitSec:      XDCRDevCkptGcWaitConfig,
-	DevColManifestSvcDelaySec:     XDCRDevColManifestSvcDelayConfig,
-	DevNsServerPortSpecifier:      XDCRDevNsServerPortSpecifierConfig,
-	DevBucketTopologyLegacyDelay:  XDCRDevBucketTopologyLevacyDelayConfig,
-	DevBackfillReplUpdateDelay:    XDCRDevBackfillReplUpdateDelayConfig,
-	DevCasDriftForceDocKey:        XDCRDevCasDriftForceDocConfig,
-	DevPreCheckCasDriftForceVbKey: XDCRDevPreCheckCasDriftForceVBConfig,
+	DevMainPipelineSendDelay:        XDCRDevMainPipelineSendDelayConfig,
+	DevBackfillPipelineSendDelay:    XDCRDevBackfillPipelineSendDelayConfig,
+	DevMainPipelineRollbackTo0VB:    XDCRDevMainPipelineRollbackConfig,
+	DevBackfillRollbackTo0VB:        XDCRDevBackfillPipelineRollbackConfig,
+	DevCkptMgrForceGCWaitSec:        XDCRDevCkptGcWaitConfig,
+	DevColManifestSvcDelaySec:       XDCRDevColManifestSvcDelayConfig,
+	DevNsServerPortSpecifier:        XDCRDevNsServerPortSpecifierConfig,
+	DevBackfillReplUpdateDelay:      XDCRDevBackfillReplUpdateDelayConfig,
+	DevCasDriftForceDocKey:          XDCRDevCasDriftForceDocConfig,
+	DevPreCheckCasDriftForceVbKey:   XDCRDevPreCheckCasDriftForceVBConfig,
+	DevPreCheckMaxCasErrorInjection: XDCRDevPreCheckMaxCasErrorInjectionConfig,
 
 	ReplicationTypeKey:                   ReplicationTypeConfig,
 	FilterExpressionKey:                  FilterExpressionConfig,
@@ -1008,6 +1009,10 @@ func (s *ReplicationSettings) GetDevBackfillPipelineDelay() int {
 	return s.GetIntSettingValue(DevBackfillPipelineSendDelay)
 }
 
+func (s *ReplicationSettings) GetDevPreCheckMaxCasErrorInjection() bool {
+	return s.GetBoolSettingValue(DevPreCheckMaxCasErrorInjection)
+}
+
 func (s *ReplicationSettings) GetJsFunctionTimeoutMs() int {
 	return s.GetIntSettingValue(JSFunctionTimeoutKey)
 }
@@ -1121,21 +1126,16 @@ func (s *ReplicationSettings) GetPreCheckCasDriftThreshold() uint32 {
 	return uint32(hrsInt)
 }
 
+// returns base.ConflictLoggingOff on invalid type and values.
 func (s *ReplicationSettings) GetConflictLoggingMapping() base.ConflictLoggingMappingInput {
 	val, _ := s.GetSettingValueOrDefaultValue(ConflictLoggingKey)
 	if val == nil {
-		return base.ConflictLoggingMappingInput{}
+		return base.ConflictLoggingOff
 	}
 
-	var mapping base.ConflictLoggingMappingInput
-	var ok bool
-	mapping, ok = val.(base.ConflictLoggingMappingInput)
+	mapping, ok := base.ParseConflictLoggingInputType(val)
 	if !ok {
-		// if val is read from metakv for instance, the type will not be ConflictLoggingMappingInput
-		mapping, ok = val.(map[string]interface{})
-		if !ok {
-			return base.ConflictLoggingMappingInput{}
-		}
+		return base.ConflictLoggingOff
 	}
 	return mapping
 }
@@ -1314,6 +1314,11 @@ func ValidateAndConvertReplicationSettingsValue(key, value, errorKey string, isE
 		if err = nonCAPIOnlyFeature(convertedValue.(base.FilterExpDelType), base.FilterExpDelNone, isCapi); err != nil {
 			return
 		}
+	case CollectionsMgtMultiKey:
+		convertedValue, err = ValidateAndConvertSettingsValue(key, value, ReplicationSettingsConfigMap)
+		if err != nil {
+			return
+		}
 	case CollectionsMappingRulesKey:
 		convertedValue, err = ValidateAndConvertStringToMappingRuleType(value)
 		if err != nil {
@@ -1326,6 +1331,11 @@ func ValidateAndConvertReplicationSettingsValue(key, value, errorKey string, isE
 		}
 	case MobileCompatibleKey:
 		if convertedValue, err = base.MobileCompatibilityStringToTypeConverter(value); err != nil {
+			return
+		}
+	case DismissEventKey:
+		convertedValue, err = ValidateAndConvertSettingsValue(key, value, ReplicationSettingsConfigMap)
+		if err != nil {
 			return
 		}
 	case ConflictLoggingKey:

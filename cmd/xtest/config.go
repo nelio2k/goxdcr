@@ -9,4 +9,11 @@ type Config struct {
 
 	ConflictLogPertest *ConflictLogLoadTest `json:"conflictLogLoadTest"`
 	GocbcoreTest       *GocbcoreTest        `json:"gocbcoreTest"`
+
+	ClientCertFile string `json:"clientCertFile"`
+	ClientKeyFile  string `json:"clientKeyFile"`
+	ClusterCAFile  string `json:"clusterCAFile"`
+
+	EncryptionLevelStrict       bool `json:"encryptionLevelStrict"`
+	BypassSanInCertificateCheck bool `json:"bypassSanInCertificateCheck"`
 }

@@ -17,8 +17,8 @@ import (
 	"time"
 
 	mcc "github.com/couchbase/gomemcached/client"
-	"github.com/couchbase/goxdcr/base"
-	"github.com/couchbase/goxdcr/hlv"
+	"github.com/couchbase/goxdcr/v8/base"
+	"github.com/couchbase/goxdcr/v8/hlv"
 	"github.com/couchbaselabs/gojsonsm"
 )
 
@@ -64,6 +64,10 @@ type MergeResultNotifier interface {
 	NotifyMergeResult(input *ConflictParams, mergeResult interface{}, mergeError error)
 }
 
+// Check if HLV needs to be updated/stamped, i.e. when
+// 1. ECCV is on and meta.cas >= vbMaxCas - stamp a new HLV or update the existing HLV.
+// 2. ECCV is on and meta.cas < vbMaxCas - update if there is an existing HLV. Do not stamp a new HLV if it doesn't exist in the mutation already.
+// 3. ECCV is off - update if there is an existing HLV. Do not stamp a new HLV if it doesn't exist in the mutation already.
 func NeedToUpdateHlv(meta *CRMetadata, vbMaxCas uint64, pruningWindow time.Duration) bool {
 	if meta == nil || meta.GetHLV() == nil {
 		return false
@@ -72,8 +76,10 @@ func NeedToUpdateHlv(meta *CRMetadata, vbMaxCas uint64, pruningWindow time.Durat
 		// We have an import mutation that's winning CR. mobile has already updated HLV so it doesn't need update
 		return false
 	}
-	if !meta.hadHlv && meta.docMeta.Cas < vbMaxCas {
-		// This is older mutation that doesn't already have an HLV
+	if !meta.hadHlv && (vbMaxCas == 0 || meta.actualCas < vbMaxCas) {
+		// This mutation doesn't already have an HLV, HLV is not newly stamped if
+		// 1. ECCV is not on (i.e. vbMaxCas == 0).
+		// 2. ECCV is on, but this is an older mutation (meta.docMeta.Cas < vbMaxCas).
 		return false
 	}
 	hlv := meta.hlv
@@ -240,10 +246,17 @@ func VersionMapToDeltasBytes(vMap hlv.VersionsMap, body []byte, pos int, pruneFu
 
 	// deltas need to be recomputed from the non-pruned versions
 	deltas := vMap.VersionsDeltas()
+	firstEntry := true
 	for _, delta := range deltas {
 		key := delta.GetSource()
 		ver := delta.GetVersion()
-		value := base.Uint64ToHexLittleEndianAndStrip0s(ver)
+		var value []byte
+		if firstEntry {
+			value = base.Uint64ToHexLittleEndian(ver)
+			firstEntry = false
+		} else {
+			value = base.Uint64ToHexLittleEndianAndStrip0s(ver)
+		}
 		body, pos = base.WriteJsonRawMsg(body, []byte(key), pos, base.WriteJsonKey, len(key), first /*firstKey*/)
 		body, pos = base.WriteJsonRawMsg(body, value, pos, base.WriteJsonValue, len(value), false /*firstKey*/)
 		first = false

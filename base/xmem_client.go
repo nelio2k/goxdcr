@@ -21,7 +21,7 @@ import (
 
 	mcc "github.com/couchbase/gomemcached/client"
 	memcached "github.com/couchbase/gomemcached/client"
-	"github.com/couchbase/goxdcr/log"
+	"github.com/couchbase/goxdcr/v8/log"
 )
 
 /*
@@ -333,6 +333,8 @@ func IsIgnorableMCResponse(resp *gomemcached.MCResponse, caslock bool) bool {
 			return false
 		}
 	case gomemcached.SUBDOC_SUCCESS_DELETED:
+		return true
+	case gomemcached.CAS_VALUE_INVALID:
 		return true
 	case gomemcached.SUBDOC_MULTI_PATH_FAILURE_DELETED: // Same as SUBDOC_BAD_MULTI but on a deleted document
 		if resp.Opcode == gomemcached.SUBDOC_MULTI_LOOKUP {

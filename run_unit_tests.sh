@@ -72,6 +72,7 @@ DIRS_WITH_UT=(
 backfill_manager
 base
 base/filter
+conflictlog
 crMeta
 factory
 hlv
@@ -82,6 +83,7 @@ peerToPeer
 pipeline
 pipeline_svc
 pipeline_manager
+pipeline_utils
 service_impl
 streamApiWatcher
 utils

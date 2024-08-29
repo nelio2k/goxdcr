@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/couchbase/goxdcr/base"
-	"github.com/couchbase/goxdcr/utils"
+	"github.com/couchbase/goxdcr/v8/base"
+	"github.com/couchbase/goxdcr/v8/utils"
 	"github.com/stretchr/testify/require"
 )
 
@@ -32,7 +32,7 @@ func (f *fakeConnection) Close() error {
 	return nil
 }
 
-func (f *fakeConnection) SetMeta(key string, val []byte, dataType uint8, target base.ConflictLoggingTarget) (err error) {
+func (f *fakeConnection) SetMeta(key string, val []byte, dataType uint8, target base.ConflictLogTarget) (err error) {
 	if f.sleep != nil {
 		time.Sleep(*f.sleep)
 	}
@@ -44,7 +44,7 @@ func TestLoggerImpl_closeWithOutstandingRequest(t *testing.T) {
 
 	var fakeConnectionSleep time.Duration
 
-	pool := newConnPool(nil, func(bucketName string) (io.Closer, error) {
+	pool := newConnPool(nil, 10, func(bucketName string) (io.Closer, error) {
 		return &fakeConnection{
 			sleep: &fakeConnectionSleep,
 			id:    newConnId(),
@@ -56,8 +56,8 @@ func TestLoggerImpl_closeWithOutstandingRequest(t *testing.T) {
 	l, err := newLoggerImpl(nil, "1234", utils, pool, WithCapacity(20))
 	require.Nil(t, err)
 
-	l.UpdateRules(&Rules{
-		Target: base.NewConflictLoggingTarget("B1", "S1", "C1"),
+	l.UpdateRules(&base.ConflictLogRules{
+		Target: base.NewConflictLogTarget("B1", "S1", "C1"),
 	})
 
 	handles := []base.ConflictLoggerHandle{}
@@ -89,7 +89,7 @@ func TestLoggerImpl_closeWithOutstandingRequest(t *testing.T) {
 func TestLoggerImpl_basicClose(t *testing.T) {
 	utils := utils.NewUtilities()
 
-	pool := newConnPool(nil, newFakeConnection)
+	pool := newConnPool(nil, 10, newFakeConnection)
 
 	l, err := newLoggerImpl(nil, "1234", utils, pool)
 	require.Nil(t, err)

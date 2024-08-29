@@ -22,26 +22,26 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/couchbase/goxdcr/crMeta"
-	"github.com/couchbase/goxdcr/hlv"
-	"github.com/couchbase/goxdcr/parts"
-	"github.com/couchbase/goxdcr/pipeline_utils"
+	"github.com/couchbase/goxdcr/v8/crMeta"
+	"github.com/couchbase/goxdcr/v8/hlv"
+	"github.com/couchbase/goxdcr/v8/parts"
+	"github.com/couchbase/goxdcr/v8/pipeline_utils"
 
 	mcc "github.com/couchbase/gomemcached/client"
 
-	"github.com/couchbase/goxdcr/service_def"
-	utilities "github.com/couchbase/goxdcr/utils"
+	"github.com/couchbase/goxdcr/v8/service_def"
+	utilities "github.com/couchbase/goxdcr/v8/utils"
 
-	"github.com/couchbase/goxdcr/common"
-	"github.com/couchbase/goxdcr/metadata"
+	"github.com/couchbase/goxdcr/v8/common"
+	"github.com/couchbase/goxdcr/v8/metadata"
 
-	component "github.com/couchbase/goxdcr/component"
+	component "github.com/couchbase/goxdcr/v8/component"
 
 	"github.com/couchbase/cbauth"
 
 	mc "github.com/couchbase/gomemcached"
-	"github.com/couchbase/goxdcr/base"
-	"github.com/couchbase/goxdcr/log"
+	"github.com/couchbase/goxdcr/v8/base"
+	"github.com/couchbase/goxdcr/v8/log"
 )
 
 var (
@@ -117,9 +117,9 @@ type mergeFailureInfo struct {
 	err   string
 }
 
-func NewConflictManager(resolverSvc service_def.ResolverSvcIface, replId string, top_svc service_def.XDCRCompTopologySvc, utils utilities.UtilsIface) *ConflictManager {
+func NewConflictManager(resolverSvc service_def.ResolverSvcIface, replId string, top_svc service_def.XDCRCompTopologySvc, logger_ctx *log.LoggerContext, utils utilities.UtilsIface) *ConflictManager {
 	return &ConflictManager{
-		AbstractComponent:            component.NewAbstractComponentWithLogger(replId, log.NewLogger("ConflictManager", log.DefaultLoggerContext)),
+		AbstractComponent:            component.NewAbstractComponentWithLogger(replId, log.NewLogger("ConflictManager", logger_ctx)),
 		top_svc:                      top_svc,
 		resolverSvc:                  resolverSvc,
 		utils:                        utils,

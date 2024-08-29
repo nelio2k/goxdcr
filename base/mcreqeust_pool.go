@@ -15,7 +15,7 @@ import (
 	"sync"
 
 	"github.com/couchbase/gomemcached"
-	"github.com/couchbase/goxdcr/log"
+	"github.com/couchbase/goxdcr/v8/log"
 )
 
 type MCRequestPool struct {
@@ -66,6 +66,7 @@ func (pool *MCRequestPool) cleanReq(req *WrappedMCRequest) *WrappedMCRequest {
 	req.SiblingReqsMtx.Unlock()
 	req.RetryCRCount = 0
 	req.NeedToRecompress = false
+	req.SkippedRecompression = false
 	req.ImportMutation = false
 	req.HLVModeOptions.NoTargetCR = false
 	req.HLVModeOptions.PreserveSync = false
@@ -73,6 +74,7 @@ func (pool *MCRequestPool) cleanReq(req *WrappedMCRequest) *WrappedMCRequest {
 	req.HLVModeOptions.ActualCas = 0
 	req.HLVModeOptions.ConflictLoggerWait = nil
 	req.HLVModeOptions.ConflictLoggingEnabled = false
+	req.HLVModeOptions.IncludeTgtHlv = false
 	req.MouAfterProcessing = nil
 	req.ResetSubdocOptionsForRetry()
 	return req

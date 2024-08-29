@@ -4,7 +4,7 @@ import (
 	"io"
 	"sync/atomic"
 
-	"github.com/couchbase/goxdcr/base"
+	"github.com/couchbase/goxdcr/v8/base"
 )
 
 // gConnId is the counter for all connections created to the cluster
@@ -19,7 +19,7 @@ type Connection interface {
 	Id() int64
 
 	// SetMeta sets internal metadata for doc. The call is synchronous.
-	SetMeta(key string, val []byte, dataType uint8, target base.ConflictLoggingTarget) (err error)
+	SetMeta(key string, val []byte, dataType uint8, target base.ConflictLogTarget) (err error)
 }
 
 // newConnId generates new unique connection Id. This is used by the implementations

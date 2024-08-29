@@ -5,9 +5,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/couchbase/goxdcr/base"
-	"github.com/couchbase/goxdcr/log"
-	"github.com/couchbase/goxdcr/utils"
+	"github.com/couchbase/goxdcr/v8/base"
+	"github.com/couchbase/goxdcr/v8/log"
+	"github.com/couchbase/goxdcr/v8/utils"
 )
 
 var _ Logger = (*loggerImpl)(nil)
@@ -66,6 +66,8 @@ func newLoggerImpl(logger *log.CommonLogger, replId string, utils utils.UtilsIfa
 		mapper:               NewConflictMapper(logger),
 		networkRetryCount:    DefaultNetworkRetryCount,
 		networkRetryInterval: DefaultNetworkRetryInterval,
+		poolGetTimeout:       DefaultPoolGetTimeout,
+		setMetaTimeout:       DefaultSetMetaTimeout,
 	}
 
 	// override the defaults
@@ -74,21 +76,19 @@ func newLoggerImpl(logger *log.CommonLogger, replId string, utils utils.UtilsIfa
 	}
 
 	loggerId := newLoggerId()
-	logger.Infof("creating new conflict logger id=%d replId=%s loggerOptions=%#v", loggerId, replId, options)
+	logger.Infof("creating new conflict logger id=%d replId=%s loggerOptions=%s", loggerId, replId, options.String())
 
 	l = &loggerImpl{
-		logger:    logger,
-		id:        loggerId,
-		utils:     utils,
-		replId:    replId,
-		rulesLock: sync.RWMutex{},
-		connPool:  connPool,
-		opts:      options,
-		mu:        sync.Mutex{},
-		logReqCh:  make(chan logRequest, options.logQueueCap),
-		finch:     make(chan bool, 1),
-		// the value 10 is arbitrary. It basically means max 10 workers can be shutdown in parallel
-		// The assumption is that >10 log workers would be very rare.
+		logger:           logger,
+		id:               loggerId,
+		utils:            utils,
+		replId:           replId,
+		rulesLock:        sync.RWMutex{},
+		connPool:         connPool,
+		opts:             options,
+		mu:               sync.Mutex{},
+		logReqCh:         make(chan logRequest, options.logQueueCap),
+		finch:            make(chan bool, 1),
 		shutdownWorkerCh: make(chan bool, LoggerShutdownChCap),
 		wg:               sync.WaitGroup{},
 	}
@@ -215,7 +215,7 @@ func (l *loggerImpl) UpdateWorkerCount(newCount int) {
 }
 
 // r should be non-nil
-func (l *loggerImpl) UpdateRules(r *Rules) (err error) {
+func (l *loggerImpl) UpdateRules(r *base.ConflictLogRules) (err error) {
 	if r == nil {
 		err = ErrEmptyRules
 		return
@@ -256,7 +256,7 @@ func (l *loggerImpl) worker() {
 	}
 }
 
-func (l *loggerImpl) getTarget(rec *ConflictRecord) (t base.ConflictLoggingTarget, err error) {
+func (l *loggerImpl) getTarget(rec *ConflictRecord) (t base.ConflictLogTarget, err error) {
 	l.rulesLock.RLock()
 	defer l.rulesLock.RUnlock()
 
@@ -269,7 +269,7 @@ func (l *loggerImpl) getTarget(rec *ConflictRecord) (t base.ConflictLoggingTarge
 }
 
 func (l *loggerImpl) getFromPool(bucketName string) (conn Connection, err error) {
-	obj, err := l.connPool.Get(bucketName)
+	obj, err := l.connPool.Get(bucketName, l.opts.poolGetTimeout)
 	if err != nil {
 		return
 	}
@@ -283,11 +283,30 @@ func (l *loggerImpl) getFromPool(bucketName string) (conn Connection, err error)
 	return
 }
 
-func (l *loggerImpl) writeDocs(req logRequest, target base.ConflictLoggingTarget) (err error) {
+// setMetaTimeout is a wrapper on Connection's SetMeta using the timeout configured with the logger
+func (l *loggerImpl) setMetaTimeout(conn Connection, key string, body []byte, dataType uint8, target base.ConflictLogTarget) error {
+	resultCh := make(chan error, 1)
+	go func() {
+		err := conn.SetMeta(key, body, dataType, target)
+		resultCh <- err
+	}()
+
+	t := time.NewTimer(l.opts.setMetaTimeout)
+	defer t.Stop()
+
+	select {
+	case err := <-resultCh:
+		return err
+	case <-t.C:
+		return ErrSetMetaTimeout
+	}
+}
+
+func (l *loggerImpl) writeDocs(req logRequest, target base.ConflictLogTarget) (err error) {
 
 	// Write source document.
 	err = l.writeDocRetry(target.Bucket, func(conn Connection) error {
-		err := conn.SetMeta(req.conflictRec.Source.Id, req.conflictRec.Source.Body, req.conflictRec.Source.Datatype, target)
+		err := l.setMetaTimeout(conn, req.conflictRec.Source.Id, req.conflictRec.Source.Body, req.conflictRec.Source.Datatype, target)
 		return err
 	})
 	if err != nil {
@@ -298,7 +317,7 @@ func (l *loggerImpl) writeDocs(req logRequest, target base.ConflictLoggingTarget
 
 	// Write target document.
 	err = l.writeDocRetry(target.Bucket, func(conn Connection) error {
-		err = conn.SetMeta(req.conflictRec.Target.Id, req.conflictRec.Target.Body, req.conflictRec.Target.Datatype, target)
+		err = l.setMetaTimeout(conn, req.conflictRec.Target.Id, req.conflictRec.Target.Body, req.conflictRec.Target.Datatype, target)
 		return err
 	})
 	if err != nil {
@@ -307,7 +326,7 @@ func (l *loggerImpl) writeDocs(req logRequest, target base.ConflictLoggingTarget
 
 	// Write conflict record.
 	err = l.writeDocRetry(target.Bucket, func(conn Connection) error {
-		err = conn.SetMeta(req.conflictRec.Id, req.conflictRec.body, req.conflictRec.datatype, target)
+		err = l.setMetaTimeout(conn, req.conflictRec.Id, req.conflictRec.Body, req.conflictRec.Datatype, target)
 		return err
 	})
 	if err != nil {
@@ -363,12 +382,17 @@ func (l *loggerImpl) writeDocRetry(bucketName string, fn func(conn Connection) e
 func (l *loggerImpl) processReq(req logRequest) error {
 	var err error
 
-	err = req.conflictRec.PopulateData(l.replId)
+	target, err := l.getTarget(req.conflictRec)
 	if err != nil {
 		return err
 	}
 
-	target, err := l.getTarget(req.conflictRec)
+	if target.IsBlacklistTarget() {
+		// this conflict shouldn't be logged.
+		return nil
+	}
+
+	err = req.conflictRec.PopulateData(l.replId)
 	if err != nil {
 		return err
 	}

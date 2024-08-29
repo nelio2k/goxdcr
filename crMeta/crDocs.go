@@ -14,8 +14,8 @@ import (
 	"fmt"
 
 	mc "github.com/couchbase/gomemcached"
-	"github.com/couchbase/goxdcr/base"
-	"github.com/couchbase/goxdcr/hlv"
+	"github.com/couchbase/goxdcr/v8/base"
+	"github.com/couchbase/goxdcr/v8/hlv"
 )
 
 // Representation of source document information involved in CR.

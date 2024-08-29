@@ -8,7 +8,7 @@
 
 package common
 
-import "github.com/couchbase/goxdcr/base"
+import "github.com/couchbase/goxdcr/v8/base"
 
 // ComponentEventType is the common event type that Component can raise during its lifecycle
 // It is not required for Component to raise all those event
@@ -102,7 +102,8 @@ const (
 	// DCP SeqnoAdv
 	SeqnoAdvReceived ComponentEventType = iota
 	// We use subdoc multipath sets and deletes when we have a specific mobile/xdcr case to avoid cas rollback on target
-	DocsSentWithSubdocCmd ComponentEventType = iota
+	DocsSentWithSubdocCmd   ComponentEventType = iota
+	DocsSentWithPoisonedCas ComponentEventType = iota
 )
 
 func (c ComponentEventType) IsOutNozzleThroughSeqnoRelated() bool {

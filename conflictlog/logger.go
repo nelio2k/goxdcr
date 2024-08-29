@@ -1,10 +1,12 @@
 package conflictlog
 
 import (
+	"fmt"
+	"strings"
 	"sync/atomic"
 	"time"
 
-	"github.com/couchbase/goxdcr/base"
+	"github.com/couchbase/goxdcr/v8/base"
 )
 
 // gLoggerId is the counter for all conflict loggers created
@@ -23,7 +25,7 @@ type Logger interface {
 
 	// UpdateRules allow updates to the the rules which map
 	// the conflict to the target conflict bucket
-	UpdateRules(*Rules) error
+	UpdateRules(*base.ConflictLogRules) error
 
 	// Closes the logger. Hence forth the logger will error out
 	Close() error
@@ -31,15 +33,32 @@ type Logger interface {
 
 // LoggerOptions defines optional args for a logger implementation
 type LoggerOptions struct {
-	rules                *Rules
+	rules                *base.ConflictLogRules
 	mapper               Mapper
 	logQueueCap          int
 	workerCount          int
 	networkRetryCount    int
 	networkRetryInterval time.Duration
+	poolGetTimeout       time.Duration
+	setMetaTimeout       time.Duration
+	skipTlsVerify        bool
 }
 
-func WithRules(r *Rules) LoggerOpt {
+func (l *LoggerOptions) String() string {
+	b := &strings.Builder{}
+
+	b.WriteString(fmt.Sprintf("logQueueCap:%d,", l.logQueueCap))
+	b.WriteString(fmt.Sprintf("workerCount:%d,", l.workerCount))
+	b.WriteString(fmt.Sprintf("networkRetryCount:%d,", l.networkRetryCount))
+	b.WriteString(fmt.Sprintf("networkRetryInterval:%s,", l.networkRetryInterval))
+	b.WriteString(fmt.Sprintf("poolGetTimeout:%s,", l.poolGetTimeout))
+	b.WriteString(fmt.Sprintf("setMetaTimeout:%s,", l.setMetaTimeout))
+	b.WriteString(fmt.Sprintf("skipTlsVerify:%v", l.skipTlsVerify))
+
+	return b.String()
+}
+
+func WithRules(r *base.ConflictLogRules) LoggerOpt {
 	return func(o *LoggerOptions) {
 		o.rules = r
 	}
@@ -75,7 +94,25 @@ func WithNetworkRetryInterval(val time.Duration) LoggerOpt {
 	}
 }
 
-func (o *LoggerOptions) SetRules(rules *Rules) {
+func WithPoolGetTimeout(val time.Duration) LoggerOpt {
+	return func(o *LoggerOptions) {
+		o.poolGetTimeout = val
+	}
+}
+
+func WithSetMetaTimeout(val time.Duration) LoggerOpt {
+	return func(o *LoggerOptions) {
+		o.setMetaTimeout = val
+	}
+}
+
+func WithSkipTlsVerify(v bool) LoggerOpt {
+	return func(o *LoggerOptions) {
+		o.skipTlsVerify = v
+	}
+}
+
+func (o *LoggerOptions) SetRules(rules *base.ConflictLogRules) {
 	o.rules = rules
 }
 

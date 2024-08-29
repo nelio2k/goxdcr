@@ -28,15 +28,15 @@ import (
 	"github.com/couchbase/gomemcached"
 	mc "github.com/couchbase/gomemcached"
 	mcc "github.com/couchbase/gomemcached/client"
-	"github.com/couchbase/goxdcr/base"
-	"github.com/couchbase/goxdcr/common"
-	"github.com/couchbase/goxdcr/conflictlog"
-	"github.com/couchbase/goxdcr/crMeta"
-	"github.com/couchbase/goxdcr/hlv"
-	"github.com/couchbase/goxdcr/log"
-	"github.com/couchbase/goxdcr/metadata"
-	"github.com/couchbase/goxdcr/service_def"
-	utilities "github.com/couchbase/goxdcr/utils"
+	"github.com/couchbase/goxdcr/v8/base"
+	"github.com/couchbase/goxdcr/v8/common"
+	"github.com/couchbase/goxdcr/v8/conflictlog"
+	"github.com/couchbase/goxdcr/v8/crMeta"
+	"github.com/couchbase/goxdcr/v8/hlv"
+	"github.com/couchbase/goxdcr/v8/log"
+	"github.com/couchbase/goxdcr/v8/metadata"
+	"github.com/couchbase/goxdcr/v8/service_def"
+	utilities "github.com/couchbase/goxdcr/v8/utils"
 	"github.com/golang/snappy"
 )
 
@@ -85,6 +85,8 @@ func GetErrorXmemTargetUnknownCollection(mcr *base.WrappedMCRequest) error {
 var ErrorXmemIsStuck = errors.New("Xmem is stuck")
 
 var ErrorBufferInvalidState = errors.New("xmem buffer is in invalid state")
+
+var ErrorFatalError = errors.New("received connection fatal error")
 
 type ConflictResolver func(req *base.WrappedMCRequest, resp *mc.MCResponse, specs []base.SubdocLookupPathSpec, sourceId, targetId hlv.DocumentSourceId, logConflict bool, xattrEnabled bool, uncompressFunc base.UncompressFunc, logger *log.CommonLogger) (crMeta.ConflictDetectionResult, crMeta.ConflictResolutionResult, error)
 
@@ -1315,7 +1317,7 @@ func (xmem *XmemNozzle) batchSetMetaWithRetry(batch *dataBatch, numOfRetry int) 
 			atomic.AddUint64(&xmem.counter_waittime, uint64(time.Since(item.Start_time).Seconds()*1000))
 
 			// check if conflict logging needs to be done for this item
-			logConflicts := xmem.logConflicts()
+			logConflicts := xmem.conflictLoggingEnabled()
 			if logConflicts && !xmem.isCCR() {
 				resp, err := batch.conflictLookupMap.deregisterLookup(item.UniqueKey)
 				if err == nil {
@@ -1340,6 +1342,9 @@ func (xmem *XmemNozzle) batchSetMetaWithRetry(batch *dataBatch, numOfRetry int) 
 							)
 						}
 					}
+					// The log() function performs a clone of necessary information to log,
+					// safe to recycle.
+					respToGc[resp.Resp] = true
 				}
 			}
 
@@ -1395,14 +1400,6 @@ func (xmem *XmemNozzle) batchSetMetaWithRetry(batch *dataBatch, numOfRetry int) 
 							xmem.buf.cancelReservation(index_reserv_tuple[0], int(index_reserv_tuple[1]))
 						}
 						return err
-					}
-
-					for oneResp := range respToGc {
-						if batch.sendLookupMap.canRecycle(oneResp) &&
-							batch.conflictLookupMap.canRecycle(oneResp) {
-							oneResp.Recycle()
-							delete(respToGc, oneResp)
-						}
 					}
 
 					batch_replicated_count = 0
@@ -1501,8 +1498,7 @@ func (xmem *XmemNozzle) batchSetMetaWithRetry(batch *dataBatch, numOfRetry int) 
 func (xmem *XmemNozzle) preprocessMCRequest(req *base.WrappedMCRequest, lookup *base.SubdocLookupResponse) error {
 	mc_req := req.Req
 
-	contains_xattr := base.HasXattr(mc_req.DataType)
-	if contains_xattr && !xmem.xattrEnabled {
+	if base.HasXattr(mc_req.DataType) && !xmem.xattrEnabled && mc_req.DataType&mcc.SnappyDataType == 0 {
 		// if request contains xattr and xattr is not enabled in the memcached connection, strip xattr off the request
 
 		// strip the xattr bit off data type
@@ -1518,13 +1514,13 @@ func (xmem *XmemNozzle) preprocessMCRequest(req *base.WrappedMCRequest, lookup *
 		mc_req.Body = mc_req.Body[xattr_length+4:]
 	}
 
-	// Memcached does not like it when any other flags are in there. Purge and re-do
+	// Memcached does not like it when irrelevant flags are present; so unset them.
 	if mc_req.DataType > 0 {
+		flagsToTest := base.XattrDataType
 		if xmem.compressionSetting == base.CompressionTypeSnappy {
-			mc_req.DataType &= (base.PROTOCOL_BINARY_DATATYPE_XATTR | base.SnappyDataType)
-		} else {
-			mc_req.DataType &= base.PROTOCOL_BINARY_DATATYPE_XATTR
+			flagsToTest |= base.SnappyDataType
 		}
+		mc_req.DataType &= flagsToTest
 	}
 
 	// Send HLV and preserve _sync if necessary
@@ -1543,19 +1539,28 @@ func (xmem *XmemNozzle) preprocessMCRequest(req *base.WrappedMCRequest, lookup *
 	// if the request is a subdoc op, then the body would be composed of operational specs. KV doesn't support snappy compression on it.
 	if !req.IsSubdocOp() && req.NeedToRecompress && mc_req.DataType&mcc.SnappyDataType == 0 {
 		maxEncodedLen := snappy.MaxEncodedLen(len(mc_req.Body))
-		if maxEncodedLen > 0 && maxEncodedLen < len(mc_req.Body) {
-			body, err := xmem.dataPool.GetByteSlice(uint64(maxEncodedLen))
-			if err != nil {
-				body = make([]byte, maxEncodedLen)
-				xmem.RaiseEvent(common.NewEvent(common.DataPoolGetFail, 1, xmem, nil, nil))
-			} else {
-				req.AddByteSliceForXmemToRecycle(body)
-			}
-			body = snappy.Encode(body, mc_req.Body)
-			mc_req.Body = body
-			mc_req.DataType = mc_req.DataType | mcc.SnappyDataType
-			req.NeedToRecompress = false
+		bodyBytes, err := xmem.dataPool.GetByteSlice(uint64(maxEncodedLen))
+		if err != nil {
+			bodyBytes = make([]byte, maxEncodedLen)
+			xmem.RaiseEvent(common.NewEvent(common.DataPoolGetFail, 1, xmem, nil, nil))
 		}
+		bodyBytes = snappy.Encode(bodyBytes, mc_req.Body)
+
+		if len(mc_req.Body) < len(bodyBytes) {
+			// not compressing MCRequest body as the snappy-compressed size is greater than the raw size
+			req.SkippedRecompression = true
+			if err == nil {
+				xmem.dataPool.PutByteSlice(bodyBytes)
+			}
+			return nil
+		}
+
+		if err == nil {
+			req.AddByteSliceForXmemToRecycle(bodyBytes)
+		}
+		mc_req.Body = bodyBytes
+		mc_req.DataType = mc_req.DataType | mcc.SnappyDataType
+		req.NeedToRecompress = false
 	}
 	return nil
 }
@@ -1660,10 +1665,10 @@ func (xmem *XmemNozzle) batchGetHandler(count int, finch chan bool, return_ch ch
 
 				if !isNetTimeoutError(err) && err != PartStoppedError {
 					logger.Errorf("%v batchGet received fatal error and had to abort. Expected %v responses, got %v responses. err=%v", xmem.Id(), count, len(respMap), err)
-					logger.Infof("%v Expected=%v, Received=%v\n", xmem.Id(), opaque_keySeqno_map.CloneAndRedact(), base.UdTagBegin, respMap, base.UdTagEnd)
+					logger.Infof("%v Expected=%v, Received=%v%v%v\n", xmem.Id(), opaque_keySeqno_map.CloneAndRedact(), base.UdTagBegin, respMap, base.UdTagEnd)
 				} else {
 					logger.Errorf("%v batchGet timed out. Expected %v responses, got %v responses", xmem.Id(), count, len(respMap))
-					logger.Infof("%v Expected=%v, Received=%v\n", xmem.Id(), opaque_keySeqno_map.CloneAndRedact(), base.UdTagBegin, respMap, base.UdTagEnd)
+					logger.Infof("%v Expected=%v, Received=%v%v%v\n", xmem.Id(), opaque_keySeqno_map.CloneAndRedact(), base.UdTagBegin, respMap, base.UdTagEnd)
 				}
 				return
 			} else {
@@ -1706,8 +1711,8 @@ func (xmem *XmemNozzle) batchGetHandler(count int, finch chan bool, return_ch ch
 								xmem.RaiseEvent(common.NewEvent(common.DataSentFailed, response.Status, xmem, nil, nil))
 							} else {
 								// log the corresponding request to facilitate debugging
-								xmem.Logger().Warnf("%v received error from getMeta client. key=%v%s%v, seqno=%v, response=%v%v%v\n", xmem.Id(), base.UdTagBegin, key, base.UdTagEnd, seqno,
-									base.UdTagBegin, response, base.UdTagEnd)
+								xmem.Logger().Warnf("%v received error from getMeta client. key=%v%s%v, seqno=%v, response=%v%v%v, specs=%v%s%v\n", xmem.Id(), base.UdTagBegin, key, base.UdTagEnd, seqno,
+									base.UdTagBegin, response, base.UdTagEnd, base.UdTagBegin, specs, base.UdTagEnd)
 								err = fmt.Errorf("error response with status %v from memcached", response.Status)
 								xmem.repairConn(xmem.client_for_getMeta, err.Error(), rev)
 								// no need to wait further since connection has been reset
@@ -1929,7 +1934,7 @@ func getBodyAndXattrSpecs(xtoc []byte) (base.SubdocLookupPathSpecs, error) {
 	xi := base.NewXtocIterator(xtoc)
 	len, err := xi.Len()
 	if err != nil {
-		return nil, fmt.Errorf("Error getting xtoc len, err=%v", err)
+		return nil, fmt.Errorf("error getting xtoc len, err=%v", err)
 	}
 
 	specs = make(base.SubdocLookupPathSpecs, 0, len+1)
@@ -1937,7 +1942,7 @@ func getBodyAndXattrSpecs(xtoc []byte) (base.SubdocLookupPathSpecs, error) {
 	for xi.HasNext() {
 		xattrKey, err := xi.Next()
 		if err != nil {
-			return nil, fmt.Errorf("Error getting xtoc next, err=%v", err)
+			return nil, fmt.Errorf("error getting xtoc next, err=%v", err)
 		}
 
 		spec := base.SubdocLookupPathSpec{
@@ -1953,7 +1958,7 @@ func getBodyAndXattrSpecs(xtoc []byte) (base.SubdocLookupPathSpecs, error) {
 	return specs, nil
 }
 
-func (xmem *XmemNozzle) logConflicts() bool {
+func (xmem *XmemNozzle) conflictLoggingEnabled() bool {
 	return xmem.conflictLogger() != nil
 }
 
@@ -2011,7 +2016,7 @@ func (xmem *XmemNozzle) log(req *base.WrappedMCRequest, resp *base.SubdocLookupR
 		return fmt.Errorf("error decoding target document response, err=%v", err)
 	}
 
-	targetDocDatatype := targetDoc.DataType & (^base.XattrDataType) & (^base.SnappyDataType)
+	targetDocDatatype := targetDoc.DataType & (^base.SnappyDataType)
 
 	var targetBodyClone []byte
 	var targetHlvClone, targetSyncClone, targetMouClone string
@@ -2081,7 +2086,7 @@ func (xmem *XmemNozzle) log(req *base.WrappedMCRequest, resp *base.SubdocLookupR
 
 	req.SrcColNamespaceMtx.RLock()
 	srcScopeName := req.SrcColNamespace.ScopeName
-	srcColllectionName := req.SrcColNamespace.CollectionName
+	srcCollectionName := req.SrcColNamespace.CollectionName
 	req.SrcColNamespaceMtx.RUnlock()
 
 	req.TgtColNamespaceMtx.RLock()
@@ -2090,27 +2095,55 @@ func (xmem *XmemNozzle) log(req *base.WrappedMCRequest, resp *base.SubdocLookupR
 	req.TgtColNamespaceMtx.RUnlock()
 
 	// Generate a conflict record from above information.
-	conflictRecord := conflictlog.NewConflictRecord(
-		string(req.Req.Key),        // document key
-		srcScopeName, tgtScopeName, // source and target scope name
-		srcColllectionName, tgtCollectionName, // source and target collection name
-		xmem.sourceBucketUuid, xmem.targetBucketUuid, // source and target bucketuuid
-		xmem.sourceClusterUuid, xmem.targetClusterUuid, // source and target clusteruuid
-		xmem.config.sourceHostname, xmem.config.targetHostname, // source and target hostname
-		sourceDoc.Expiry, targetDoc.Expiry, // source and target doc expiry
-		sourceDoc.Flags, targetDoc.Flags, // source and target doc flags
-		sourceDoc.Cas, targetDoc.Cas, // source and target doc cas
-		sourceDoc.RevSeq, targetDoc.RevSeq, // source and target doc revId
-		sourceDocDatatype, targetDocDatatype, // source and target doc datatype
-		sourceDoc.Deletion, targetDoc.Deletion, // if source and target docs are tombstone
-		sourceHlvClone, targetHlvClone, // source and target doc xattr._vv
-		sourceSyncClone, targetSyncClone, // source and target xattr._sync
-		sourceMouClone, targetMouClone, // source and target xattr._mou
-		req.Req.VBucket, req.Req.VBucket, // source and target vbno
-		sourceDoc.VbUUID, targetDoc.VbUUID, // source and target vb vbuuid
-		sourceDoc.Seqno, targetDoc.Seqno, // source and target vb seqno
-		sourceBodyClone, targetBodyClone, // source and target doc body
-	)
+	conflictRecord := conflictlog.ConflictRecord{
+		Timestamp: time.Now().Format(conflictlog.TimestampFormat),
+		DocId:     string(req.Req.Key),
+		Source: conflictlog.DocInfo{
+			Scope:       srcScopeName,
+			Collection:  srcCollectionName,
+			BucketUUID:  xmem.sourceBucketUuid,
+			ClusterUUID: xmem.sourceClusterUuid,
+			NodeId:      xmem.config.sourceHostname,
+			Expiry:      sourceDoc.Expiry,
+			Flags:       sourceDoc.Flags,
+			Cas:         sourceDoc.Cas,
+			RevSeqno:    sourceDoc.RevSeq,
+			IsDeleted:   sourceDoc.Deletion,
+			Xattrs: conflictlog.Xattrs{
+				Hlv:  sourceHlvClone,
+				Sync: sourceSyncClone,
+				Mou:  sourceMouClone,
+			},
+			Body:     sourceBodyClone,
+			Datatype: sourceDocDatatype,
+			VBNo:     req.Req.VBucket,
+			VBUUID:   sourceDoc.VbUUID,
+			Seqno:    sourceDoc.Seqno,
+		},
+		Target: conflictlog.DocInfo{
+			Scope:       tgtScopeName,
+			Collection:  tgtCollectionName,
+			BucketUUID:  xmem.targetBucketUuid,
+			ClusterUUID: xmem.targetClusterUuid,
+			NodeId:      xmem.config.targetHostname,
+			Expiry:      targetDoc.Expiry,
+			Flags:       targetDoc.Flags,
+			Cas:         targetDoc.Cas,
+			RevSeqno:    targetDoc.RevSeq,
+			IsDeleted:   targetDoc.Deletion,
+			Xattrs: conflictlog.Xattrs{
+				Hlv:  targetHlvClone,
+				Sync: targetSyncClone,
+				Mou:  targetMouClone,
+			},
+			Body:     targetBodyClone,
+			Datatype: targetDocDatatype,
+			VBNo:     req.Req.VBucket,
+			VBUUID:   targetDoc.VbUUID,
+			Seqno:    targetDoc.Seqno,
+		},
+		Datatype: base.JSONDataType,
+	}
 
 	conflictLogger := xmem.conflictLogger()
 
@@ -2147,7 +2180,9 @@ func (xmem *XmemNozzle) batchGet(get_map base.McRequestMap) (noRep_map map[strin
 
 	// Note that there could be some responses that could be recycled immediately, i.e. if it is an error response
 	// But, some responses (eg. of those who are skipped to send) could have been refered by some other unique-keys (other mutations with the same doc key)
-	// Store such responses here and take the call to recycle or not before the routine exits based on the refCnter
+	// Store such responses here and take the call to recycle or not before the routine exits based on the refCnter.
+
+	// do not insert the responses in respToGc that are both in sendLookupMap and conflictLookupMap.
 	respToGc := make(map[*mc.MCResponse]bool)
 	defer func() {
 		for resp := range respToGc {
@@ -2241,7 +2276,10 @@ func (xmem *XmemNozzle) batchGet(get_map base.McRequestMap) (noRep_map map[strin
 					}
 				case crMeta.CRSkip:
 					noRep_map[uniqueKey] = NotSendFailedCR
-					respToGc[resp.Resp] = true
+					if xmem.isCCR() || !logConflicts || !CDResult.IsConflict() {
+						// can only recycle if the response is not used for conflict logging
+						respToGc[resp.Resp] = true
+					}
 				case crMeta.CRMerge:
 					noRep_map[uniqueKey] = NotSendMerge
 					conflictMap[uniqueKey] = wrappedReq
@@ -2383,13 +2421,15 @@ func (xmem *XmemNozzle) opcodeAndSpecsForGetOp(wrappedReq *base.WrappedMCRequest
 		// Since they are considered true conflicts
 		getSpecs = getBodySpec
 	} else if xmem.getCrossClusterVers() && wrappedReq.HLVModeOptions.ActualCas >= xmem.config.vbHlvMaxCas[incomingReq.VBucket] {
-		// These are the mutations we need to maintain HLV for mobile and get target importCas/cvCas for CR
 		// Note that there is no mixed mode support for import mutations. If enableCrossClusterVersioning is false,
 		// and current source mutation already has HLV, we still don't get target importCas/HLV. The reason is to
 		// figure out that current source mutation already has HLV will require us to parse the body. It has a
-		// performance impact. Mobile does not expect to support import in mixed mode. Doing import during mixed
-		// mode may cause data loss. See design spec for more details.
+		// performance impact. Mobile does not expect to support import on target in mixed mode. This is because for
+		// cas < max_cas or in mixed mode only active-passive XDCR-SGW setup is originally supported. Doing import
+		// on target during mixed mode may cause data loss because target is the passive site and import on passive
+		// site is not supported during mixed mode. See design spec for more details.
 		getSpecs = getSpecWithHlv
+		wrappedReq.HLVModeOptions.IncludeTgtHlv = true
 	} else {
 		getSpecs = getSpecWithoutHlv
 	}
@@ -2509,7 +2549,8 @@ func (xmem *XmemNozzle) preserveSourceXattrs(wrappedReq *base.WrappedMCRequest, 
 			}
 		case base.XATTR_MOBILE:
 			if wrappedReq.HLVModeOptions.PreserveSync {
-				// Skip the source _sync value. No need to create a spec to upsert target _sync, as it is already there on target
+				// Skip the source _sync value.
+				// For subdoc op, no need to create a spec to upsert target _sync, as it is already there on target
 				xmem.RaiseEvent(common.NewEvent(common.SourceSyncXattrRemoved, nil, xmem, nil, nil))
 				continue
 			}
@@ -2517,7 +2558,7 @@ func (xmem *XmemNozzle) preserveSourceXattrs(wrappedReq *base.WrappedMCRequest, 
 			mouIsReplicated = true
 			if sourceDocMeta != nil && !sourceDocMeta.IsImportMutation() {
 				// Remove importCAS from _mou if it is no longer an import mutation.
-				// This happens when are non-imported updates on top of an import mutation
+				// This happens when there are non-imported updates on top of an import mutation
 
 				if wrappedReq.MouAfterProcessing == nil {
 					// _mou had only importCAS and pRev, no need to write
@@ -2549,7 +2590,7 @@ func (xmem *XmemNozzle) updateSystemXattrForTarget(wrappedReq *base.WrappedMCReq
 		needToUpdateSysXattrs = true
 	} else if wrappedReq.HLVModeOptions.SendHlv {
 		maxCas := xmem.config.vbHlvMaxCas[wrappedReq.Req.VBucket]
-		if wrappedReq.Req.Cas >= maxCas {
+		if wrappedReq.HLVModeOptions.ActualCas >= maxCas {
 			needToUpdateSysXattrs = true
 		}
 	}
@@ -2562,23 +2603,23 @@ func (xmem *XmemNozzle) updateSystemXattrForTarget(wrappedReq *base.WrappedMCReq
 		return
 	}
 
-	var updateHLV bool
-	var sourceMeta *crMeta.CRMetadata
-
-	if wrappedReq.HLVModeOptions.SendHlv {
-		sourceDoc := crMeta.NewSourceDocument(wrappedReq, xmem.sourceActorId)
-		sourceMeta, err = sourceDoc.GetMetadata(xmem.uncompressBody)
-		if err != nil {
-			return err
-		}
-
-		updateHLV = crMeta.NeedToUpdateHlv(sourceMeta, xmem.config.vbHlvMaxCas[wrappedReq.Req.VBucket], time.Duration(atomic.LoadUint32(&xmem.config.hlvPruningWindowSec))*time.Second)
+	var vbHlvMaxCas uint64
+	if wrappedReq.HLVModeOptions.SendHlv && xmem.config.vbHlvMaxCas != nil {
+		vbHlvMaxCas = xmem.config.vbHlvMaxCas[wrappedReq.Req.VBucket]
 	}
 
+	sourceDoc := crMeta.NewSourceDocument(wrappedReq, xmem.sourceActorId)
+	sourceDocMeta, err := sourceDoc.GetMetadata(xmem.uncompressBody)
+	if err != nil {
+		return err
+	}
+
+	updateHLV := crMeta.NeedToUpdateHlv(sourceDocMeta, vbHlvMaxCas, time.Duration(atomic.LoadUint32(&xmem.config.hlvPruningWindowSec))*time.Second)
+
 	if wrappedReq.IsSubdocOp() {
-		return xmem.updateSystemXattrForSubdocOp(wrappedReq, lookup, sourceMeta, updateHLV)
+		return xmem.updateSystemXattrForSubdocOp(wrappedReq, lookup, sourceDocMeta, updateHLV)
 	} else {
-		return xmem.updateSystemXattrForMetaOp(wrappedReq, lookup, sourceMeta, updateHLV)
+		return xmem.updateSystemXattrForMetaOp(wrappedReq, lookup, sourceDocMeta, updateHLV)
 	}
 }
 
@@ -2595,8 +2636,20 @@ func (xmem *XmemNozzle) updateSystemXattrForMetaOp(wrappedReq *base.WrappedMCReq
 	// 	xattr1, xattr2, ... xattrN will each look like	- | xattrKey | 0x00 | xattrVal | 0x00 |
 	//	docBody											- actual document body without any xattrs
 
+	defer func() {
+		// set opcode, CAS and extras (flags) for NoTargetCR SetWMeta mutations.
+		wrappedReq.SetCasAndFlagsForMetaOp(lookup)
+		wrappedReq.Req.Opcode = wrappedReq.GetMemcachedCommand()
+	}()
+
+	needToModifyBody := updateHLV || wrappedReq.HLVModeOptions.PreserveSync
+	if !needToModifyBody {
+		// there is no need to modify document body before replicating.
+		return nil
+	}
+
 	maxBodyIncrease := 0
-	if wrappedReq.HLVModeOptions.SendHlv {
+	if updateHLV {
 		maxBodyIncrease = maxBodyIncrease + 8 /* 2 uint32 - xattrTotalLen and _vv's length */ +
 			len(base.XATTR_HLV) + 2 /* _vv\x00{ */ +
 			len(crMeta.HLV_CVCAS_FIELD) + 3 /* "cvCas": */ + 21 /* "0x<16bytes>", */ +
@@ -2610,7 +2663,7 @@ func (xmem *XmemNozzle) updateSystemXattrForMetaOp(wrappedReq *base.WrappedMCReq
 	if wrappedReq.HLVModeOptions.PreserveSync && lookup != nil {
 		targetSyncVal, _ = lookup.ResponseForAPath(base.XATTR_MOBILE)
 		if len(targetSyncVal) > 0 {
-			maxBodyIncrease = maxBodyIncrease + 4 + /* _sync xattr length */
+			maxBodyIncrease = maxBodyIncrease + 8 + /* 2 uint32 - xattrTotalLen and _sync's length */
 				len(base.XATTR_MOBILE) + 1 /* _sync\x00 */ +
 				len(targetSyncVal) + 1 /* <targetSyncVal>\x00 */
 		}
@@ -2632,11 +2685,11 @@ func (xmem *XmemNozzle) updateSystemXattrForMetaOp(wrappedReq *base.WrappedMCReq
 	if updateHLV {
 		_, pruned, err := crMeta.ConstructXattrFromHlvForSetMeta(sourceMeta, time.Duration(atomic.LoadUint32(&xmem.config.hlvPruningWindowSec))*time.Second, xattrComposer)
 		if err != nil {
-			err = fmt.Errorf("error decoding source mutation for key=%v%s%v, req=%v%v%v, reqBody=%v%v%v, sourceMeta=%s in updateSystemXattrForTarget",
+			err = fmt.Errorf("error decoding source mutation for key=%v%s%v, req=%v%v%v, reqBody=%v%v%v, sourceMeta=%s in updateSystemXattrForTarget, err=%v",
 				base.UdTagBegin, req.Key, base.UdTagEnd,
 				base.UdTagBegin, req, base.UdTagEnd,
 				base.UdTagBegin, req.Body, base.UdTagEnd,
-				sourceMeta)
+				sourceMeta, err)
 			return err
 		}
 
@@ -2669,10 +2722,6 @@ func (xmem *XmemNozzle) updateSystemXattrForMetaOp(wrappedReq *base.WrappedMCReq
 	} else {
 		req.DataType = req.DataType & ^(base.PROTOCOL_BINARY_DATATYPE_XATTR)
 	}
-
-	// set opcode, CAS and extras (flags).
-	wrappedReq.SetCasAndFlagsForMetaOp(lookup)
-	wrappedReq.Req.Opcode = wrappedReq.GetMemcachedCommand()
 
 	return nil
 }
@@ -2935,7 +2984,7 @@ func (xmem *XmemNozzle) validateFeatures(features utilities.HELOFeatures) error 
 		errMsg := fmt.Sprintf("%v Attempted to send HELO with compression type: %v, but received response with %v",
 			xmem.Id(), xmem.compressionSetting, features.CompressionType)
 		xmem.Logger().Error(errMsg)
-		if xmem.compressionSetting != base.CompressionTypeForceUncompress {
+		if xmem.compressionSetting != base.CompressionTypeNone {
 			return base.ErrorCompressionNotSupported
 		} else {
 			// This is potentially a serious issue
@@ -2970,7 +3019,7 @@ func (xmem *XmemNozzle) initNewBatch() {
 	isCCR := xmem.isCCR()
 	crossClusterVers := xmem.getCrossClusterVers()
 	isMobile := xmem.getMobileCompatible() != base.MobileCompatibilityOff
-	conflictLoggingEnabled := xmem.logConflicts()
+	conflictLoggingEnabled := xmem.conflictLoggingEnabled()
 
 	// continue with the same behaviour during the entire lifecycle
 	// for all the requests of this batch.
@@ -3028,18 +3077,17 @@ func (xmem *XmemNozzle) initialize(settings metadata.ReplicationSettingsMap) err
 	if err != nil {
 		return err
 	}
-	if xmem.isCCR() || xmem.config.crossClusterVers {
-		if xmem.sourceActorId, err = hlv.UUIDstoDocumentSource(xmem.sourceBucketUuid, xmem.sourceClusterUuid); err != nil {
-			xmem.Logger().Errorf("Cannot convert source bucket UUID %v to base64. Error: %v", xmem.sourceBucketUuid, err)
-			return err
-		}
-		if xmem.targetActorId, err = hlv.UUIDstoDocumentSource(xmem.targetBucketUuid, xmem.targetClusterUuid); err != nil {
-			xmem.Logger().Errorf("Cannot convert target bucket UUID %v to base64. Error: %v", xmem.targetClusterUuid, err)
-			return err
-		}
-		xmem.Logger().Infof("%v: Using %s (sourceBucketUUID %s + sourceClusterUUID %s) and %s (targetBucketUUID %s + targetClusterUUID %s) as source and target actor IDs for HLV.",
-			xmem.Id(), xmem.sourceActorId, xmem.sourceBucketUuid, xmem.sourceClusterUuid, xmem.targetActorId, xmem.targetBucketUuid, xmem.targetClusterUuid)
+
+	if xmem.sourceActorId, err = hlv.UUIDstoDocumentSource(xmem.sourceBucketUuid, xmem.sourceClusterUuid); err != nil {
+		xmem.Logger().Errorf("Cannot convert source bucket UUID %v to base64. Error: %v", xmem.sourceBucketUuid, err)
+		return err
 	}
+	if xmem.targetActorId, err = hlv.UUIDstoDocumentSource(xmem.targetBucketUuid, xmem.targetClusterUuid); err != nil {
+		xmem.Logger().Errorf("Cannot convert target bucket UUID %v to base64. Error: %v", xmem.targetClusterUuid, err)
+		return err
+	}
+	xmem.Logger().Infof("%v: Using %s (sourceBucketUUID %s + sourceClusterUUID %s) and %s (targetBucketUUID %s + targetClusterUUID %s) as source and target actor IDs for HLV.",
+		xmem.Id(), xmem.sourceActorId, xmem.sourceBucketUuid, xmem.sourceClusterUuid, xmem.targetActorId, xmem.targetBucketUuid, xmem.targetClusterUuid)
 
 	xmem.setDataChan(make(chan *base.WrappedMCRequest, xmem.config.maxCount*10))
 	xmem.bytes_in_dataChan = 0
@@ -3151,6 +3199,9 @@ func (xmem *XmemNozzle) markNonTempErrorResponse(response *mc.MCResponse, nonTem
 	}
 }
 
+// Note that this function should not be used to
+// identify if a given request performs optimistic cas locking or not.
+// Use IsCasLockingRequest for that.
 func (xmem *XmemNozzle) nonOptimisticCROnly() bool {
 	return xmem.getCrossClusterVers() || xmem.getMobileCompatible() != base.MobileCompatibilityOff || xmem.isCCR()
 }
@@ -3180,7 +3231,9 @@ func (xmem *XmemNozzle) receiveResponse(finch chan bool, waitGrp *sync.WaitGroup
 			if err != nil {
 				if err == PartStoppedError {
 					goto done
-				} else if err == base.FatalError {
+				}
+
+				if err == base.FatalError {
 					// if possible, log the corresponding request to facilitate debugging
 					if response != nil {
 						pos := xmem.getPosFromOpaque(response.Opaque)
@@ -3192,18 +3245,71 @@ func (xmem *XmemNozzle) receiveResponse(finch chan bool, waitGrp *sync.WaitGroup
 							}
 						}
 					}
+					xmem.Logger().Errorf("%v readFromClient received fatal error", xmem.Id())
+					xmem.handleGeneralError(ErrorFatalError)
 					goto done
-				} else if err == base.BadConnectionError || err == base.ConnectionClosedError {
+				}
+
+				if err == base.BadConnectionError || err == base.ConnectionClosedError {
 					xmem.Logger().Errorf("%v The connection is ruined. Repair the connection and retry.", xmem.Id())
 					xmem.repairConn(xmem.client_for_setMeta, err.Error(), rev)
+					response.Recycle()
+					continue
 				}
-			} else if response == nil {
+			}
+
+			if response == nil {
 				errMsg := fmt.Sprintf("%v readFromClient returned nil error and nil response. Ignoring it", xmem.Id())
 				xmem.Logger().Warn(errMsg)
-			} else if response.Status != mc.SUCCESS && !base.IsIgnorableMCResponse(response, xmem.nonOptimisticCROnly()) {
+				continue
+			}
+
+			pos := xmem.getPosFromOpaque(response.Opaque)
+			wrappedReq, sent_time, err := xmem.buf.slotWithSentTime(pos)
+			if err != nil {
+				xmem.Logger().Errorf("%v xmem buffer is in invalid state", xmem.Id())
+				xmem.handleGeneralError(ErrorBufferInvalidState)
+				response.Recycle()
+				goto done
+			}
+
+			if wrappedReq == nil {
+				// wrappedReq == nil can only happen in the following scenario:
+				// 1. The request was sent but response is slow
+				// 2. checkAndRepairBufferMonitor resend it
+				// 3. The response for the first send comes back and the request is evicted from its slot
+				// Now we are seeing the response for the resend. So we can ignore it
+				if xmem.Logger().GetLogLevel() >= log.LogLevelDebug {
+					xmem.Logger().Debugf("%v Response %v received but request is not in buffer. pos=%v, opcode=%v, opaque=%v",
+						xmem.Id(), response.Status, pos, response.Opcode, response.Opaque)
+				}
+				response.Recycle()
+				continue
+			}
+
+			if wrappedReq.Req == nil {
+				if xmem.Logger().GetLogLevel() >= log.LogLevelDebug {
+					xmem.Logger().Debugf("%v Response %v received but request is nil. pos=%v, opcode=%v, opaque=%v",
+						xmem.Id(), response.Status, pos, response.Opcode, response.Opaque)
+				}
+				response.Recycle()
+				continue
+			}
+
+			if wrappedReq.Req.Opaque != response.Opaque {
+				// This is similar to wrappedReq == nil, except the slot is already being reused so the opaque doesn't match
+				if xmem.Logger().GetLogLevel() >= log.LogLevelDebug {
+					xmem.Logger().Debugf("Request in the buffer for key %v%s%v has opaque=%v while the response opaque=%v, pos=%v, req.Opcode=%v, resp.Opcode=%v",
+						base.UdTagBegin, bytes.Trim(wrappedReq.Req.Key, "\x00"), base.UdTagEnd,
+						wrappedReq.Req.Opaque, response.Opaque, pos, wrappedReq.Req.Opcode, response.Opcode)
+				}
+				response.Recycle()
+				continue
+			}
+
+			if response.Status != mc.SUCCESS && !base.IsIgnorableMCResponse(response, wrappedReq.IsCasLockingRequest()) {
 				if base.IsMutationLockedError(response.Status) {
 					// if target mutation is currently locked, resend doc
-					pos := xmem.getPosFromOpaque(response.Opaque)
 					atomic.AddUint64(&xmem.counter_locked, 1)
 					// set the mutationLocked flag on the corresponding bufferedMCRequest
 					// which will allow resendIfTimeout() method to perform resend with exponential backoff with appropriate settings
@@ -3216,7 +3322,6 @@ func (xmem *XmemNozzle) receiveResponse(finch chan bool, waitGrp *sync.WaitGroup
 					xmem.client_for_setMeta.IncrementBackOffFactor()
 
 					// error is temporary. resend doc
-					pos := xmem.getPosFromOpaque(response.Opaque)
 					// Don't spam the log. Keep a counter instead
 					atomic.AddUint64(&xmem.counter_tmperr, 1)
 					xmem.RaiseEvent(common.NewEvent(common.DataSentFailed, response.Status, xmem, nil, nil))
@@ -3230,7 +3335,6 @@ func (xmem *XmemNozzle) receiveResponse(finch chan bool, waitGrp *sync.WaitGroup
 					// Losing access can happen when it is revoked on purpose or can happen temporarily
 					// when target is undergoing topology changes like node leaving cluster. We will retry.
 					xmem.client_for_setMeta.IncrementBackOffFactor()
-					pos := xmem.getPosFromOpaque(response.Opaque)
 					// Don't spam the log. Keep a counter instead
 					atomic.AddUint64(&xmem.counter_eaccess, 1)
 					xmem.RaiseEvent(common.NewEvent(common.DataSentFailed, response.Status, xmem, nil, nil))
@@ -3240,29 +3344,7 @@ func (xmem *XmemNozzle) receiveResponse(finch chan bool, waitGrp *sync.WaitGroup
 					}
 				} else if base.IsEExistsError(response.Status) || base.IsENoEntError(response.Status) {
 					// request failed because target Cas changed.
-					pos := xmem.getPosFromOpaque(response.Opaque)
-					wrappedReq, err := xmem.buf.slot(pos)
-					if err != nil {
-						xmem.Logger().Errorf("%v xmem buffer is in invalid state", xmem.Id())
-						xmem.handleGeneralError(ErrorBufferInvalidState)
-						goto done
-					}
-					if wrappedReq == nil {
-						// This can only happen in the following scenario:
-						// 1. The request was sent but response is slow
-						// 2. checkAndRepairBufferMonitor resend it
-						// 3. The response for the first send comes back and the request is evicted from its slot
-						// Now we are seeing the response for the resend. So we can ignore it
-						if xmem.Logger().GetLogLevel() >= log.LogLevelDebug {
-							xmem.Logger().Debugf("%v Response %v received but request is not in buffer.", xmem.Id(), response.Status)
-						}
-					} else if wrappedReq.Req.Opaque != response.Opaque {
-						// This is similar to above, except the slot is already being reused so the opaque doesn't match
-						if xmem.Logger().GetLogLevel() >= log.LogLevelDebug {
-							xmem.Logger().Debugf("Request in the buffer for key %v%s%v has opaque=%v while the response opaque=%v",
-								base.UdTagBegin, bytes.Trim(wrappedReq.Req.Key, "\x00"), base.UdTagEnd, wrappedReq.Req.Opaque, response.Opaque)
-						}
-					} else if wrappedReq.IsCasLockingRequest() {
+					if wrappedReq.IsCasLockingRequest() {
 						// We only care about this if we are doing CAS locking for CCR or mobile, otherwise we can ignore this error.
 						xmem.Logger().Debugf("%v Retry conflict resolution for %v%q%v because target Cas has changed (EEXISTS).", xmem.Id(), base.UdTagBegin, wrappedReq.Req.Key, base.UdTagEnd)
 						additionalInfo := SentCasChangedEventAdditional{
@@ -3281,169 +3363,141 @@ func (xmem *XmemNozzle) receiveResponse(finch chan bool, waitGrp *sync.WaitGroup
 				} else {
 					var req *mc.MCRequest = nil
 					var seqno uint64
-					pos := xmem.getPosFromOpaque(response.Opaque)
-					wrappedReq, err := xmem.buf.slot(pos)
-					if err == nil && wrappedReq != nil {
-						req = wrappedReq.Req
-						seqno = wrappedReq.Seqno
-						if req != nil && req.Opaque == response.Opaque {
-							// found matching request
-							if base.IsTopologyChangeMCError(response.Status) {
-								vb_err := fmt.Errorf("Received error %v on vb %v\n", base.ErrorNotMyVbucket, req.VBucket)
-								xmem.handleVBError(req.VBucket, vb_err)
-								// Do not resend if it is topology error, since the error has already been handled the line above
-								// as resending would be a waste of resources
-								if xmem.buf.evictSlot(pos) != nil {
-									panic(fmt.Sprintf("Failed to evict slot %d\n", pos))
-								}
-								// Once evicted, it won't be resent and needs to be recycled
-								xmem.recycleDataObj(wrappedReq)
-							} else if base.IsCollectionMappingError(response.Status) {
-								// upstreamErrReporter will recycle wrappedReq once it's done
-								xmem.upstreamErrReporter(wrappedReq)
-								if xmem.buf.evictSlot(pos) != nil {
-									panic(fmt.Sprintf("Failed to evict slot %d\n", pos))
-								}
-								atomic.AddUint64(&xmem.counter_ignored, 1)
-							} else if base.IsGuardRailError(response.Status) {
-								xmem.client_for_setMeta.IncrementBackOffFactor()
-								pos := xmem.getPosFromOpaque(response.Opaque)
-								// Don't spam the log. Keep a counter instead
-								atomic.AddUint64(&xmem.counterGuardrailHit, 1)
-								vbno := wrappedReq.Req.VBucket
-								seqno := wrappedReq.Seqno
-								xmem.RaiseEvent(common.NewEvent(common.DataSentHitGuardrail, response.Status, xmem, []interface{}{vbno, seqno}, nil))
-								markThenResend := func(req *bufferedMCRequest, pos uint16) (bool, error) {
-									req.setGuardrail(response.Status)
-									return xmem.resendWithReset(req, pos)
-								}
-								_, err = xmem.buf.modSlot(pos, markThenResend)
-								if err != nil {
-									xmem.Logger().Errorf("%v received error for markThenResend, err=%v", xmem.Id(), err)
+					req = wrappedReq.Req
+					seqno = wrappedReq.Seqno
+					if base.IsTopologyChangeMCError(response.Status) {
+						vb_err := fmt.Errorf("received error %v on vb %v", base.ErrorNotMyVbucket, req.VBucket)
+						xmem.handleVBError(req.VBucket, vb_err)
+						// Do not resend if it is topology error, since the error has already been handled the line above
+						// as resending would be a waste of resources
+						if xmem.buf.evictSlot(pos) != nil {
+							panic(fmt.Sprintf("Failed to evict slot %d\n", pos))
+						}
+						// Once evicted, it won't be resent and needs to be recycled
+						xmem.recycleDataObj(wrappedReq)
+					} else if base.IsCollectionMappingError(response.Status) {
+						// upstreamErrReporter will recycle wrappedReq once it's done
+						xmem.upstreamErrReporter(wrappedReq)
+						if xmem.buf.evictSlot(pos) != nil {
+							panic(fmt.Sprintf("Failed to evict slot %d\n", pos))
+						}
+						atomic.AddUint64(&xmem.counter_ignored, 1)
+					} else if base.IsGuardRailError(response.Status) {
+						xmem.client_for_setMeta.IncrementBackOffFactor()
+						// Don't spam the log. Keep a counter instead
+						atomic.AddUint64(&xmem.counterGuardrailHit, 1)
+						vbno := wrappedReq.Req.VBucket
+						seqno := wrappedReq.Seqno
+						xmem.RaiseEvent(common.NewEvent(common.DataSentHitGuardrail, response.Status, xmem, []interface{}{vbno, seqno}, nil))
+						markThenResend := func(req *bufferedMCRequest, pos uint16) (bool, error) {
+							req.setGuardrail(response.Status)
+							return xmem.resendWithReset(req, pos)
+						}
+						_, err = xmem.buf.modSlot(pos, markThenResend)
+						if err != nil {
+							xmem.Logger().Errorf("%v received error for markThenResend, err=%v", xmem.Id(), err)
+						}
+					} else {
+						if response.Status == mc.XATTR_EINVAL {
+							// There is something wrong with XATTR. This should never happen in released version.
+							// Print the XATTR for debugging
+							if req.DataType&mcc.SnappyDataType == mcc.SnappyDataType {
+								body, err := snappy.Decode(nil, req.Body)
+								if err == nil {
+									xattrlen := binary.BigEndian.Uint32(body[0:4])
+									bodyWithoutXattr, err := base.StripXattrAndGetBody(body)
+									xmem.Logger().Errorf("%v received error response %v for key %v%s%v with compressed body. Total xattr length %v, body with xattr: %q, body without xattr: %q, err %v",
+										xmem.Id(), response.Status, base.UdTagBegin, req.Key, base.UdTagEnd, xattrlen, body, bodyWithoutXattr, err)
+								} else {
+									xmem.Logger().Errorf("%v received error response %v for key %v%s%v with compressed body. Decode failed with error %v",
+										xmem.Id(), response.Status, base.UdTagBegin, req.Key, base.UdTagEnd, err)
 								}
 							} else {
-								if response.Status == mc.XATTR_EINVAL {
-									// There is something wrong with XATTR. This should never happen in released version.
-									// Print the XATTR for debugging
-									if req.DataType&mcc.SnappyDataType == mcc.SnappyDataType {
-										body, err := snappy.Decode(nil, req.Body)
-										if err == nil {
-											xattrlen := binary.BigEndian.Uint32(body[0:4])
-											bodyWithoutXattr, err := base.StripXattrAndGetBody(body)
-											xmem.Logger().Errorf("%v received error response %v for key %v%s%v with compressed body. Total xattr length %v, body with xattr: %q, body without xattr: %q, err %v",
-												xmem.Id(), response.Status, base.UdTagBegin, req.Key, base.UdTagEnd, xattrlen, body, bodyWithoutXattr, err)
-										} else {
-											xmem.Logger().Errorf("%v received error response %v for key %v%s%v with compressed body. Decode failed with error %v",
-												xmem.Id(), response.Status, base.UdTagBegin, req.Key, base.UdTagEnd, err)
-										}
-									} else {
-										xattrlen := binary.BigEndian.Uint32(req.Body[0:4])
-										bodyWithoutXattr, err := base.StripXattrAndGetBody(req.Body)
-										xmem.Logger().Errorf("%v received error response %v for key %v%s%v with uncompressed body. Total xattr length %v, body with xattr: %q, body without xattr %q, err: %v",
-											xmem.Id(), response.Status, base.UdTagBegin, req.Key, base.UdTagEnd, xattrlen, req.Body, bodyWithoutXattr, err)
-									}
-								}
-								// for other non-temporary errors, repair connections
-								xmem.Logger().Errorf("%v received error response from setMeta client. Repairing connection. %v, opcode=%v, seqno=%v, req.Key=%v%s%v, req.Body=%v%v%v, req.Datatype=%v, req.Cas=%v, req.Extras=%v\n", xmem.Id(), xmem.PrintResponseStatusError(response.Status), response.Opcode, seqno, base.UdTagBegin, string(req.Key), base.UdTagEnd, base.UdTagBegin, req.Body, base.UdTagEnd, req.DataType, req.Cas, req.Extras)
-								if response.Status == mc.EINVAL {
-									xmem.Logger().Errorf("%v Reason for EINVAL response from memcached for %v%s%v is %v%v%v", xmem.Id(), base.UdTagBegin, string(req.Key), base.UdTagEnd, base.UdTagBegin, response.Body, base.UdTagEnd)
-								}
-								xmem.client_for_setMeta.ReportUnknownResponseReceived(response.Status)
-
-								nonTempErrReceived = true
-
-								vbno := wrappedReq.Req.VBucket
-								xmem.RaiseEvent(common.NewEvent(common.DataSentFailedUnknownStatus, response.Status, xmem, []interface{}{vbno, seqno}, nil))
-								atomic.AddUint64(&xmem.counterUnknownStatus, 1)
-								xmem.repairConn(xmem.client_for_setMeta, "error response from memcached", rev)
+								xattrlen := binary.BigEndian.Uint32(req.Body[0:4])
+								bodyWithoutXattr, err := base.StripXattrAndGetBody(req.Body)
+								xmem.Logger().Errorf("%v received error response %v for key %v%s%v with uncompressed body. Total xattr length %v, body with xattr: %q, body without xattr %q, err: %v",
+									xmem.Id(), response.Status, base.UdTagBegin, req.Key, base.UdTagEnd, xattrlen, req.Body, bodyWithoutXattr, err)
 							}
-						} else if req != nil {
-							xmem.Logger().Debugf("%v Got the response, response.Opaque=%v, req.Opaque=%v\n", xmem.Id(), response.Opaque, req.Opaque)
-						} else {
-							xmem.Logger().Debugf("%v Got the response, pos=%v, req in that pos is nil\n", xmem.Id(), pos)
 						}
+						// for other non-temporary errors, repair connections
+						xmem.Logger().Errorf("%v received error response from setMeta client. Repairing connection. %v, opcode=%v, seqno=%v, req.Key=%v%s%v, req.Body=%v%v%v, req.Datatype=%v, req.Cas=%v, req.Extras=%v\n", xmem.Id(), xmem.PrintResponseStatusError(response.Status), response.Opcode, seqno, base.UdTagBegin, string(req.Key), base.UdTagEnd, base.UdTagBegin, req.Body, base.UdTagEnd, req.DataType, req.Cas, req.Extras)
+						if response.Status == mc.EINVAL {
+							xmem.Logger().Errorf("%v Reason for EINVAL response from memcached for %v%s%v is %v%s%v", xmem.Id(), base.UdTagBegin, string(req.Key), base.UdTagEnd, base.UdTagBegin, response.Body, base.UdTagEnd)
+						}
+						xmem.client_for_setMeta.ReportUnknownResponseReceived(response.Status)
+
+						nonTempErrReceived = true
+
+						vbno := wrappedReq.Req.VBucket
+						xmem.RaiseEvent(common.NewEvent(common.DataSentFailedUnknownStatus, response.Status, xmem, []interface{}{vbno, seqno}, nil))
+						atomic.AddUint64(&xmem.counterUnknownStatus, 1)
+						xmem.repairConn(xmem.client_for_setMeta, "error response from memcached", rev)
 					}
 				}
 			} else {
 				// Raise needed events
-				pos := xmem.getPosFromOpaque(response.Opaque)
-				wrappedReq, sent_time, err := xmem.buf.slotWithSentTime(pos)
-				if err != nil {
-					xmem.Logger().Errorf("%v xmem buffer is in invalid state", xmem.Id())
-					xmem.handleGeneralError(ErrorBufferInvalidState)
-					goto done
-				}
 				var req *mc.MCRequest
 				var seqno uint64
 				var committing_time time.Duration
 				var resp_wait_time time.Duration
 				var manifestId uint64
-				if wrappedReq != nil {
-					req = wrappedReq.Req
-					seqno = wrappedReq.Seqno
-					committing_time = time.Since(wrappedReq.Start_time)
-					resp_wait_time = time.Since(*sent_time)
-					manifestId = wrappedReq.GetManifestId()
-				}
+				req = wrappedReq.Req
+				seqno = wrappedReq.Seqno
+				committing_time = time.Since(wrappedReq.Start_time)
+				resp_wait_time = time.Since(*sent_time)
+				manifestId = wrappedReq.GetManifestId()
 
-				if req != nil && req.Opaque == response.Opaque {
+				// before moving the throughseqno forward,
+				// wait for it's conflict logging to be done
+				wrappedReq.WaitForConflictLogging(xmem.finish_ch, xmem.Logger())
 
-					// before moving the throughseqno forward,
-					// wait for it's conflict logging to be done
-					wrappedReq.WaitForConflictLogging(xmem.finish_ch, xmem.Logger())
-
-					isExpirySet := false
-					if wrappedReq.IsSubdocOp() {
-						isExpirySet = (len(req.Extras) > 1)
-					} else {
-						isExpirySet = (len(req.Extras) >= 8 && binary.BigEndian.Uint32(req.Extras[4:8]) != 0)
-					}
-					additionalInfo := DataSentEventAdditional{Seqno: seqno,
-						IsOptRepd:           xmem.optimisticRep(wrappedReq),
-						Opcode:              req.Opcode,
-						IsExpirySet:         isExpirySet,
-						VBucket:             req.VBucket,
-						Req_size:            req.Size(),
-						Commit_time:         committing_time,
-						Resp_wait_time:      resp_wait_time,
-						ManifestId:          manifestId,
-						FailedTargetCR:      base.IsEExistsError(response.Status),
-						UncompressedReqSize: req.Size() - wrappedReq.GetBodySize() + wrappedReq.GetUncompressedBodySize(),
-						ImportMutation:      wrappedReq.ImportMutation,
-						Cloned:              wrappedReq.Cloned,
-						CloneSyncCh:         wrappedReq.ClonedSyncCh,
-					}
-					xmem.RaiseEvent(common.NewEvent(common.DataSent, nil, xmem, nil, additionalInfo))
-					if wrappedReq.ImportMutation && xmem.getMobileCompatible() == base.MobileCompatibilityOff && atomic.CompareAndSwapUint32(&xmem.importMutationEventRaised, 0, 1) {
-						xmem.importMutationEventId = xmem.eventsProducer.AddEvent(
-							base.LowPriorityMsg,
-							base.ImportDetectedStr,
-							base.EventsMap{},
-							nil)
-					}
-
-					if wrappedReq.IsSubdocOp() {
-						vbno := wrappedReq.Req.VBucket
-						seqno := wrappedReq.Seqno
-						xmem.RaiseEvent(common.NewEvent(common.DocsSentWithSubdocCmd, wrappedReq.SubdocCmdOptions.SubdocOp, xmem, []interface{}{vbno, seqno}, nil))
-					}
-					//feedback the most current commit_time to xmem.config.respTimeout
-					xmem.adjustRespTimeout(resp_wait_time)
-
-					//empty the slot in the buffer
-					if xmem.buf.evictSlot(pos) != nil {
-						panic(fmt.Sprintf("Failed to evict slot %d\n", pos))
-					}
-
-					//put the request object back into the pool
-					xmem.recycleDataObj(wrappedReq)
+				isExpirySet := false
+				if wrappedReq.IsSubdocOp() {
+					isExpirySet = (len(req.Extras) > 1)
 				} else {
-					if req != nil {
-						xmem.Logger().Debugf("%v Got the response, response.Opcode=%v response.Opaque=%v, req.Opaque=%v req.Status=%v\n", xmem.Id(), response.Opcode, response.Opaque, req.Opaque, response.Status)
-					} else {
-						xmem.Logger().Debugf("%v Got the response, pos=%v, req in that pos is nil\n", xmem.Id(), pos)
-					}
+					isExpirySet = (len(req.Extras) >= 8 && binary.BigEndian.Uint32(req.Extras[4:8]) != 0)
 				}
+				additionalInfo := DataSentEventAdditional{Seqno: seqno,
+					IsOptRepd:            xmem.optimisticRep(wrappedReq),
+					Opcode:               req.Opcode,
+					IsExpirySet:          isExpirySet,
+					VBucket:              req.VBucket,
+					Req_size:             req.Size(),
+					Commit_time:          committing_time,
+					Resp_wait_time:       resp_wait_time,
+					ManifestId:           manifestId,
+					FailedTargetCR:       base.IsEExistsError(response.Status),
+					UncompressedReqSize:  req.Size() - wrappedReq.GetBodySize() + wrappedReq.GetUncompressedBodySize(),
+					SkippedRecompression: wrappedReq.SkippedRecompression,
+					ImportMutation:       wrappedReq.ImportMutation,
+					Cloned:               wrappedReq.Cloned,
+					CloneSyncCh:          wrappedReq.ClonedSyncCh,
+				}
+				xmem.RaiseEvent(common.NewEvent(common.DataSent, nil, xmem, nil, additionalInfo))
+				if wrappedReq.ImportMutation && xmem.getMobileCompatible() == base.MobileCompatibilityOff && atomic.CompareAndSwapUint32(&xmem.importMutationEventRaised, 0, 1) {
+					xmem.importMutationEventId = xmem.eventsProducer.AddEvent(
+						base.LowPriorityMsg,
+						base.ImportDetectedStr,
+						base.EventsMap{},
+						nil)
+				}
+				isSubDocOp := wrappedReq.IsSubdocOp()
+				if isSubDocOp {
+					vbno := wrappedReq.Req.VBucket
+					seqno := wrappedReq.Seqno
+					xmem.RaiseEvent(common.NewEvent(common.DocsSentWithSubdocCmd, wrappedReq.SubdocCmdOptions.SubdocOp, xmem, []interface{}{vbno, seqno}, nil))
+				}
+				xmem.handleCasPoisoning(wrappedReq, response)
+				//feedback the most current commit_time to xmem.config.respTimeout
+				xmem.adjustRespTimeout(resp_wait_time)
+
+				//empty the slot in the buffer
+				if xmem.buf.evictSlot(pos) != nil {
+					panic(fmt.Sprintf("Failed to evict slot %d\n", pos))
+				}
+
+				//put the request object back into the pool
+				xmem.recycleDataObj(wrappedReq)
 			}
 
 			xmem.markNonTempErrorResponse(response, nonTempErrReceived)
@@ -3455,6 +3509,26 @@ done:
 	xmem.Logger().Infof("%v receiveResponse exits\n", xmem.Id())
 }
 
+func (xmem *XmemNozzle) handleCasPoisoning(wrappedReq *base.WrappedMCRequest, response *mc.MCResponse) {
+	isSubDocOp := wrappedReq.IsSubdocOp()
+	sentCas, err := wrappedReq.GetSentCas()
+	if err != nil && !isSubDocOp {
+		// if subDoc is not used and extras.cas is not set then it must be a coding error. Log it
+		// Note: We shouldn't hit this case in practice
+		xmem.Logger().Errorf("extras.cas is not set in req %v. len of extras:%v, isSubDocOp: %v", wrappedReq.Req, len(wrappedReq.Req.Extras), isSubDocOp)
+	}
+	vbno := wrappedReq.Req.VBucket
+	seqno := wrappedReq.Seqno
+	if response.Status == mc.SUCCESS && (sentCas != 0 && sentCas != response.Cas) && !isSubDocOp { //replace mode
+		// Currently CAS regeneration takes place in two scenario's
+		// 1. If SubDoc is used
+		// 2. If there is a CAS poisoned doc and KV's protection mode is set to "replace"
+		// Note that this counter does not account for poisoned CAS's incase of subDocOp
+		xmem.RaiseEvent(common.NewEvent(common.DocsSentWithPoisonedCas, base.ReplaceMode, xmem, []interface{}{vbno, seqno}, nil))
+	} else if response.Status == mc.CAS_VALUE_INVALID { //error mode
+		xmem.RaiseEvent(common.NewEvent(common.DocsSentWithPoisonedCas, base.ErrorMode, xmem, []interface{}{vbno, seqno}, nil))
+	}
+}
 func (xmem *XmemNozzle) retryAfterCasLockingFailure(req *base.WrappedMCRequest) {
 	if req.IsSubdocOp() {
 		// If we have used subdoc command before for this request before, enter the retry assuming we wouldn't need subdoc command anymore
@@ -3968,7 +4042,7 @@ func (xmem *XmemNozzle) PrintStatusSummary() {
 			atomic.LoadUint64(&xmem.counter_retry_cr), atomic.LoadUint64(&xmem.counter_to_resolve),
 			atomic.LoadUint64(&xmem.counter_to_setback), atomic.LoadUint64(&xmem.counterNumGetMeta), atomic.LoadUint64(&xmem.counterNumSubdocGet),
 			atomic.LoadUint64(&xmem.counter_tmperr), atomic.LoadUint64(&xmem.counter_eaccess),
-			atomic.LoadUint64(&xmem.counterGuardrailHit), atomic.LoadUint64(&xmem.counterUnknownStatus), xmem.logConflicts())
+			atomic.LoadUint64(&xmem.counterGuardrailHit), atomic.LoadUint64(&xmem.counterUnknownStatus), xmem.conflictLoggingEnabled())
 	} else {
 		xmem.Logger().Infof("%v state =%v ", xmem.Id(), xmem.State())
 	}

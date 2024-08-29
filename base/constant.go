@@ -369,6 +369,7 @@ var ErrorUnexpectedSubdocOp = errors.New("Unexpected subdoc op was observed")
 var ErrorCasPoisoningDetected = errors.New("Document CAS is stamped with a time beyond allowable drift threshold")
 var ErrorHostNameEmpty = errors.New("Hostname is empty")
 var ErrorConflictLoggingInputInvalid = errors.New("conflict logging input json object should either contain nothing (considered to turn off) or should compulsory contain \"bucket\" and \"collection\" keys")
+var ErrorReplicationSpecNotActive = errors.New("replication specification not found or no longer active")
 
 func GetBackfillFatalDataLossError(specId string) error {
 	return fmt.Errorf("%v experienced fatal error when trying to create backfill request. To prevent data loss, the pipeline must restream from the beginning", specId)
@@ -476,9 +477,6 @@ const (
 	HIGH_SEQNO_CONST                   = ":high_seqno"
 	VBUCKET_HIGH_SEQNO_STAT_KEY_FORMAT = VBUCKET_PREFIX + "%v" + HIGH_SEQNO_CONST
 	VBUCKET_UUID_STAT_KEY_FORMAT       = "vb_%v:uuid"
-	DCP_STAT_NAME                      = "dcp"
-	DCP_XDCR_STATS_PREFIX              = "eq_dcpq:xdcr:"
-	DCP_XDCR_ITEMS_REMAINING_SUFFIX    = ":items_remaining"
 	VBUCKET_DETAILS_NAME               = "vbucket-details"
 	MAXCAS_CONST                       = ":max_cas"
 	VBUCKET_MAXCAS_STAT_KEY_FORMAT     = VBUCKET_PREFIX + "%v" + MAXCAS_CONST
@@ -576,6 +574,7 @@ const (
 	HlvPrunedEventListener               = "HlvPrunedEventListener"
 	HlvPrunedAtMergeEventListener        = "HlvPrunedAtMergeEventListener"
 	DocsSentWithSubdocCmdEventListener   = "DocsSentWithSubdocSetEventListener"
+	DocsSentWithPoisonedCasEventListener = "DocsSentWithPoisonedCasEventListener"
 )
 
 const (
@@ -701,7 +700,7 @@ var Version7_2_1 = ServerVersion{7, 2, 1}
 var VersionForConnectionPreCheckSupport = ServerVersion{7, 6, 0}
 var VersionForSupportability = ServerVersion{7, 6, 0}
 var VersionForP2PManifestSharing = ServerVersion{7, 6, 0}
-var VersionForMobileSupport = ServerVersion{7, 6, 2}
+var VersionForMobileSupport = ServerVersion{7, 6, 3}
 var VersionForCasPoisonDetection = ServerVersion{8, 0, 0}
 
 func (s ServerVersion) String() string {
@@ -1185,11 +1184,10 @@ var TopologySvcCoolDownPeriod = 60 * time.Second
 var TopologySvcErrCoolDownPeriod = 120 * time.Second
 var TopologySvcStatusNotFoundCoolDownPeriod = 10 * time.Second
 
-var HealthCheckInterval = 120 * time.Second
-
 var BucketTopologyWatcherChanLen = 1000
 var BucketTopologyGCScanTime = 1 * time.Minute
 var BucketTopologyGCPruneTime = 24 * time.Hour
+var BucketTopologyWatcherErrChanLen = 1
 
 var P2PCommTimeout = 15 * time.Second
 var MaxP2PReceiveChLen = 10000
@@ -1254,7 +1252,6 @@ func InitConstants(topologyChangeCheckInterval time.Duration, maxTopologyChangeC
 	utilsStopwatchDiagInternal time.Duration, utilsStopwatchDiagExternal time.Duration,
 	replStatusLoadBrokenMapTimeout, replStatusExportBrokenMapTimeout time.Duration,
 	topologyCooldownPeriod time.Duration, topologyErrCooldownPeriod time.Duration,
-	healthCheckInterval time.Duration,
 	blockedIpv4 bool, blockedIpv6 bool,
 	peerToPeerTimeout, bucketTopologyGCScanTime, bucketTopologyGCPruneTime time.Duration,
 	maxP2PReceiveChLen int,
@@ -1270,7 +1267,7 @@ func InitConstants(topologyChangeCheckInterval time.Duration, maxTopologyChangeC
 	P2PRetryWaitTimeMilliSec time.Duration,
 	p2pManifestsGetterSleepTimeSecs int, p2pManifestsGetterMaxRetry int,
 	datapoolLogFrequency int, capellaHostNameSuffix string,
-	nwLatencyToleranceMilliSec time.Duration) {
+	nwLatencyToleranceMilliSec time.Duration, casPoisoningPreCheckEnabled int) {
 	TopologyChangeCheckInterval = topologyChangeCheckInterval
 	MaxTopologyChangeCountBeforeRestart = maxTopologyChangeCountBeforeRestart
 	MaxTopologyStableCountBeforeRestart = maxTopologyStableCountBeforeRestart
@@ -1391,7 +1388,6 @@ func InitConstants(topologyChangeCheckInterval time.Duration, maxTopologyChangeC
 	ReplStatusExportBrokenMapTimeout = replStatusExportBrokenMapTimeout
 	TopologySvcCoolDownPeriod = topologyCooldownPeriod
 	TopologySvcErrCoolDownPeriod = topologyErrCooldownPeriod
-	HealthCheckInterval = healthCheckInterval
 	if blockedIpv4 == true {
 		NetTCP = TCP6
 		IpFamilyStr = "ipv6"
@@ -1429,6 +1425,7 @@ func InitConstants(topologyChangeCheckInterval time.Duration, maxTopologyChangeC
 	DatapoolLogFrequency = datapoolLogFrequency
 	CapellaHostnameSuffix = capellaHostNameSuffix
 	NWLatencyToleranceMilliSec = nwLatencyToleranceMilliSec
+	CasPoisoningPreCheckEnabled = casPoisoningPreCheckEnabled
 }
 
 // XDCR Dev hidden replication settings
@@ -1439,10 +1436,10 @@ const DevBackfillRollbackTo0VB = "xdcrDevBackfillRollbackTo0VB"
 const DevCkptMgrForceGCWaitSec = "xdcrDevCkptMgrForceGCWaitSec"
 const DevColManifestSvcDelaySec = "xdcrDevColManifestSvcDelaySec"
 const DevNsServerPortSpecifier = "xdcrDevNsServerPort" // Certain injection may apply to a specific node using this
-const DevBucketTopologyLegacyDelay = "xdcrDevBucketTopologyLegacyDelay"
 const DevBackfillReplUpdateDelay = "xdcrDevBackfillReplUpdateDelayMs"
 const DevCasDriftForceDocKey = "xdcrDevCasDriftInjectDocKey"
 const DevPreCheckCasDriftForceVbKey = "xdcrDevPreCheckCasDriftInjectVb"
+const DevPreCheckMaxCasErrorInjection = "xdcrDevPreCheckMaxCasErrorInjection"
 
 // Need to escape the () to result in "META().xattrs" literal
 const ExternalKeyXattr = "META\\(\\).xattrs"
@@ -1526,7 +1523,14 @@ const (
 	CLBucketKey        string = "bucket"
 	CLCollectionKey    string = "collection"
 	CLLoggingRulesKey  string = "loggingRules"
+	CLDisabledKey      string = "disabled"
 )
+
+// simple keys inside conflict logging mapping. It excludes loggingRules key.
+var SimpleConflictLoggingKeys []string = []string{
+	CLBucketKey,
+	CLCollectionKey,
+}
 
 // Required for conflict resolution
 const (
@@ -1718,24 +1722,26 @@ var DatapoolLogFrequency = 10
 const PipelineFullTopic string = "pipelineFullTopic"
 
 const (
-	DocsFiltered                    = "docs_filtered"
-	DocsUnableToFilter              = "docs_unable_to_filter"
-	ExpiryFiltered                  = "expiry_filtered"
-	DeletionFiltered                = "deletion_filtered"
-	SetFiltered                     = "set_filtered"
-	BinaryFiltered                  = "binary_filtered"
-	ExpiryStripped                  = "expiry_stripped"
-	AtrTxnDocsFiltered              = "atr_txn_docs_filtered"
-	ClientTxnDocsFiltered           = "client_txn_docs_filtered"
-	DocsFilteredOnTxnXattr          = "docs_filtered_on_txn_xattr"
-	DocsFilteredOnUserDefinedFilter = "docs_filtered_on_user_defined_filter"
-	MobileDocsFiltered              = "mobile_docs_filtered"
-	GuardrailResidentRatio          = "guardrail_resident_ratio"
-	GuardrailDataSize               = "guardrail_data_size"
-	GuardrailDiskSpace              = "guardrail_disk_space"
-	DocsSentWithSubdocSet           = "docs_sent_with_subdoc_set"
-	DocsSentWithSubdocDelete        = "docs_sent_with_subdoc_delete"
-	DocsCasPoisoned                 = "docs_cas_poisoned"
+	DocsFiltered                       = "docs_filtered"
+	DocsUnableToFilter                 = "docs_unable_to_filter"
+	ExpiryFiltered                     = "expiry_filtered"
+	DeletionFiltered                   = "deletion_filtered"
+	SetFiltered                        = "set_filtered"
+	BinaryFiltered                     = "binary_filtered"
+	ExpiryStripped                     = "expiry_stripped"
+	AtrTxnDocsFiltered                 = "atr_txn_docs_filtered"
+	ClientTxnDocsFiltered              = "client_txn_docs_filtered"
+	DocsFilteredOnTxnXattr             = "docs_filtered_on_txn_xattr"
+	DocsFilteredOnUserDefinedFilter    = "docs_filtered_on_user_defined_filter"
+	MobileDocsFiltered                 = "mobile_docs_filtered"
+	GuardrailResidentRatio             = "guardrail_resident_ratio"
+	GuardrailDataSize                  = "guardrail_data_size"
+	GuardrailDiskSpace                 = "guardrail_disk_space"
+	DocsSentWithSubdocSet              = "docs_sent_with_subdoc_set"
+	DocsSentWithSubdocDelete           = "docs_sent_with_subdoc_delete"
+	DocsSentWithPoisonedCasErrorMode   = "docs_sent_with_poisonedCas_errorMode"
+	DocsSentWithPoisonedCasReplaceMode = "docs_sent_with_poisonedCas_replaceMode"
+	DocsCasPoisoned                    = "docs_cas_poisoned"
 )
 
 var ValidJsonEnds []byte = []byte{
@@ -1753,6 +1759,48 @@ const CASDriftLiveDetected = "One or more documents are not replicated because t
 const PreCheckCASDriftDetected = "The following VBs have time drift (nanoSecs) beyond acceptable threshold"
 
 var NWLatencyToleranceMilliSec = 10000 * time.Millisecond
+
+// names of services to be used for setting loggerContext's
+// this list also contains some of the single ton loggers declared at package level
+const (
+	UtilsKey                  = "Utils"
+	SecuritySvcKey            = "SecuritySvc"
+	TopoSvcKey                = "TopoSvc"
+	MetadataSvcKey            = "MetadataSvc"
+	IntSettSvcKey             = "IntSettSvc"
+	AuditSvcKey               = "AuditSvc"
+	GlobalSettSvcKey          = "GlobalSettSvc"
+	RemClusterSvcKey          = "RemClusterSvc"
+	ReplSpecSvcKey            = "ReplSpecSvc"
+	CheckpointSvcKey          = "CheckpointSvc"
+	MigrationSvcKey           = "MigrationSvc"
+	ReplSettSvcKey            = "ReplSettSvc"
+	BucketTopologySvcKey      = "BucketTopologySvc"
+	ManifestServiceKey        = "ManifestService"
+	CollectionsManifestSvcKey = "CollectionsManifestSvc"
+	BackfillReplSvcKey        = "BackfillReplSvc"
+	P2PManagerKey             = "P2PManager"
+	CapiSvcKey                = "CapiSvc"
+	TpThrottlerSvcKey         = "TpThrottlerSvc"
+	GenericSupervisorKey      = "GenericSupervisor"
+	XDCRFactoryKey            = "XDCRFactory"
+	PipelineMgrKey            = "PipelineMgr"
+	ResourceMgrKey            = "ResourceMgr"
+	BackfillMgrKey            = "BackfillMgr"
+	DefaultKey                = "Default"
+	AdminPortKey              = "AdminPort"
+	HttpServerKey             = "HttpServer"
+	MsgUtilsKey               = "MsgUtils"
+)
+
+// This is exposed as an internal setting (which triggers process restart which is necessary),
+// which needs to be turned on if new pipeline cas poisoning check is required.
+// 0 means disbaled, 1 means enabled.
+var CasPoisoningPreCheckEnabled int = 0
+
+func IsCasPoisoningPreCheckEnabled() bool {
+	return CasPoisoningPreCheckEnabled > 0
+}
 
 var BodySpec SubdocLookupPathSpec = SubdocLookupPathSpec{
 	Opcode: GET,

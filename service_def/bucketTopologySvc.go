@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/couchbase/goxdcr/base"
-	"github.com/couchbase/goxdcr/metadata"
+	"github.com/couchbase/goxdcr/v8/base"
+	"github.com/couchbase/goxdcr/v8/metadata"
 )
 
 var ErrorBucketTopSvcUndergoingGC = errors.New("Specified bucket/spec is undergoing GC")
@@ -24,17 +24,13 @@ var ErrorBucketTopSvcUndergoingGC = errors.New("Specified bucket/spec is undergo
 // and feeding the information back to those who need it
 type BucketTopologySvc interface {
 	SubscribeToLocalBucketFeed(spec *metadata.ReplicationSpecification, subscriberId string) (chan SourceNotification, error)
-	SubscribeToLocalBucketDcpStatsFeed(spec *metadata.ReplicationSpecification, subscriberId string) (chan SourceNotification, error)
-	SubscribeToLocalBucketDcpStatsLegacyFeed(spec *metadata.ReplicationSpecification, subscriberId string) (chan SourceNotification, error)
 	SubscribeToLocalBucketHighSeqnosFeed(spec *metadata.ReplicationSpecification, subscriberId string, requestedInterval time.Duration) (chan SourceNotification, func(time.Duration), error)
 	SubscribeToLocalBucketHighSeqnosLegacyFeed(spec *metadata.ReplicationSpecification, subscriberId string, requestedInterval time.Duration) (chan SourceNotification, func(time.Duration), error)
-	SubscribeToLocalBucketMaxVbCasStatFeed(spec *metadata.ReplicationSpecification, subscriberId string) (chan SourceNotification, error)
+	SubscribeToLocalBucketMaxVbCasStatFeed(spec *metadata.ReplicationSpecification, subscriberId string) (chan SourceNotification, chan error, error)
 	SubscribeToRemoteBucketFeed(spec *metadata.ReplicationSpecification, subscriberId string) (chan TargetNotification, error)
-	SubscribeToRemoteKVStatsFeed(spec *metadata.ReplicationSpecification, subscriberId string) (chan TargetNotification, error)
+	SubscribeToRemoteKVStatsFeed(spec *metadata.ReplicationSpecification, subscriberId string) (chan TargetNotification, chan error, error)
 
 	UnSubscribeLocalBucketFeed(spec *metadata.ReplicationSpecification, subscriberId string) error
-	UnSubscribeToLocalBucketDcpStatsFeed(spec *metadata.ReplicationSpecification, subscriberId string) error
-	UnSubscribeToLocalBucketDcpStatsLegacyFeed(spec *metadata.ReplicationSpecification, subscriberId string) error
 	UnSubscribeRemoteBucketFeed(spec *metadata.ReplicationSpecification, subscriberId string) error
 	UnSubscribeToLocalBucketHighSeqnosFeed(spec *metadata.ReplicationSpecification, subscriberId string) error
 	UnSubscribeToLocalBucketHighSeqnosLegacyFeed(spec *metadata.ReplicationSpecification, subscriberId string) error
@@ -63,8 +59,6 @@ type SourceNotification interface {
 	GetNumberOfSourceNodes() int
 	GetSourceVBMapRO() base.KvVBMapType
 	GetKvVbMapRO() base.KvVBMapType
-	GetDcpStatsMap() base.DcpStatsMapType
-	GetDcpStatsMapLegacy() base.DcpStatsMapType
 	GetHighSeqnosMap() base.HighSeqnosMapType
 	GetHighSeqnosMapLegacy() base.HighSeqnosMapType
 	GetSourceStorageBackend() string

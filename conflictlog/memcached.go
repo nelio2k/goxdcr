@@ -1,6 +1,8 @@
 package conflictlog
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -11,10 +13,10 @@ import (
 	"github.com/couchbase/cbauth"
 	"github.com/couchbase/gomemcached"
 	mcc "github.com/couchbase/gomemcached/client"
-	"github.com/couchbase/goxdcr/base"
-	"github.com/couchbase/goxdcr/log"
-	"github.com/couchbase/goxdcr/metadata"
-	"github.com/couchbase/goxdcr/utils"
+	"github.com/couchbase/goxdcr/v8/base"
+	"github.com/couchbase/goxdcr/v8/log"
+	"github.com/couchbase/goxdcr/v8/metadata"
+	"github.com/couchbase/goxdcr/v8/utils"
 )
 
 var _ Connection = (*MemcachedConn)(nil)
@@ -24,16 +26,24 @@ type MemcachedConn struct {
 	addr          string
 	logger        *log.CommonLogger
 	bucketName    string
-	connMap       map[string]*mcc.Client
+	connMap       map[string]mcc.ClientIface
 	manifestCache *ManifestCache
 	utilsObj      utils.UtilsIface
 	bucketInfo    *BucketInfo
 	opaque        uint32
+	certs         *ClientCerts
+	skipVerify    bool
 }
 
-func NewMemcachedConn(logger *log.CommonLogger, utilsObj utils.UtilsIface, manCache *ManifestCache, bucketName string, addr string) (m *MemcachedConn, err error) {
+func NewMemcachedConn(logger *log.CommonLogger, utilsObj utils.UtilsIface, manCache *ManifestCache, bucketName string, addr string, certs *ClientCerts, skipVerifiy bool) (m *MemcachedConn, err error) {
 	connId := newConnId()
-	conn, err := newMemcachedConn(logger, connId, utilsObj, bucketName, addr)
+
+	user, passwd, err := cbauth.GetMemcachedServiceAuth(addr)
+	if err != nil {
+		return
+	}
+
+	conn, err := newMemcNodeConn(logger, connId, utilsObj, user, passwd, bucketName, addr, nil, skipVerifiy)
 	if err != nil {
 		return
 	}
@@ -43,27 +53,86 @@ func NewMemcachedConn(logger *log.CommonLogger, utilsObj utils.UtilsIface, manCa
 		bucketName: bucketName,
 		addr:       addr,
 		logger:     logger,
-		connMap: map[string]*mcc.Client{
+		connMap: map[string]mcc.ClientIface{
 			addr: conn,
 		},
 		utilsObj:      utilsObj,
 		manifestCache: manCache,
+		certs:         certs,
+		skipVerify:    skipVerifiy,
 	}
 
 	return
 }
 
-func newMemcachedConn(logger *log.CommonLogger, id int64, utilsObj utils.UtilsIface, bucketName string, addr string) (conn *mcc.Client, err error) {
-	user, passwd, err := cbauth.GetMemcachedServiceAuth(addr)
+// newTLSConn creates an SSL connection to a memcached node.
+// Note: this is subtly different than base.NewTlsConn(). In this we use cbauth's user/passwd
+// over SSL connection instead of client certificate's SAN
+func newTLSConn(addr string, certs *ClientCerts, user, passwd, bucketName string, skipVerification bool) (conn mcc.ClientIface, err error) {
+	// We load the certs everytime since the certs could have changed by ns_server
+	// This will be actually not needed as these will be loaded only when the notification
+	// from the ns_server. This will happen in security service.
+	clientCert, clientKey, caCert, err := certs.Load()
+	if err != nil {
+		return nil, err
+	}
+
+	x509Cert, err := tls.X509KeyPair(clientCert, clientKey)
 	if err != nil {
 		return
 	}
 
-	logger.Infof("connecting to memcached id=%d user=%s addr=%s", id, user, addr)
+	caCertPool := x509.NewCertPool()
+	caCertPool.AppendCertsFromPEM(caCert)
 
-	conn, err = base.NewConn(addr, user, passwd, bucketName, true, base.KeepAlivePeriod, logger)
+	// Setup HTTPS client
+	tlsConfig := &tls.Config{
+		InsecureSkipVerify: skipVerification,
+		Certificates:       []tls.Certificate{x509Cert},
+		RootCAs:            caCertPool,
+	}
+
+	tlsConn, err := tls.Dial("tcp", addr, tlsConfig)
 	if err != nil {
-		return
+		return nil, err
+	}
+
+	conn, err = mcc.Wrap(tlsConn)
+	if err != nil {
+		tlsConn.Close()
+		return nil, err
+	}
+
+	defer func() {
+		if err != nil {
+			conn.Close()
+		}
+	}()
+
+	_, err = conn.Auth(user, passwd)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = conn.SelectBucket(bucketName)
+	if err != nil {
+		return nil, err
+	}
+	return
+}
+
+// newMemcNodeConn creates connection to a given memcached node
+func newMemcNodeConn(logger *log.CommonLogger, id int64, utilsObj utils.UtilsIface, user, passwd, bucketName string, addr string, certs *ClientCerts, skipVerify bool) (conn mcc.ClientIface, err error) {
+	logger.Infof("connecting to memcached id=%d user=%s addr=%s certsEnabled=%v tlsSkipVerify=%v", id, user, addr, certs != nil, skipVerify)
+
+	if certs != nil {
+		conn, err = newTLSConn(addr, certs, user, passwd, bucketName, skipVerify)
+	} else {
+		conn, err = base.NewConn(addr, user, passwd, bucketName, true, base.KeepAlivePeriod, logger)
+	}
+
+	if err != nil {
+		return nil, err
 	}
 
 	var features utils.HELOFeatures
@@ -88,7 +157,7 @@ func newMemcachedConn(logger *log.CommonLogger, id int64, utilsObj utils.UtilsIf
 	return
 }
 
-func (m *MemcachedConn) fetchManifests(conn *mcc.Client) (man *metadata.CollectionsManifest, err error) {
+func (m *MemcachedConn) fetchManifests(conn mcc.ClientIface) (man *metadata.CollectionsManifest, err error) {
 	rsp, err := conn.GetCollectionsManifest()
 	if err != nil {
 		return
@@ -112,7 +181,7 @@ func (conn *MemcachedConn) Id() int64 {
 // getCollectionId first attempts to get the collectionId from the cache (if checkCache=true). If not found then
 // it attempt to fetch it from the cluster using the same memcached connection. checkCache=false is generally used
 // when we know that the value is cache is stale and a fresh one has to be fetched.
-func (m *MemcachedConn) getCollectionId(conn *mcc.Client, target base.ConflictLoggingTarget, checkCache bool) (collId uint32, err error) {
+func (m *MemcachedConn) getCollectionId(conn mcc.ClientIface, target base.ConflictLogTarget, checkCache bool) (collId uint32, err error) {
 	var ok bool
 
 	if checkCache {
@@ -141,7 +210,7 @@ func (m *MemcachedConn) getCollectionId(conn *mcc.Client, target base.ConflictLo
 	return
 }
 
-func (m *MemcachedConn) setMeta(conn *mcc.Client, key string, vbNo uint16, body []byte, collId uint32, dataType uint8) (err error) {
+func (m *MemcachedConn) setMeta(conn mcc.ClientIface, key string, vbNo uint16, body []byte, collId uint32, dataType uint8) (err error) {
 	bufGetter := func(sz uint64) ([]byte, error) {
 		return make([]byte, sz), nil
 	}
@@ -222,32 +291,52 @@ func (m *MemcachedConn) handleResponse(rsp *gomemcached.MCResponse, opaque uint3
 	return
 }
 
-func (m *MemcachedConn) getConnByVB(vbno uint16, replicaNum int) (conn *mcc.Client, err error) {
-	addr := m.addr
+// getConnByVB gets (or creates) connection to vbNo's memcached node
+func (m *MemcachedConn) getConnByVB(vbno uint16, replicaNum int) (conn mcc.ClientIface, err error) {
+	// The logic is as follows:
+	//    We use non-tls addr if connecting to 'thisNode' (aka localhost).
+	//    For everything else it depends if certs are enabled or not
+	//    m.bucketInfo == nil implies that so far we have not received NOT_MY_VBUCKET error.
+
+	addr2use := m.addr
 	if m.bucketInfo != nil {
-		addr = m.bucketInfo.VBucketServerMap.GetAddrByVB(vbno, replicaNum)
+		_, hostname, port, sslPort, thisNode, err := m.bucketInfo.GetAddrByVB(vbno, replicaNum)
+		if err != nil {
+			return nil, err
+		}
+
+		addr2use = fmt.Sprintf("%s:%d", hostname, port)
+		if !thisNode && m.certs != nil {
+			addr2use = fmt.Sprintf("%s:%d", hostname, sslPort)
+		}
 	}
 
-	m.logger.Debugf("selecting id=%d addr=%s for vb=%d", m.id, addr, vbno)
-	conn, ok := m.connMap[addr]
+	user, passwd, err := cbauth.GetMemcachedServiceAuth(addr2use)
+	if err != nil {
+		return
+	}
+
+	m.logger.Debugf("selecting id=%d certs=%v addr2use=%s for vb=%d", m.id, m.certs != nil, addr2use, vbno)
+	conn, ok := m.connMap[addr2use]
 	if ok {
 		return
 	}
 
-	conn, err = newMemcachedConn(m.logger, m.id, m.utilsObj, m.bucketName, addr)
+	conn, err = newMemcNodeConn(m.logger, m.id, m.utilsObj, user, passwd, m.bucketName, addr2use, m.certs, m.skipVerify)
 	if err != nil {
 		return
 	}
-	m.connMap[addr] = conn
+
+	m.connMap[addr2use] = conn
 	return
 }
 
-func (m *MemcachedConn) SetMeta(key string, body []byte, dataType uint8, target base.ConflictLoggingTarget) (err error) {
+func (m *MemcachedConn) SetMeta(key string, body []byte, dataType uint8, target base.ConflictLogTarget) (err error) {
 	checkCache := true
 	var collId uint32
-	vbNo := getVBNo(key, 1024)
+	vbNo := base.GetVBucketNo(key, base.NumberOfVbs)
 
-	var conn *mcc.Client
+	var conn mcc.ClientIface
 
 	for i := 0; i < 2; i++ {
 		conn, err = m.getConnByVB(vbNo, 0)

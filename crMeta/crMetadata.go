@@ -14,8 +14,8 @@ import (
 	"fmt"
 
 	mc "github.com/couchbase/gomemcached"
-	"github.com/couchbase/goxdcr/base"
-	"github.com/couchbase/goxdcr/hlv"
+	"github.com/couchbase/goxdcr/v8/base"
+	"github.com/couchbase/goxdcr/v8/hlv"
 )
 
 // CRMetadata contains the metadata required to perform conflict resolution. It has two main parts:
@@ -182,6 +182,10 @@ func (meta *CRMetadata) UpdateMetaForSetBack() (pvBytes, mvBytes []byte, err err
 		// If there is no mv, then cv and document.CAS represent mutation events. It needs to be in pv
 		source := meta.hlv.GetCvSrc()
 		version := meta.hlv.GetCvVer()
+
+		if pv == nil {
+			pv = hlv.VersionsMap{}
+		}
 		pv[source] = version
 	}
 

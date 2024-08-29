@@ -3,7 +3,7 @@
 package mocks
 
 import (
-	base "github.com/couchbase/goxdcr/base"
+	base "github.com/couchbase/goxdcr/v8/base"
 	mock "github.com/stretchr/testify/mock"
 
 	time "time"
@@ -66,100 +66,6 @@ func (_c *SourceNotification_Clone_Call) Return(_a0 interface{}) *SourceNotifica
 }
 
 func (_c *SourceNotification_Clone_Call) RunAndReturn(run func(int) interface{}) *SourceNotification_Clone_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// GetDcpStatsMap provides a mock function with given fields:
-func (_m *SourceNotification) GetDcpStatsMap() base.DcpStatsMapType {
-	ret := _m.Called()
-
-	if len(ret) == 0 {
-		panic("no return value specified for GetDcpStatsMap")
-	}
-
-	var r0 base.DcpStatsMapType
-	if rf, ok := ret.Get(0).(func() base.DcpStatsMapType); ok {
-		r0 = rf()
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(base.DcpStatsMapType)
-		}
-	}
-
-	return r0
-}
-
-// SourceNotification_GetDcpStatsMap_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetDcpStatsMap'
-type SourceNotification_GetDcpStatsMap_Call struct {
-	*mock.Call
-}
-
-// GetDcpStatsMap is a helper method to define mock.On call
-func (_e *SourceNotification_Expecter) GetDcpStatsMap() *SourceNotification_GetDcpStatsMap_Call {
-	return &SourceNotification_GetDcpStatsMap_Call{Call: _e.mock.On("GetDcpStatsMap")}
-}
-
-func (_c *SourceNotification_GetDcpStatsMap_Call) Run(run func()) *SourceNotification_GetDcpStatsMap_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run()
-	})
-	return _c
-}
-
-func (_c *SourceNotification_GetDcpStatsMap_Call) Return(_a0 base.DcpStatsMapType) *SourceNotification_GetDcpStatsMap_Call {
-	_c.Call.Return(_a0)
-	return _c
-}
-
-func (_c *SourceNotification_GetDcpStatsMap_Call) RunAndReturn(run func() base.DcpStatsMapType) *SourceNotification_GetDcpStatsMap_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// GetDcpStatsMapLegacy provides a mock function with given fields:
-func (_m *SourceNotification) GetDcpStatsMapLegacy() base.DcpStatsMapType {
-	ret := _m.Called()
-
-	if len(ret) == 0 {
-		panic("no return value specified for GetDcpStatsMapLegacy")
-	}
-
-	var r0 base.DcpStatsMapType
-	if rf, ok := ret.Get(0).(func() base.DcpStatsMapType); ok {
-		r0 = rf()
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(base.DcpStatsMapType)
-		}
-	}
-
-	return r0
-}
-
-// SourceNotification_GetDcpStatsMapLegacy_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetDcpStatsMapLegacy'
-type SourceNotification_GetDcpStatsMapLegacy_Call struct {
-	*mock.Call
-}
-
-// GetDcpStatsMapLegacy is a helper method to define mock.On call
-func (_e *SourceNotification_Expecter) GetDcpStatsMapLegacy() *SourceNotification_GetDcpStatsMapLegacy_Call {
-	return &SourceNotification_GetDcpStatsMapLegacy_Call{Call: _e.mock.On("GetDcpStatsMapLegacy")}
-}
-
-func (_c *SourceNotification_GetDcpStatsMapLegacy_Call) Run(run func()) *SourceNotification_GetDcpStatsMapLegacy_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run()
-	})
-	return _c
-}
-
-func (_c *SourceNotification_GetDcpStatsMapLegacy_Call) Return(_a0 base.DcpStatsMapType) *SourceNotification_GetDcpStatsMapLegacy_Call {
-	_c.Call.Return(_a0)
-	return _c
-}
-
-func (_c *SourceNotification_GetDcpStatsMapLegacy_Call) RunAndReturn(run func() base.DcpStatsMapType) *SourceNotification_GetDcpStatsMapLegacy_Call {
 	_c.Call.Return(run)
 	return _c
 }
