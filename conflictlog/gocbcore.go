@@ -10,10 +10,11 @@ import (
 	"github.com/couchbase/gocbcore/v9"
 	"github.com/couchbase/gocbcore/v9/memd"
 	"github.com/couchbase/goxdcr/v8/base"
+	"github.com/couchbase/goxdcr/v8/base/iopool"
 	"github.com/couchbase/goxdcr/v8/log"
 )
 
-var _ Connection = (*gocbCoreConn)(nil)
+var _ iopool.Connection = (*gocbCoreConn)(nil)
 
 type gocbCoreConn struct {
 	id             int64
@@ -28,7 +29,7 @@ type gocbCoreConn struct {
 }
 
 func NewGocbConn(logger *log.CommonLogger, memdAddrGetter MemcachedAddrGetter, bucketName string, certs *ClientCerts) (conn *gocbCoreConn, err error) {
-	connId := newConnId()
+	connId := iopool.NewConnId()
 
 	logger.Infof("creating new gocbcore connection id=%d", connId)
 	conn = &gocbCoreConn{

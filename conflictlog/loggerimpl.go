@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/couchbase/goxdcr/v8/base"
+	"github.com/couchbase/goxdcr/v8/base/iopool"
 	"github.com/couchbase/goxdcr/v8/log"
 	"github.com/couchbase/goxdcr/v8/utils"
 )
@@ -29,7 +30,7 @@ type loggerImpl struct {
 	rulesLock sync.RWMutex
 
 	// connPool is used to get the connection to the cluster with conflict bucket
-	connPool ConnPool
+	connPool iopool.ConnPool
 
 	// opts are the logger options
 	opts LoggerOptions
@@ -57,7 +58,7 @@ type logRequest struct {
 	ackCh chan error
 }
 
-func newLoggerImpl(logger *log.CommonLogger, replId string, utils utils.UtilsIface, connPool ConnPool, opts ...LoggerOpt) (l *loggerImpl, err error) {
+func newLoggerImpl(logger *log.CommonLogger, replId string, utils utils.UtilsIface, connPool iopool.ConnPool, opts ...LoggerOpt) (l *loggerImpl, err error) {
 	// set the defaults
 	options := LoggerOptions{
 		rules:                nil,
@@ -268,13 +269,13 @@ func (l *loggerImpl) getTarget(rec *ConflictRecord) (t base.ConflictLogTarget, e
 	return
 }
 
-func (l *loggerImpl) getFromPool(bucketName string) (conn Connection, err error) {
+func (l *loggerImpl) getFromPool(bucketName string) (conn iopool.Connection, err error) {
 	obj, err := l.connPool.Get(bucketName, l.opts.poolGetTimeout)
 	if err != nil {
 		return
 	}
 
-	conn, ok := obj.(Connection)
+	conn, ok := obj.(iopool.Connection)
 	if !ok {
 		err = fmt.Errorf("pool object is of invalid type got=%T", obj)
 		return
@@ -284,7 +285,7 @@ func (l *loggerImpl) getFromPool(bucketName string) (conn Connection, err error)
 }
 
 // setMetaTimeout is a wrapper on Connection's SetMeta using the timeout configured with the logger
-func (l *loggerImpl) setMetaTimeout(conn Connection, key string, body []byte, dataType uint8, target base.ConflictLogTarget) error {
+func (l *loggerImpl) setMetaTimeout(conn iopool.Connection, key string, body []byte, dataType uint8, target base.ConflictLogTarget) error {
 	resultCh := make(chan error, 1)
 	go func() {
 		err := conn.SetMeta(key, body, dataType, target)
@@ -305,7 +306,7 @@ func (l *loggerImpl) setMetaTimeout(conn Connection, key string, body []byte, da
 func (l *loggerImpl) writeDocs(req logRequest, target base.ConflictLogTarget) (err error) {
 
 	// Write source document.
-	err = l.writeDocRetry(target.Bucket, func(conn Connection) error {
+	err = l.writeDocRetry(target.Bucket, func(conn iopool.Connection) error {
 		err := l.setMetaTimeout(conn, req.conflictRec.Source.Id, req.conflictRec.Source.Body, req.conflictRec.Source.Datatype, target)
 		return err
 	})
@@ -316,7 +317,7 @@ func (l *loggerImpl) writeDocs(req logRequest, target base.ConflictLogTarget) (e
 	}
 
 	// Write target document.
-	err = l.writeDocRetry(target.Bucket, func(conn Connection) error {
+	err = l.writeDocRetry(target.Bucket, func(conn iopool.Connection) error {
 		err = l.setMetaTimeout(conn, req.conflictRec.Target.Id, req.conflictRec.Target.Body, req.conflictRec.Target.Datatype, target)
 		return err
 	})
@@ -325,7 +326,7 @@ func (l *loggerImpl) writeDocs(req logRequest, target base.ConflictLogTarget) (e
 	}
 
 	// Write conflict record.
-	err = l.writeDocRetry(target.Bucket, func(conn Connection) error {
+	err = l.writeDocRetry(target.Bucket, func(conn iopool.Connection) error {
 		err = l.setMetaTimeout(conn, req.conflictRec.Id, req.conflictRec.Body, req.conflictRec.Datatype, target)
 		return err
 	})
@@ -339,8 +340,8 @@ func (l *loggerImpl) writeDocs(req logRequest, target base.ConflictLogTarget) (e
 // writeDocRetry arranges for a connection from the pool which the supplied function can use. The function
 // wraps the supplied function to check for network errors and appropriately releases the connection back
 // to the pool
-func (l *loggerImpl) writeDocRetry(bucketName string, fn func(conn Connection) error) (err error) {
-	var conn Connection
+func (l *loggerImpl) writeDocRetry(bucketName string, fn func(conn iopool.Connection) error) (err error) {
+	var conn iopool.Connection
 
 	for i := 0; i < l.opts.networkRetryCount; i++ {
 		conn, err = l.getFromPool(bucketName)

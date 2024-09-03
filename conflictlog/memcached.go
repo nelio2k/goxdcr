@@ -14,12 +14,13 @@ import (
 	"github.com/couchbase/gomemcached"
 	mcc "github.com/couchbase/gomemcached/client"
 	"github.com/couchbase/goxdcr/v8/base"
+	"github.com/couchbase/goxdcr/v8/base/iopool"
 	"github.com/couchbase/goxdcr/v8/log"
 	"github.com/couchbase/goxdcr/v8/metadata"
 	"github.com/couchbase/goxdcr/v8/utils"
 )
 
-var _ Connection = (*MemcachedConn)(nil)
+var _ iopool.Connection = (*MemcachedConn)(nil)
 
 type MemcachedConn struct {
 	id            int64
@@ -36,7 +37,7 @@ type MemcachedConn struct {
 }
 
 func NewMemcachedConn(logger *log.CommonLogger, utilsObj utils.UtilsIface, manCache *ManifestCache, bucketName string, addr string, certs *ClientCerts, skipVerifiy bool) (m *MemcachedConn, err error) {
-	connId := newConnId()
+	connId := iopool.NewConnId()
 
 	user, passwd, err := cbauth.GetMemcachedServiceAuth(addr)
 	if err != nil {
@@ -104,7 +105,7 @@ func newTLSConn(addr string, certs *ClientCerts, user, passwd, bucketName string
 	}
 
 	defer func() {
-		if err != nil {
+		if err != nil && conn != nil {
 			conn.Close()
 		}
 	}()

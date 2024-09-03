@@ -51,11 +51,20 @@ func main() {
 		os.Exit(1)
 	}
 
+	var name string
+	if len(os.Args[1:]) > 1 {
+		name = os.Args[2]
+	}
+
 	configFile := os.Args[1]
 	cfg, err := loadConfigFile(configFile)
 	if err != nil {
 		fmt.Printf("failed to load config file err=%v\n", err)
 		os.Exit(1)
+	}
+
+	if name == "" {
+		name = cfg.Name
 	}
 
 	fmt.Printf("cfg=%v\n", cfg)
@@ -96,6 +105,10 @@ func main() {
 		err = conflictLogLoadTest(cfg)
 	case "gocbcoreTest":
 		err = gocbcoreTest(cfg)
+	case "throttlerTest":
+		err = throttlerTest(cfg)
+	case "cbauthTest":
+		err = cbauthTest(cfg)
 	default:
 		fmt.Println("error: unknown config name =", cfg.Name)
 	}

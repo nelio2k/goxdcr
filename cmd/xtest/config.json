@@ -1,5 +1,5 @@
 {
-    "name": "conflictLogLoadTest",
+    "name": "throttlerTest",
     "logLevel": "Info",
     "debugPort": 7171,
     "memcachedAddr": "127.0.0.1:12000",
@@ -9,6 +9,20 @@
     "clusterCAFile":  "/Users/sudeepjathar/cb/clog/ns_server/data/n_0/config/certs/ca.pem",
 
     "encryptionLevelStrict": true,
+
+    "throttlerTest": {
+        "itemsToProcess": 150,
+        "limit": 50,
+        "workerCount": 100
+    },
+
+    "cbauthTest": {
+        "addrList": [
+            "localhost:12000",
+            "localhost:11998",
+            "localhost:19000"
+        ]
+    },
 
     "conflictLogLoadTest": {
         "connType": "memcached",

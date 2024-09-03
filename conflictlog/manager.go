@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/couchbase/goxdcr/v8/base/iopool"
 	"github.com/couchbase/goxdcr/v8/log"
 	"github.com/couchbase/goxdcr/v8/utils"
 )
@@ -16,7 +17,7 @@ var _ Manager = (*managerImpl)(nil)
 // Manager defines behaviour for conflict manager
 type Manager interface {
 	NewLogger(logger *log.CommonLogger, replId string, opts ...LoggerOpt) (l Logger, err error)
-	ConnPool() ConnPool
+	ConnPool() iopool.ConnPool
 	// [TEMP]: SetConnType exists only for perf test
 	SetConnType(connType string) error
 	SetConnLimit(limit int)
@@ -106,7 +107,7 @@ type managerImpl struct {
 	memdAddrGetter MemcachedAddrGetter
 	encInfoGetter  EncryptionInfoGetter
 	utils          utils.UtilsIface
-	connPool       *connPool
+	connPool       iopool.ConnPool
 	manifestCache  *ManifestCache
 
 	// connLimit max number of connections
@@ -143,7 +144,7 @@ func (m *managerImpl) setConnPool() {
 		fn = m.newMemcachedConn
 	}
 
-	m.connPool = newConnPool(m.logger, m.connLimit, fn)
+	m.connPool = iopool.NewConnPool(m.logger, m.connLimit, fn)
 	return
 }
 
@@ -164,7 +165,7 @@ func (m *managerImpl) SetConnType(connType string) error {
 	return nil
 }
 
-func (m *managerImpl) ConnPool() ConnPool {
+func (m *managerImpl) ConnPool() iopool.ConnPool {
 	return m.connPool
 }
 
