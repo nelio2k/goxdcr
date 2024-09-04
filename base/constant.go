@@ -63,6 +63,7 @@ const DocsPath = "/docs/"
 const CollectionsManifestPath = "/scopes"
 const ScopesPath = "/scopes/"
 const CollectionsPath = "/collections/"
+const ClientCertAuthPath = "/settings/clientCertAuth"
 
 // Streaming API paths. They are used for source clusters only
 const ObservePoolPath = "/poolsStreaming/default"
@@ -1763,34 +1764,34 @@ var NWLatencyToleranceMilliSec = 10000 * time.Millisecond
 // names of services to be used for setting loggerContext's
 // this list also contains some of the single ton loggers declared at package level
 const (
-	UtilsKey                  = "Utils"
-	SecuritySvcKey            = "SecuritySvc"
-	TopoSvcKey                = "TopoSvc"
-	MetadataSvcKey            = "MetadataSvc"
-	IntSettSvcKey             = "IntSettSvc"
-	AuditSvcKey               = "AuditSvc"
-	GlobalSettSvcKey          = "GlobalSettSvc"
-	RemClusterSvcKey          = "RemClusterSvc"
-	ReplSpecSvcKey            = "ReplSpecSvc"
-	CheckpointSvcKey          = "CheckpointSvc"
-	MigrationSvcKey           = "MigrationSvc"
-	ReplSettSvcKey            = "ReplSettSvc"
-	BucketTopologySvcKey      = "BucketTopologySvc"
+	UtilsKey                  = "UtilsService"
+	SecuritySvcKey            = "SecurityService"
+	TopoSvcKey                = "TopologyService"
+	MetadataSvcKey            = "MetaKVMetadataService"
+	IntSettSvcKey             = "InternalSettingsService"
+	AuditSvcKey               = "AuditService"
+	GlobalSettSvcKey          = "GlobalSettingsService"
+	RemClusterSvcKey          = "RemoteClusterService"
+	ReplSpecSvcKey            = "ReplicationSpecService"
+	CheckpointSvcKey          = "CheckpointService"
+	MigrationSvcKey           = "MigrationService"
+	ReplSettSvcKey            = "ReplicationSettingService"
+	BucketTopologySvcKey      = "BucketTopologyService"
 	ManifestServiceKey        = "ManifestService"
-	CollectionsManifestSvcKey = "CollectionsManifestSvc"
-	BackfillReplSvcKey        = "BackfillReplSvc"
-	P2PManagerKey             = "P2PManager"
-	CapiSvcKey                = "CapiSvc"
-	TpThrottlerSvcKey         = "TpThrottlerSvc"
+	CollectionsManifestSvcKey = "CollectionsManifestService"
+	BackfillReplSvcKey        = "BackfillReplicationService"
+	P2PManagerKey             = "P2PManagerService"
+	CapiSvcKey                = "CapiService"
+	TpThrottlerSvcKey         = "ThroughputThrottlerService"
 	GenericSupervisorKey      = "GenericSupervisor"
 	XDCRFactoryKey            = "XDCRFactory"
-	PipelineMgrKey            = "PipelineMgr"
-	ResourceMgrKey            = "ResourceMgr"
-	BackfillMgrKey            = "BackfillMgr"
+	PipelineMgrKey            = "PipelineManager"
+	ResourceMgrKey            = "ResourceManager"
+	BackfillMgrKey            = "BackfillManager"
 	DefaultKey                = "Default"
 	AdminPortKey              = "AdminPort"
 	HttpServerKey             = "HttpServer"
-	MsgUtilsKey               = "MsgUtils"
+	MsgUtilsKey               = "MessageUtils"
 )
 
 // This is exposed as an internal setting (which triggers process restart which is necessary),
@@ -1807,3 +1808,10 @@ var BodySpec SubdocLookupPathSpec = SubdocLookupPathSpec{
 	Flags:  0,
 	Path:   nil,
 }
+
+// Client Cert related consts
+const (
+	ErrorStringClientCertMandatory = "tls: certificate required"
+	StateKey                       = "state"
+	MandatoryVal                   = "mandatory"
+)
