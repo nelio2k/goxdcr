@@ -17,7 +17,7 @@ import (
 
 	"github.com/couchbase/gomemcached"
 	mcc "github.com/couchbase/gomemcached/client"
-	"github.com/couchbase/goxdcr/base"
+	"github.com/couchbase/goxdcr/v8/base"
 	"github.com/couchbaselabs/gojsonsm"
 )
 
@@ -163,14 +163,9 @@ func (filter *FilterImpl) FilterUprEvent(wrappedUprEvent *base.WrappedUprEvent) 
 		filter.slicesToBeReleasedBuf = filter.slicesToBeReleasedBuf[:0]
 	}()
 
-	filterStatus := NotFiltered
 	needToReplicate, body, endBodyPos, err, errDesc, totalFailedDpCnt, bodyHasBeenModified, filterStatus := filter.filterTransactionRelatedUprEvent(wrappedUprEvent.UprEvent, &filter.slicesToBeReleasedBuf)
-	if err != nil {
-		return false, err, errDesc, totalFailedDpCnt, FilteredOnOthers
-	}
-
-	if !needToReplicate {
-		return false, nil, "", totalFailedDpCnt, filterStatus
+	if err != nil || !needToReplicate {
+		return false, err, errDesc, totalFailedDpCnt, filterStatus
 	}
 
 	dataTypeIsJson := wrappedUprEvent.UprEvent.DataType&mcc.JSONDataType > 0
@@ -188,7 +183,7 @@ func (filter *FilterImpl) FilterUprEvent(wrappedUprEvent *base.WrappedUprEvent) 
 		}
 
 		if !needToReplicate {
-			filterStatus = FilteredOnUserDefinedFilter
+			return needToReplicate, err, errDesc, totalFailedDpCnt, FilteredOnUserDefinedFilter
 		}
 	}
 
@@ -196,14 +191,14 @@ func (filter *FilterImpl) FilterUprEvent(wrappedUprEvent *base.WrappedUprEvent) 
 	// it means the body is meant to be used - it contains decompressed values of the original
 	// compressed DCP document, and it has been stripped of any transactional related xattrs
 	// Save the body so that it can be copied later and reused if it hasn't been done before (determined via flag)
-	if needToReplicate && body != nil && bodyHasBeenModified && !wrappedUprEvent.Flags.ShouldUseDecompressedValue() {
-		valueBod, err := wrappedUprEvent.ByteSliceGetter(uint64(endBodyPos))
+	if body != nil && bodyHasBeenModified {
+		valueBod, err := wrappedUprEvent.ByteSliceGetter(uint64(endBodyPos + 1))
 		if err != nil {
 			return needToReplicate, err, "wrappedUprEvent.ByteSliceGetter", totalFailedDpCnt, filterStatus
 		}
-		wrappedUprEvent.Flags.SetShouldUseDecompressedValue()
-		copy(valueBod, body[0:endBodyPos])
+		copy(valueBod, body[0:endBodyPos+1])
 		wrappedUprEvent.DecompressedValue = valueBod
+		wrappedUprEvent.Flags.SetShouldUseDecompressedValue()
 	}
 	return needToReplicate, err, errDesc, totalFailedDpCnt, filterStatus
 }
@@ -296,24 +291,22 @@ func (filter *FilterImpl) filterTransactionRelatedUprEvent(uprEvent *mcc.UprEven
 		for xattrIterator.HasNext() {
 			key, value, err := xattrIterator.Next()
 			if err != nil {
-				errDesc = fmt.Sprintf("error during xattribute walk")
-				if err != nil {
-					return false, nil, 0, err, errDesc, failedDpCnt, false, FilteredOnOthers
-				}
+				errDesc = "error during xattribute walk"
+				return false, nil, 0, err, errDesc, failedDpCnt, false, FilteredOnOthers
 			}
 			if base.Equals(key, base.TransactionXattrKey) {
 				continue
 			}
 			err = xattrComposer.WriteKV(key, value)
 			if err != nil {
-				errDesc = fmt.Sprintf("error during xattribute composition")
+				errDesc = "error during xattribute composition"
 				return false, nil, 0, err, errDesc, failedDpCnt, false, FilteredOnOthers
 			}
 		}
 
 		var modifiedBodyHasAtLeastOneXattr bool
 		body, modifiedBodyHasAtLeastOneXattr = xattrComposer.FinishAndAppendDocValue(bodyWithoutXttr, nil, nil)
-		endBodyPos = len(body)
+		endBodyPos = len(body) - 1
 		bodyHasBeenModified = true
 		if uprEvent.DataType&mcc.XattrDataType > 0 && !modifiedBodyHasAtLeastOneXattr {
 			// Since Transactional Xattr was the only xattribute, the new document value should not have any xattribute
@@ -328,7 +321,7 @@ func (filter *FilterImpl) filterTransactionRelatedUprEvent(uprEvent *mcc.UprEven
 // If body is not nil, filterUprEvent will simply use it instead of having to perform decompression again
 // The body will also be free of any transactional metadata that has been stripped unless that is opted out
 // Returns:
-// 1. bool - Whether or not it was a match
+// 1. bool - condition that the UPR event matched the filter expression, & hence needs to be replicated
 // 2. err code
 // 3. If err is not nil, additional description
 // 4. Total bytes of failed datapool gets - which means len of []byte alloc (garbage)

@@ -1,4 +1,4 @@
-module github.com/couchbase/goxdcr
+module github.com/couchbase/goxdcr/v8
 
 go 1.22.5
 
@@ -12,7 +12,17 @@ replace github.com/couchbase/go_json => ../go_json
 
 replace github.com/couchbase/query => ../query
 
-replace github.com/couchbase/gocb/v2 => ../../../../../godeps/src/github.com/couchbase/gocb/v2
+replace github.com/couchbase/query-ee => ../query-ee
+
+replace github.com/couchbase/n1fty => ../n1fty
+
+replace github.com/couchbase/gocb/v2 => github.com/couchbase/gocb/v2 v2.2.5
+
+replace github.com/couchbase/cbft => ../../../../../cbft
+
+replace github.com/couchbase/cbgt => ../../../../../cbgt
+
+replace github.com/couchbase/hebrew => ../../../../../hebrew
 
 require (
 	github.com/couchbase/cbauth v0.1.12
@@ -56,7 +66,7 @@ require (
 	github.com/santhosh-tekuri/jsonschema v1.2.4 // indirect
 	github.com/stretchr/objx v0.5.2 // indirect
 	golang.org/x/crypto v0.22.0 // indirect
-	golang.org/x/sys v0.19.0 // indirect
+	golang.org/x/sys v0.23.0 // indirect
 	google.golang.org/protobuf v1.33.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

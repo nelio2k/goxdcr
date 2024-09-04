@@ -21,12 +21,12 @@ import (
 
 	mc "github.com/couchbase/gomemcached"
 	mcc "github.com/couchbase/gomemcached/client"
-	base "github.com/couchbase/goxdcr/base"
-	common "github.com/couchbase/goxdcr/common"
-	"github.com/couchbase/goxdcr/log"
-	"github.com/couchbase/goxdcr/metadata"
-	"github.com/couchbase/goxdcr/service_def"
-	utilities "github.com/couchbase/goxdcr/utils"
+	base "github.com/couchbase/goxdcr/v8/base"
+	common "github.com/couchbase/goxdcr/v8/common"
+	"github.com/couchbase/goxdcr/v8/log"
+	"github.com/couchbase/goxdcr/v8/metadata"
+	"github.com/couchbase/goxdcr/v8/service_def"
+	utilities "github.com/couchbase/goxdcr/v8/utils"
 )
 
 const (
@@ -130,13 +130,13 @@ func (reqHelper *dcpStreamReqHelper) getNewVersion() uint16 {
 	newVersion = atomic.AddUint64(&reqHelper.currentVersionWell, 1)
 
 	if newVersion > math.MaxUint16 {
-		errStr := fmt.Sprintf("Error: dcpStreamHelper for dcp %v vbno: %v internal version overflow", reqHelper.dcp.Id(), reqHelper.vbno)
+		err := fmt.Errorf("dcpStreamHelper for dcp %v vbno: %v internal version overflow", reqHelper.dcp.Id(), reqHelper.vbno)
 		reqHelper.lock.RLock()
 		defer reqHelper.lock.RUnlock()
 		if !reqHelper.isDisabled {
 			// Something is seriously wrong if interal version overflowed
-			reqHelper.dcp.Logger().Fatalf(errStr)
-			reqHelper.dcp.RaiseEvent(common.NewEvent(common.ErrorEncountered, nil, reqHelper.dcp, nil, errStr))
+			reqHelper.dcp.Logger().Fatalf(err.Error())
+			reqHelper.dcp.RaiseEvent(common.NewEvent(common.ErrorEncountered, nil, reqHelper.dcp, nil, err))
 		}
 		atomic.StoreUint64(&reqHelper.currentVersionWell, 0)
 		newVersion = 0

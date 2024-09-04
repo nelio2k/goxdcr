@@ -155,7 +155,7 @@ function recordNamespaceCreated {
 		# bucket
 		local -a bucketArr
 		local key="${clusterName}"
-		if [[ -z ${CLUSTER_NAME_BUCKET_DONE_MAP[$key]:-} ]]; then
+		if [[ -z "${CLUSTER_NAME_BUCKET_DONE_MAP[$key]:-}" ]]; then
 			bucketArr=("$bucketName")
 		else
 			bucketArr=(${CLUSTER_NAME_BUCKET_DONE_MAP[$key]})
@@ -175,7 +175,7 @@ function recordNamespaceCreated {
 	else
 		local -a colArr
 		local key="${clusterName},${bucketName},${scopeName}"
-		if [[ -z ${SCOPE_NAME_COLLECTION_DONE_MAP[$key]:-} ]]; then
+		if [[ -z "${SCOPE_NAME_COLLECTION_DONE_MAP[$key]:-}" ]]; then
 			colArr=("$collectionName")
 		else
 			colArr=(${SCOPE_NAME_COLLECTION_DONE_MAP[$key]})
@@ -2792,14 +2792,9 @@ function writeMandatoryClientCertJSON {
     "state": "mandatory",
     "prefixes": [
       {
-        "path": "san.uri",
-        "prefix": "www.",
-        "delimiter": "."
-      },
-      {
-        "path": "san.email",
+        "path": "subject.cn",
         "prefix": "",
-        "delimiter": "@"
+        "delimiter": ""
       }
     ]
   }' >$tempFile
@@ -2938,4 +2933,12 @@ function disableInternalResidentRatioGuardrail {
 	local bucket=$2
 
 	$CURL -v -s -X POST -u $DEFAULT_ADMIN:$DEFAULT_PW http://127.0.0.1:$port/diag/eval -d "ns_memcached:set_data_ingress(\"${bucket}\", ok)."
+}
+
+function regenerateCertificate {
+	local clusterName=$1
+	local port=${CLUSTER_NAME_PORT_MAP[$clusterName]:-}
+
+	echo "Regenerating certificates including out of the box CA for $clusterName..."
+	$CURL -u $DEFAULT_ADMIN:$DEFAULT_PW -X POST http://localhost:${port}/controller/regenerateCertificate
 }

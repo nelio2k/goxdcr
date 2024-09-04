@@ -100,8 +100,21 @@ function grepForErrs {
 	for dir in $(ls $logsDir); do
 		count=$(grep -c "decoding source mutation" ${logsDir}/${dir}/goxdcr.log)
 		if (($count > 0)); then
-			echo "WARNING Found errs in ${logsDir}/${dir}"
+			echo "WARNING Found err:decoding source mutation in ${logsDir}/${dir}"
 			exit 1
+		fi
+	done
+	return 0
+}
+
+function grepForPipelineFailures {
+	local ns_serverDir=$(getNsServerDir)
+	local logsDir="${ns_serverDir}/logs"
+	for dir in $(ls $logsDir); do
+		count=$(grep -c "Failed to start the pipeline" ${logsDir}/${dir}/goxdcr.log)
+		if (($count > 0)); then
+			echo "WARNING Found err:Failed to start the pipeline in ${logsDir}/${dir}/goxdcr.log"
+			return 1
 		fi
 	done
 	return 0
@@ -113,7 +126,7 @@ function grepForEINVAL {
 	for dir in $(ls $logsDir); do
 		count=$(grep -c "EINVAL" ${logsDir}/${dir}/goxdcr.log)
 		if (($count > 0)); then
-			echo "WARNING Found errs in ${logsDir}/${dir}"
+			echo "WARNING Found EINVAL in ${logsDir}/${dir}"
 			exit 1
 		fi
 	done
@@ -1157,7 +1170,31 @@ function setupCertificateAuthority {
 	done
 }
 
+function setupCertsForTestingUsage {
+	echo "setupCertsForTesting [-p \"client cert passphrase\"]"
+}
+
+# optional arguments:
+# -p <client key passphrase>
 function setupCertsForTesting {
+	local OPTIND o p
+	while getopts ":p:" o; do
+		case "${o}" in
+		p)
+			p="${OPTARG}"
+			;;
+		*)
+			setupCertsForTestingUsage
+			;;
+		esac
+	done
+	shift $((OPTIND - 1))
+
+	local clientKeyPassphrase
+	if [[ ! -z "${p:-}" ]]; then
+		clientKeyPassphrase="$p"
+	fi
+
 	checkOpenSSL
 	# Currently this test library exists under goproj/src/github.com/couchbase/goxdcr/tools/testScripts/
 	# before below, store the ns_server absolute path
@@ -1307,6 +1344,7 @@ EOF
 			# Reload the node certificate from disk, for the current node:
 			curl -X POST \
 				http://$DEFAULT_ADMIN:$DEFAULT_PW@127.0.0.1:$port/node/controller/reloadCertificate
+
 		else
 			echo "Running vagrant, skipping copy for now"
 		fi
@@ -1331,7 +1369,11 @@ EOF
 			>>./client.ext.tmp
 
 		# Create a client private key.
-		openssl genrsa -out ./travel-sample.key 2048
+		if [[ -z "${clientKeyPassphrase:-}" ]]; then
+			openssl genrsa -out ./travel-sample.key 2048
+		else
+			openssl genrsa -passout pass:"${clientKeyPassphrase}" -out ./travel-sample.key 2048
+		fi
 
 		# Generate the client-certificate signing-request.
 		openssl req -new -key ./travel-sample.key -out ./travel-sample.csr -subj "/CN=Administrator"

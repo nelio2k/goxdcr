@@ -17,16 +17,16 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/couchbase/goxdcr/peerToPeer"
-	"github.com/couchbase/goxdcr/streamApiWatcher"
+	"github.com/couchbase/goxdcr/v8/peerToPeer"
+	"github.com/couchbase/goxdcr/v8/streamApiWatcher"
 
-	base "github.com/couchbase/goxdcr/base"
-	log "github.com/couchbase/goxdcr/log"
-	"github.com/couchbase/goxdcr/metadata_svc"
-	rm "github.com/couchbase/goxdcr/replication_manager"
-	"github.com/couchbase/goxdcr/service_def"
-	"github.com/couchbase/goxdcr/service_impl"
-	utilities "github.com/couchbase/goxdcr/utils"
+	base "github.com/couchbase/goxdcr/v8/base"
+	log "github.com/couchbase/goxdcr/v8/log"
+	"github.com/couchbase/goxdcr/v8/metadata_svc"
+	rm "github.com/couchbase/goxdcr/v8/replication_manager"
+	"github.com/couchbase/goxdcr/v8/service_def"
+	"github.com/couchbase/goxdcr/v8/service_impl"
+	utilities "github.com/couchbase/goxdcr/v8/utils"
 )
 
 var done = make(chan bool)
@@ -139,7 +139,8 @@ func main() {
 
 	// This needs to be started immediately since some of the constructors will start to query the security setting
 	securitySvc := service_impl.NewSecurityService(options.caFileLocation, log.GetOrCreateContext(base.SecuritySvcKey))
-	securitySvc.Start()
+	securitySvc = securitySvc.SetClientKeyFile(options.clientKeyFile).SetClientCertFile(options.clientCertFile)
+	err := securitySvc.Start()
 
 	top_svc, err := service_impl.NewXDCRTopologySvc(uint16(options.sourceKVAdminPort), uint16(options.xdcrRestPort), options.isEnterprise, options.ipv4, options.ipv6, securitySvc, log.GetOrCreateContext(base.TopoSvcKey), utils)
 	if err != nil {

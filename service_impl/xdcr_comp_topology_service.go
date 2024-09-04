@@ -11,17 +11,18 @@ package service_impl
 import (
 	"errors"
 	"fmt"
-	"github.com/couchbase/goxdcr/streamApiWatcher"
+	"net/http"
 	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/couchbase/goxdcr/base"
-	"github.com/couchbase/goxdcr/log"
-	"github.com/couchbase/goxdcr/service_def"
-	utilities "github.com/couchbase/goxdcr/utils"
+	"github.com/couchbase/goxdcr/v8/base"
+	"github.com/couchbase/goxdcr/v8/log"
+	"github.com/couchbase/goxdcr/v8/service_def"
+	"github.com/couchbase/goxdcr/v8/streamApiWatcher"
+	utilities "github.com/couchbase/goxdcr/v8/utils"
 )
 
 var ErrorParsingHostInfo = errors.New("Could not parse current host info from the result.server returned")
@@ -53,6 +54,11 @@ type XDCRTopologySvc struct {
 	cachedClusterCompat      int
 	cachedClusterCompatErr   error
 	cachedClusterCompatTimer *time.Timer
+
+	cachedClientCertMandatoryMtx   sync.RWMutex
+	cachedClientCertMandatory      bool
+	cachedClientCertMandatoryErr   error
+	cachedClientCertMandatoryTimer *time.Timer
 }
 
 func NewXDCRTopologySvc(adminport, xdcrRestPort uint16,
@@ -80,6 +86,9 @@ func NewXDCRTopologySvc(adminport, xdcrRestPort uint16,
 	} else if ipv6 == base.IpFamilyOffOption {
 		top_svc.ipv6 = base.IpFamilyOff
 	}
+
+	top_svc.setClientCertSettingChangeCb()
+
 	top_svc.clusterWatcher = streamApiWatcher.NewStreamApiWatcher(base.ObservePoolPath, top_svc, utilsIn, nil, top_svc.logger)
 	top_svc.clusterWatcher.Start()
 	return top_svc, nil
@@ -453,7 +462,7 @@ func (top_svc *XDCRTopologySvc) MyClusterCompatibility() (int, error) {
 
 	var cooldownPeriod = base.TopologySvcCoolDownPeriod
 	err, statusCode := top_svc.utils.QueryRestApi(top_svc.staticHostAddr(), base.DefaultPoolPath, false, base.MethodGet, "", nil, 0, &defaultPoolsInfo, top_svc.logger)
-	if err != nil || statusCode != 200 {
+	if err != nil || statusCode != http.StatusOK {
 		cooldownPeriod = base.TopologySvcErrCoolDownPeriod
 		retErr := errors.New(fmt.Sprintf("Failed on calling %v, err=%v, statusCode=%v", base.DefaultPoolPath, err, statusCode))
 		top_svc.cachedClusterCompatErr = retErr
@@ -565,4 +574,60 @@ func (top_svc *XDCRTopologySvc) getNodeList() ([]interface{}, error) {
 	} else {
 		return nodeList, nil
 	}
+}
+
+func (top_svc *XDCRTopologySvc) ClientCertIsMandatory() (bool, error) {
+	top_svc.cachedClientCertMandatoryMtx.RLock()
+	// Timer's existence determines whether or not we're in cool down period
+	if top_svc.cachedClientCertMandatoryTimer != nil {
+		// still within cooldown period - return cached information
+		defer top_svc.cachedClientCertMandatoryMtx.RUnlock()
+		return top_svc.cachedClientCertMandatory, top_svc.cachedClientCertMandatoryErr
+	}
+
+	// Upgrade lock
+	top_svc.cachedClientCertMandatoryMtx.RUnlock()
+	top_svc.cachedClientCertMandatoryMtx.Lock()
+	defer top_svc.cachedClientCertMandatoryMtx.Unlock()
+
+	if top_svc.cachedClientCertMandatoryTimer != nil {
+		// someone sneaked in
+		return top_svc.cachedClientCertMandatory, top_svc.cachedClientCertMandatoryErr
+	}
+
+	stopFunc := top_svc.utils.StartDiagStopwatch("top_svc.ClientCertIsMandatory()", base.DiagInternalThreshold)
+	defer stopFunc()
+
+	var cooldownPeriod = base.TopologySvcCoolDownPeriod
+
+	clientCertOutput := make(map[string]interface{})
+	err, statusCode := top_svc.utils.QueryRestApiWithAuth(top_svc.staticHostAddr(), base.ClientCertAuthPath, false, "", "", base.HttpAuthMechPlain, nil, false /*sanInCertificate*/, nil, nil, base.MethodGet, "", nil, base.ShortHttpTimeout, &clientCertOutput, nil, false, top_svc.logger)
+	if err != nil || statusCode != http.StatusOK {
+		err = fmt.Errorf("ClientCertIsMandatory.Query(%v) status %v err %v", base.ClientCertAuthPath, statusCode, err)
+		top_svc.cachedClientCertMandatoryErr = err
+		top_svc.cachedClientCertMandatory = false
+		// ns_server call failed means we need to elongate the cooldown period
+	} else {
+		// If parsing fails, it is either coding bug (unlikely since it would have been tested)
+		// or ns_server is returning odd things. In either case, should still try to cooldown
+		top_svc.cachedClientCertMandatory, top_svc.cachedClientCertMandatoryErr = top_svc.utils.ParseClientCertOutput(clientCertOutput)
+	}
+	if top_svc.cachedClientCertMandatoryErr != nil {
+		cooldownPeriod = base.TopologySvcErrCoolDownPeriod
+	}
+
+	top_svc.cachedClientCertMandatoryTimer = time.AfterFunc(cooldownPeriod, top_svc.clearCachedClientCertCache)
+	return top_svc.cachedClientCertMandatory, top_svc.cachedClientCertMandatoryErr
+}
+
+func (top_svc *XDCRTopologySvc) setClientCertSettingChangeCb() {
+	top_svc.securitySvc.SetClientCertSettingChangeCb(top_svc.clearCachedClientCertCache)
+}
+
+func (top_svc *XDCRTopologySvc) clearCachedClientCertCache() {
+	top_svc.cachedClientCertMandatoryMtx.Lock()
+	top_svc.cachedClientCertMandatoryTimer = nil
+	top_svc.cachedClientCertMandatoryErr = nil
+	top_svc.cachedClientCertMandatory = false
+	top_svc.cachedClientCertMandatoryMtx.Unlock()
 }

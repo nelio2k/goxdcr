@@ -38,10 +38,10 @@ import (
 	mc "github.com/couchbase/gomemcached"
 	mcc "github.com/couchbase/gomemcached/client"
 	"github.com/couchbase/goutils/scramsha"
-	"github.com/couchbase/goxdcr/base"
-	"github.com/couchbase/goxdcr/base/filter"
-	"github.com/couchbase/goxdcr/log"
-	"github.com/couchbase/goxdcr/metadata"
+	"github.com/couchbase/goxdcr/v8/base"
+	"github.com/couchbase/goxdcr/v8/base/filter"
+	"github.com/couchbase/goxdcr/v8/log"
+	"github.com/couchbase/goxdcr/v8/metadata"
 	"github.com/couchbaselabs/gojsonsm"
 )
 
@@ -3608,4 +3608,27 @@ func (u *Utilities) GetReplicasInfo(bucketInfo map[string]interface{}, isStrictl
 		}
 	}
 	return vbReplicaMap, kvToNsServerTranslateMap, numOfReplicas, vbListForBeingAReplica, nil
+}
+
+// ParseClientCertOutput takes the output of /settings/clientCertAuth endpoint and checks if client cert is mandatory
+func (u *Utilities) ParseClientCertOutput(clientCertInput map[string]interface{}) (isMandatory bool, err error) {
+	if clientCertInput == nil {
+		err = fmt.Errorf("ClientCert input is empty")
+		return
+	}
+
+	stateRaw, ok := clientCertInput[base.StateKey]
+	if !ok {
+		err = fmt.Errorf("unable to find state object")
+		return
+	}
+
+	stateStr, ok := stateRaw.(string)
+	if !ok {
+		err = fmt.Errorf("expected state to be string, got %T", stateRaw)
+		return
+	}
+
+	isMandatory = stateStr == base.MandatoryVal
+	return
 }

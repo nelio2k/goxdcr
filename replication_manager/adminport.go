@@ -24,15 +24,15 @@ import (
 	"time"
 
 	"github.com/couchbase/cbauth"
-	ap "github.com/couchbase/goxdcr/adminport"
-	"github.com/couchbase/goxdcr/base"
-	"github.com/couchbase/goxdcr/gen_server"
-	"github.com/couchbase/goxdcr/log"
-	"github.com/couchbase/goxdcr/metadata"
-	"github.com/couchbase/goxdcr/peerToPeer"
-	"github.com/couchbase/goxdcr/pipeline_utils"
-	"github.com/couchbase/goxdcr/service_def"
-	utilities "github.com/couchbase/goxdcr/utils"
+	ap "github.com/couchbase/goxdcr/v8/adminport"
+	"github.com/couchbase/goxdcr/v8/base"
+	"github.com/couchbase/goxdcr/v8/gen_server"
+	"github.com/couchbase/goxdcr/v8/log"
+	"github.com/couchbase/goxdcr/v8/metadata"
+	"github.com/couchbase/goxdcr/v8/peerToPeer"
+	"github.com/couchbase/goxdcr/v8/pipeline_utils"
+	"github.com/couchbase/goxdcr/v8/service_def"
+	utilities "github.com/couchbase/goxdcr/v8/utils"
 
 	_ "net/http/pprof"
 )
@@ -1336,7 +1336,7 @@ func (adminport *Adminport) doPostPeerToPeerRequest(request *http.Request) (*ap.
 	if response != nil || err != nil {
 		return response, err
 	}
-	req, err := peerToPeer.GenerateP2PReqOrResp(request, adminport.utils, adminport.securitySvc, adminport.Logger())
+	req, err := peerToPeer.GenerateP2PReqOrResp(request, adminport.utils, adminport.securitySvc, adminport.Logger(), adminport.xdcrCompTopologySvc)
 	if err != nil {
 		adminport.Logger().Errorf("Unable to generate req or resp from %v err: %v\n", localRemoteIPs.Remote, err)
 		return EncodeErrorMessageIntoResponse(err, http.StatusInternalServerError)

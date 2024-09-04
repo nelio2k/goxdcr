@@ -14,14 +14,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/couchbase/goxdcr/base"
-	"github.com/couchbase/goxdcr/common"
-	"github.com/couchbase/goxdcr/log"
-	"github.com/couchbase/goxdcr/metadata"
-	"github.com/couchbase/goxdcr/parts"
-	"github.com/couchbase/goxdcr/peerToPeer"
-	"github.com/couchbase/goxdcr/service_def"
-	utilities "github.com/couchbase/goxdcr/utils"
+	"github.com/couchbase/goxdcr/v8/base"
+	"github.com/couchbase/goxdcr/v8/common"
+	"github.com/couchbase/goxdcr/v8/log"
+	"github.com/couchbase/goxdcr/v8/metadata"
+	"github.com/couchbase/goxdcr/v8/parts"
+	"github.com/couchbase/goxdcr/v8/peerToPeer"
+	"github.com/couchbase/goxdcr/v8/service_def"
+	utilities "github.com/couchbase/goxdcr/v8/utils"
 )
 
 var ErrorKey = "Error"
@@ -60,7 +60,7 @@ type VBMasterCheckFunc func(common.Pipeline) (map[string]*peerToPeer.VBMasterChe
 
 type MergeVBMasterRespCkptsFunc func(common.Pipeline, peerToPeer.PeersVBMasterCheckRespMap) error
 
-type PrometheusPipelineStatusCb []func()
+type PrometheusStatusUpdater func(pipeline common.Pipeline, status base.PipelineStatusGauge) error
 
 // GenericPipeline is the generic implementation of a data processing pipeline
 //
@@ -142,7 +142,7 @@ type GenericPipeline struct {
 	sourceTopologyProgressMsg string
 	targetTopologyProgressMsg string
 
-	statusCallbacks PrometheusPipelineStatusCb
+	prometheusStatusUpdater PrometheusStatusUpdater
 }
 
 // Get the runtime context of this pipeline
@@ -264,10 +264,16 @@ func (genericPipeline *GenericPipeline) Start(settings metadata.ReplicationSetti
 		if len(errMap) > 0 {
 			genericPipeline.logger.Errorf("%v failed to start, err=%v", genericPipeline.InstanceId(), errMap)
 			genericPipeline.ReportProgress(fmt.Sprintf("Pipeline failed to start, err=%v", errMap))
-			genericPipeline.statusCallbacks[base.PipelineStatusError]()
+			err := genericPipeline.prometheusStatusUpdater(genericPipeline, base.PipelineStatusError)
+			if err != nil {
+				genericPipeline.logger.Errorf("failed to update prometheus status. err=%v", err)
+			}
 		} else {
 			// Only set to running if there is no error starting the pipeline
-			genericPipeline.statusCallbacks[base.PipelineStatusRunning]()
+			err := genericPipeline.prometheusStatusUpdater(genericPipeline, base.PipelineStatusRunning)
+			if err != nil {
+				genericPipeline.logger.Errorf("failed to update prometheus status. err=%v", err)
+			}
 		}
 	}(genericPipeline, errMap)
 
@@ -489,63 +495,64 @@ func (genericPipeline *GenericPipeline) preCheckCasCheck(spec *metadata.Replicat
 }
 
 func (genericPipeline *GenericPipeline) getlocalMaxCasMap(spec *metadata.ReplicationSpecification, genPipelineId string) (base.VbSeqnoMapType, base.ErrorMap) {
-	localMaxCasNotificationCh, err := genericPipeline.bucketTopologySvc.SubscribeToLocalBucketMaxVbCasStatFeed(spec, genPipelineId)
+	errMap := make(base.ErrorMap)
+	localMaxCasMap := make(base.VbSeqnoMapType)
+
+	localMaxCasNotificationCh, localMaxCasErrCh, err := genericPipeline.bucketTopologySvc.SubscribeToLocalBucketMaxVbCasStatFeed(spec, genPipelineId)
 	if err != nil {
-		errMap := make(base.ErrorMap)
 		errMap[PreCheckCasCheck] = err
 		return nil, errMap
 	}
+	defer genericPipeline.bucketTopologySvc.UnSubscribeToLocalBucketMaxVbCasStatFeed(spec, genPipelineId)
 
-	localMaxCasMap := make(base.VbSeqnoMapType)
 	var nonEmptyResultFound bool
 	for !nonEmptyResultFound {
-		maxCasNotification := <-localMaxCasNotificationCh
-		vbMaxCasMap := maxCasNotification.GetVBMaxCasStats()
-		if len(vbMaxCasMap) == 0 {
-			time.Sleep(1 * time.Second)
-		} else {
-			nonEmptyResultFound = true
-			localMaxCasMap = vbMaxCasMap.DedupAndGetMax()
-		}
-		maxCasNotification.Recycle()
-	}
+		select {
+		case maxCasNotification := <-localMaxCasNotificationCh:
+			vbMaxCasMap := maxCasNotification.GetVBMaxCasStats()
+			if len(vbMaxCasMap) != 0 {
+				nonEmptyResultFound = true
+				localMaxCasMap = vbMaxCasMap.DedupAndGetMax()
+			}
+			maxCasNotification.Recycle()
+		case err := <-localMaxCasErrCh:
+			if err != nil {
+				errMap[PreCheckCasCheck] = fmt.Errorf("failed to fetch localMaxCasMap. err=%v", err)
+				return nil, errMap
 
-	err = genericPipeline.bucketTopologySvc.UnSubscribeToLocalBucketMaxVbCasStatFeed(spec, genPipelineId)
-	if err != nil {
-		errMap := make(base.ErrorMap)
-		errMap[PreCheckCasCheck] = err
-		return nil, errMap
+			}
+		}
 	}
 	return localMaxCasMap, nil
 }
 
 func (genericPipeline *GenericPipeline) getRemoteMinCasMap(spec *metadata.ReplicationSpecification, genPipelineId string) (base.VbSeqnoMapType, base.ErrorMap) {
-	remoteMaxNotificationCh, err := genericPipeline.bucketTopologySvc.SubscribeToRemoteKVStatsFeed(spec, genPipelineId)
+	remoteMinCasMap := make(base.VbSeqnoMapType)
+	errMap := make(base.ErrorMap)
+
+	remoteMaxNotificationCh, remoteMaxCasErrCh, err := genericPipeline.bucketTopologySvc.SubscribeToRemoteKVStatsFeed(spec, genPipelineId)
 	if err != nil {
-		errMap := make(base.ErrorMap)
 		errMap[PreCheckCasCheck] = err
 		return nil, errMap
 	}
+	defer genericPipeline.bucketTopologySvc.UnSubscribeToRemoteKVStatsFeed(spec, genPipelineId)
 
-	remoteMinCasMap := make(base.VbSeqnoMapType)
 	var nonEmptyResultFound bool
 	for !nonEmptyResultFound {
-		maxCasNotification := <-remoteMaxNotificationCh
-		vbMaxCasMap := maxCasNotification.GetVBMaxCasStats()
-		if len(vbMaxCasMap) == 0 {
-			time.Sleep(1 * time.Second)
-		} else {
-			nonEmptyResultFound = true
-			remoteMinCasMap = vbMaxCasMap.DedupAndGetMin()
+		select {
+		case maxCasNotification := <-remoteMaxNotificationCh:
+			vbMaxCasMap := maxCasNotification.GetVBMaxCasStats()
+			if len(vbMaxCasMap) != 0 {
+				nonEmptyResultFound = true
+				remoteMinCasMap = vbMaxCasMap.DedupAndGetMin()
+			}
+			maxCasNotification.Recycle()
+		case err := <-remoteMaxCasErrCh:
+			if err != nil {
+				errMap[PreCheckCasCheck] = fmt.Errorf("failed to fetch RemoteMinCasMap. err=%v", err)
+				return nil, errMap
+			}
 		}
-		maxCasNotification.Recycle()
-	}
-
-	err = genericPipeline.bucketTopologySvc.UnSubscribeToRemoteKVStatsFeed(spec, genPipelineId)
-	if err != nil {
-		errMap := make(base.ErrorMap)
-		errMap[PreCheckCasCheck] = err
-		return nil, errMap
 	}
 	return remoteMinCasMap, nil
 }
@@ -728,7 +735,10 @@ func (genericPipeline *GenericPipeline) Stop() base.ErrorMap {
 			// Only mark the pipeline paused if the user requested it (or auto paused)
 			// Otherwise, any stop() could be called during error phase and we want to keep
 			// the pipeline in error phase
-			genericPipeline.statusCallbacks[base.PipelineStatusPaused]()
+			err := genericPipeline.prometheusStatusUpdater(genericPipeline, base.PipelineStatusPaused)
+			if err != nil {
+				genericPipeline.logger.Errorf("failed to update prometheus status. err=%v", err)
+			}
 		}
 	}
 
@@ -809,7 +819,7 @@ func NewGenericPipeline(t string,
 	return pipeline
 }
 
-func NewPipelineWithSettingConstructor(t string, pipelineType common.PipelineType, sources map[string]common.Nozzle, targets map[string]common.Nozzle, spec metadata.GenericSpecification, targetClusterRef *metadata.RemoteClusterReference, partsSettingsConstructor PartsSettingsConstructor, connectorSettingsConstructor ConnectorSettingsConstructor, sslPortMapConstructor SSLPortMapConstructor, partsUpdateSettingsConstructor PartsUpdateSettingsConstructor, connectorUpdateSetting_constructor ConnectorsUpdateSettingsConstructor, startingSeqnoConstructor StartingSeqnoConstructor, checkpoint_func CheckpointFunc, logger_context *log.LoggerContext, vbMasterCheckFunc VBMasterCheckFunc, mergeCkptFunc MergeVBMasterRespCkptsFunc, bucketTopologySvc service_def.BucketTopologySvc, utils utilities.UtilsIface, prometheusStatusCbConstructor func(pipeline common.Pipeline) PrometheusPipelineStatusCb) *GenericPipeline {
+func NewPipelineWithSettingConstructor(t string, pipelineType common.PipelineType, sources map[string]common.Nozzle, targets map[string]common.Nozzle, spec metadata.GenericSpecification, targetClusterRef *metadata.RemoteClusterReference, partsSettingsConstructor PartsSettingsConstructor, connectorSettingsConstructor ConnectorSettingsConstructor, sslPortMapConstructor SSLPortMapConstructor, partsUpdateSettingsConstructor PartsUpdateSettingsConstructor, connectorUpdateSetting_constructor ConnectorsUpdateSettingsConstructor, startingSeqnoConstructor StartingSeqnoConstructor, checkpoint_func CheckpointFunc, logger_context *log.LoggerContext, vbMasterCheckFunc VBMasterCheckFunc, mergeCkptFunc MergeVBMasterRespCkptsFunc, bucketTopologySvc service_def.BucketTopologySvc, utils utilities.UtilsIface, prometheusStatusUpdater func(pipeline common.Pipeline, status base.PipelineStatusGauge) error) *GenericPipeline {
 	pipeline := &GenericPipeline{topic: t,
 		sources:                            sources,
 		targets:                            targets,
@@ -831,9 +841,9 @@ func NewPipelineWithSettingConstructor(t string, pipelineType common.PipelineTyp
 		vbMasterCheckFunc:                  vbMasterCheckFunc,
 		mergeCkptFunc:                      mergeCkptFunc,
 		utils:                              utils,
+		prometheusStatusUpdater:            prometheusStatusUpdater,
 	}
 	// NOTE: Calling initialize here as part of constructor
-	pipeline.statusCallbacks = prometheusStatusCbConstructor(pipeline)
 	pipeline.initialize()
 	pipeline.logger.Debugf("Pipeline %s has been initialized with a part setting constructor %v", t, partsSettingsConstructor)
 

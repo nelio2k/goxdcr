@@ -19,18 +19,16 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/golang/snappy"
-
 	mc "github.com/couchbase/gomemcached"
 	mcc "github.com/couchbase/gomemcached/client"
-	"github.com/couchbase/goxdcr/base"
-	baseFilter "github.com/couchbase/goxdcr/base/filter"
-	"github.com/couchbase/goxdcr/common"
-	"github.com/couchbase/goxdcr/connector"
-	"github.com/couchbase/goxdcr/log"
-	"github.com/couchbase/goxdcr/metadata"
-	"github.com/couchbase/goxdcr/service_def"
-	utilities "github.com/couchbase/goxdcr/utils"
+	"github.com/couchbase/goxdcr/v8/base"
+	baseFilter "github.com/couchbase/goxdcr/v8/base/filter"
+	"github.com/couchbase/goxdcr/v8/common"
+	"github.com/couchbase/goxdcr/v8/connector"
+	"github.com/couchbase/goxdcr/v8/log"
+	"github.com/couchbase/goxdcr/v8/metadata"
+	"github.com/couchbase/goxdcr/v8/service_def"
+	utilities "github.com/couchbase/goxdcr/v8/utils"
 )
 
 var ErrorInvalidDataForRouter = errors.New("Input data to Router is invalid.")
@@ -1525,6 +1523,9 @@ func (router *Router) ComposeMCRequest(wrappedEvent *base.WrappedUprEvent) (*bas
 	req.Opaque = 0
 	req.VBucket = event.VBucket
 	req.Key = event.Key
+	req.Opcode = event.Opcode
+	req.DataType = event.DataType
+
 	if wrappedEvent.Flags.ShouldUseDecompressedValue() {
 		// The decompresedValue will get recycled before this mcRequest is passed down to Xmem
 		// Copy the data to another recycled slice
@@ -1538,19 +1539,17 @@ func (router *Router) ComposeMCRequest(wrappedEvent *base.WrappedUprEvent) (*bas
 		}
 		wrapped_req.SlicesToBeReleasedByRouter = append(wrapped_req.SlicesToBeReleasedByRouter, recycledSlice)
 		wrapped_req.SlicesToBeReleasedMtx.Unlock()
-		if wrappedEvent.UprEvent.IsSnappyDataType() {
-			// snappy.Encode performs trim on recycledSlice when it returns
-			recycledSlice = snappy.Encode(recycledSlice, wrappedEvent.DecompressedValue)
-		} else {
-			copy(recycledSlice, wrappedEvent.DecompressedValue)
+
+		copy(recycledSlice, wrappedEvent.DecompressedValue)
+
+		if event.IsSnappyDataType() {
+			wrapped_req.NeedToRecompress = true
+			req.DataType &^= mcc.SnappyDataType
 		}
 		req.Body = recycledSlice
 	} else {
 		req.Body = event.Value
 	}
-	//opCode
-	req.Opcode = event.Opcode
-	req.DataType = event.DataType
 
 	//extra
 	if event.Opcode == mc.UPR_MUTATION || event.Opcode == mc.UPR_DELETION ||

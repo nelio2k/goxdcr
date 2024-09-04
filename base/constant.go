@@ -63,6 +63,7 @@ const DocsPath = "/docs/"
 const CollectionsManifestPath = "/scopes"
 const ScopesPath = "/scopes/"
 const CollectionsPath = "/collections/"
+const ClientCertAuthPath = "/settings/clientCertAuth"
 
 // Streaming API paths. They are used for source clusters only
 const ObservePoolPath = "/poolsStreaming/default"
@@ -364,6 +365,7 @@ var ErrorSubdocLookupPathNotFound = errors.New("SUBDOC_MULTI_LOOKUP does not inc
 var ErrorUnexpectedSubdocOp = errors.New("Unexpected subdoc op was observed")
 var ErrorCasPoisoningDetected = errors.New("Document CAS is stamped with a time beyond allowable drift threshold")
 var ErrorHostNameEmpty = errors.New("Hostname is empty")
+var ErrorReplicationSpecNotActive = errors.New("replication specification not found or no longer active")
 
 func GetBackfillFatalDataLossError(specId string) error {
 	return fmt.Errorf("%v experienced fatal error when trying to create backfill request. To prevent data loss, the pipeline must restream from the beginning", specId)
@@ -1210,6 +1212,7 @@ var TopologySvcStatusNotFoundCoolDownPeriod = 10 * time.Second
 var BucketTopologyWatcherChanLen = 1000
 var BucketTopologyGCScanTime = 1 * time.Minute
 var BucketTopologyGCPruneTime = 24 * time.Hour
+var BucketTopologyWatcherErrChanLen = 1
 
 var P2PCommTimeout = 15 * time.Second
 var MaxP2PReceiveChLen = 10000
@@ -1461,6 +1464,7 @@ const DevNsServerPortSpecifier = "xdcrDevNsServerPort" // Certain injection may 
 const DevBackfillReplUpdateDelay = "xdcrDevBackfillReplUpdateDelayMs"
 const DevCasDriftForceDocKey = "xdcrDevCasDriftInjectDocKey"
 const DevPreCheckCasDriftForceVbKey = "xdcrDevPreCheckCasDriftInjectVb"
+const DevPreCheckMaxCasErrorInjection = "xdcrDevPreCheckMaxCasErrorInjection"
 
 // Need to escape the () to result in "META().xattrs" literal
 const ExternalKeyXattr = "META\\(\\).xattrs"
@@ -1752,34 +1756,34 @@ var NWLatencyToleranceMilliSec = 10000 * time.Millisecond
 // names of services to be used for setting loggerContext's
 // this list also contains some of the single ton loggers declared at package level
 const (
-	UtilsKey                  = "Utils"
-	SecuritySvcKey            = "SecuritySvc"
-	TopoSvcKey                = "TopoSvc"
-	MetadataSvcKey            = "MetadataSvc"
-	IntSettSvcKey             = "IntSettSvc"
-	AuditSvcKey               = "AuditSvc"
-	GlobalSettSvcKey          = "GlobalSettSvc"
-	RemClusterSvcKey          = "RemClusterSvc"
-	ReplSpecSvcKey            = "ReplSpecSvc"
-	CheckpointSvcKey          = "CheckpointSvc"
-	MigrationSvcKey           = "MigrationSvc"
-	ReplSettSvcKey            = "ReplSettSvc"
-	BucketTopologySvcKey      = "BucketTopologySvc"
+	UtilsKey                  = "UtilsService"
+	SecuritySvcKey            = "SecurityService"
+	TopoSvcKey                = "TopologyService"
+	MetadataSvcKey            = "MetaKVMetadataService"
+	IntSettSvcKey             = "InternalSettingsService"
+	AuditSvcKey               = "AuditService"
+	GlobalSettSvcKey          = "GlobalSettingsService"
+	RemClusterSvcKey          = "RemoteClusterService"
+	ReplSpecSvcKey            = "ReplicationSpecService"
+	CheckpointSvcKey          = "CheckpointService"
+	MigrationSvcKey           = "MigrationService"
+	ReplSettSvcKey            = "ReplicationSettingService"
+	BucketTopologySvcKey      = "BucketTopologyService"
 	ManifestServiceKey        = "ManifestService"
-	CollectionsManifestSvcKey = "CollectionsManifestSvc"
-	BackfillReplSvcKey        = "BackfillReplSvc"
-	P2PManagerKey             = "P2PManager"
-	CapiSvcKey                = "CapiSvc"
-	TpThrottlerSvcKey         = "TpThrottlerSvc"
+	CollectionsManifestSvcKey = "CollectionsManifestService"
+	BackfillReplSvcKey        = "BackfillReplicationService"
+	P2PManagerKey             = "P2PManagerService"
+	CapiSvcKey                = "CapiService"
+	TpThrottlerSvcKey         = "ThroughputThrottlerService"
 	GenericSupervisorKey      = "GenericSupervisor"
 	XDCRFactoryKey            = "XDCRFactory"
-	PipelineMgrKey            = "PipelineMgr"
-	ResourceMgrKey            = "ResourceMgr"
-	BackfillMgrKey            = "BackfillMgr"
+	PipelineMgrKey            = "PipelineManager"
+	ResourceMgrKey            = "ResourceManager"
+	BackfillMgrKey            = "BackfillManager"
 	DefaultKey                = "Default"
 	AdminPortKey              = "AdminPort"
 	HttpServerKey             = "HttpServer"
-	MsgUtilsKey               = "MsgUtils"
+	MsgUtilsKey               = "MessageUtils"
 )
 
 // This is exposed as an internal setting (which triggers process restart which is necessary),
@@ -1790,3 +1794,10 @@ var CasPoisoningPreCheckEnabled int = 0
 func IsCasPoisoningPreCheckEnabled() bool {
 	return CasPoisoningPreCheckEnabled > 0
 }
+
+// Client Cert related consts
+const (
+	ErrorStringClientCertMandatory = "tls: certificate required"
+	StateKey                       = "state"
+	MandatoryVal                   = "mandatory"
+)
