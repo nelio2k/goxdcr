@@ -7,6 +7,8 @@ import (
 
 	"github.com/couchbase/goxdcr/v8/base/iopool"
 	"github.com/couchbase/goxdcr/v8/log"
+	"github.com/couchbase/goxdcr/v8/service_def/throttlerSvc"
+	"github.com/couchbase/goxdcr/v8/service_impl/throttlerSvcImpl"
 	"github.com/couchbase/goxdcr/v8/utils"
 )
 
@@ -21,6 +23,7 @@ type Manager interface {
 	// [TEMP]: SetConnType exists only for perf test
 	SetConnType(connType string) error
 	SetConnLimit(limit int)
+	SetIOPSLimit(limit int64)
 	SetSkipTlsVerify(bool)
 }
 
@@ -84,6 +87,9 @@ func InitManager(loggerCtx *log.LoggerContext, utils utils.UtilsIface, memdAddrG
 
 	logger.Info("intializing conflict manager")
 
+	throttlerSvc := throttlerSvcImpl.NewThroughputThrottlerSvc(loggerCtx)
+	throttlerSvc.Start()
+
 	impl := &managerImpl{
 		logger:         logger,
 		memdAddrGetter: memdAddrGetter,
@@ -93,6 +99,7 @@ func InitManager(loggerCtx *log.LoggerContext, utils utils.UtilsIface, memdAddrG
 		connLimit:      DefaultPoolConnLimit,
 		connType:       "gocbcore",
 		certs:          certs,
+		throttlerSvc:   throttlerSvc,
 	}
 
 	logger.Info("creating conflict manager writer pool")
@@ -109,6 +116,7 @@ type managerImpl struct {
 	utils          utils.UtilsIface
 	connPool       iopool.ConnPool
 	manifestCache  *ManifestCache
+	throttlerSvc   throttlerSvc.ThroughputThrottlerSvc
 
 	// connLimit max number of connections
 	connLimit int
@@ -122,7 +130,7 @@ type managerImpl struct {
 
 func (m *managerImpl) NewLogger(logger *log.CommonLogger, replId string, opts ...LoggerOpt) (l Logger, err error) {
 	opts = append(opts, WithSkipTlsVerify(m.skipTlsVerify))
-	l, err = newLoggerImpl(logger, replId, m.utils, m.connPool, opts...)
+	l, err = newLoggerImpl(logger, replId, m.utils, m.throttlerSvc, m.connPool, opts...)
 	return
 }
 
@@ -134,6 +142,13 @@ func (m *managerImpl) SetConnLimit(limit int) {
 func (m *managerImpl) SetSkipTlsVerify(v bool) {
 	m.logger.Infof("setting tls skip verify=%v", v)
 	m.skipTlsVerify = v
+}
+
+func (m *managerImpl) SetIOPSLimit(limit int64) {
+	m.logger.Infof("setting IOPS limit = %d", limit)
+	m.throttlerSvc.UpdateSettings(map[string]interface{}{
+		throttlerSvc.LowTokensKey: limit,
+	})
 }
 
 func (m *managerImpl) setConnPool() {
@@ -169,7 +184,7 @@ func (m *managerImpl) ConnPool() iopool.ConnPool {
 	return m.connPool
 }
 
-func (m *managerImpl) newGocbCoreConn(bucketName string) (w io.Closer, err error) {
+func (m *managerImpl) newGocbCoreConn(bucketName string) (conn io.Closer, err error) {
 	m.logger.Infof("creating new conflict writer bucket=%s certsEnabled=%v", bucketName, m.certs != nil)
 
 	certs, err := m.getCerts()
@@ -192,7 +207,6 @@ func (m *managerImpl) newMemcachedConn(bucketName string) (conn io.Closer, err e
 	}
 
 	conn, err = NewMemcachedConn(m.logger, m.utils, m.manifestCache, bucketName, addr, certs, m.skipTlsVerify)
-
 	return
 }
 

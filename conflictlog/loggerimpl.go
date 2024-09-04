@@ -8,6 +8,7 @@ import (
 	"github.com/couchbase/goxdcr/v8/base"
 	"github.com/couchbase/goxdcr/v8/base/iopool"
 	"github.com/couchbase/goxdcr/v8/log"
+	"github.com/couchbase/goxdcr/v8/service_def/throttlerSvc"
 	"github.com/couchbase/goxdcr/v8/utils"
 )
 
@@ -38,6 +39,9 @@ type loggerImpl struct {
 	// mu is the logger level lock
 	mu sync.Mutex
 
+	// throttlerSvc is the IOPS throttler
+	throttlerSvc throttlerSvc.ThroughputThrottlerSvc
+
 	// logReqCh is the work queue for all logging requests
 	logReqCh chan logRequest
 
@@ -58,7 +62,9 @@ type logRequest struct {
 	ackCh chan error
 }
 
-func newLoggerImpl(logger *log.CommonLogger, replId string, utils utils.UtilsIface, connPool iopool.ConnPool, opts ...LoggerOpt) (l *loggerImpl, err error) {
+// newLoggerImpl creates a new logger impl instance.
+// throttlerSvc is allowed to be nil, which means no throttling
+func newLoggerImpl(logger *log.CommonLogger, replId string, utils utils.UtilsIface, throttlerSvc throttlerSvc.ThroughputThrottlerSvc, connPool iopool.ConnPool, opts ...LoggerOpt) (l *loggerImpl, err error) {
 	// set the defaults
 	options := LoggerOptions{
 		rules:                nil,
@@ -88,6 +94,7 @@ func newLoggerImpl(logger *log.CommonLogger, replId string, utils utils.UtilsIfa
 		connPool:         connPool,
 		opts:             options,
 		mu:               sync.Mutex{},
+		throttlerSvc:     throttlerSvc,
 		logReqCh:         make(chan logRequest, options.logQueueCap),
 		finch:            make(chan bool, 1),
 		shutdownWorkerCh: make(chan bool, LoggerShutdownChCap),
@@ -284,10 +291,23 @@ func (l *loggerImpl) getFromPool(bucketName string) (conn iopool.Connection, err
 	return
 }
 
+func (l *loggerImpl) throttle() {
+	if l.throttlerSvc == nil {
+		return
+	}
+
+	ok := l.throttlerSvc.CanSend(false)
+	for !ok {
+		l.throttlerSvc.Wait()
+		ok = l.throttlerSvc.CanSend(false)
+	}
+}
+
 // setMetaTimeout is a wrapper on Connection's SetMeta using the timeout configured with the logger
 func (l *loggerImpl) setMetaTimeout(conn iopool.Connection, key string, body []byte, dataType uint8, target base.ConflictLogTarget) error {
 	resultCh := make(chan error, 1)
 	go func() {
+		l.throttle()
 		err := conn.SetMeta(key, body, dataType, target)
 		resultCh <- err
 	}()

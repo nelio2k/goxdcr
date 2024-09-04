@@ -32,6 +32,7 @@ import (
 	"github.com/couchbase/goxdcr/v8/pipeline_svc"
 	"github.com/couchbase/goxdcr/v8/pipeline_utils"
 	"github.com/couchbase/goxdcr/v8/service_def"
+	"github.com/couchbase/goxdcr/v8/service_def/throttlerSvc"
 	"github.com/couchbase/goxdcr/v8/service_impl"
 	utilities "github.com/couchbase/goxdcr/v8/utils"
 )
@@ -68,7 +69,7 @@ type XDCRFactory struct {
 	checkpoint_svc           service_def.CheckpointsService
 	capi_svc                 service_def.CAPIService
 	uilog_svc                service_def.UILogSvc
-	throughput_throttler_svc service_def.ThroughputThrottlerSvc
+	throughput_throttler_svc throttlerSvc.ThroughputThrottlerSvc
 	collectionsManifestSvc   service_def.CollectionsManifestSvc
 	backfillReplSvc          service_def.BackfillReplSvc
 	resolverSvc              service_def.ResolverSvcIface
@@ -94,7 +95,7 @@ type BackfillMgrGetter func() service_def.BackfillMgrIface
 func NewXDCRFactory(repl_spec_svc service_def.ReplicationSpecSvc, remote_cluster_svc service_def.RemoteClusterSvc,
 	xdcr_topology_svc service_def.XDCRCompTopologySvc,
 	checkpoint_svc service_def.CheckpointsService, capi_svc service_def.CAPIService, uilog_svc service_def.UILogSvc,
-	throughput_throttler_svc service_def.ThroughputThrottlerSvc,
+	throughput_throttler_svc throttlerSvc.ThroughputThrottlerSvc,
 	pipeline_default_logger_ctx *log.LoggerContext, factory_logger_ctx *log.LoggerContext,
 	pipeline_failure_handler common.SupervisorFailureHandler, utilsIn utilities.UtilsIface,
 	resolver_svc service_def.ResolverSvcIface, collectionsManifestSvc service_def.CollectionsManifestSvc,

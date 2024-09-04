@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/couchbase/goxdcr/v8/log"
-	"github.com/couchbase/goxdcr/v8/service_impl"
+	"github.com/couchbase/goxdcr/v8/service_impl/throttlerSvcImpl"
 )
 
 type ThrottlerTest struct {
@@ -15,7 +15,7 @@ type ThrottlerTest struct {
 	WorkerCount    int   `json:"workerCount"`
 }
 
-func tworker(wg *sync.WaitGroup, svc *service_impl.ThroughputThrottler, workch chan bool) {
+func tworker(wg *sync.WaitGroup, svc *throttlerSvcImpl.ThroughputThrottler, workch chan bool) {
 	defer wg.Done()
 	for ok := range workch {
 		if !ok {
@@ -34,7 +34,7 @@ func tworker(wg *sync.WaitGroup, svc *service_impl.ThroughputThrottler, workch c
 
 func throttlerTest(cfg Config) (err error) {
 	logger := log.NewLogger("throttlerTest", log.DefaultLoggerContext)
-	svc := service_impl.NewThroughputThrottlerSvc(logger.LoggerContext())
+	svc := throttlerSvcImpl.NewThroughputThrottlerSvc(logger.LoggerContext())
 	svc.Start()
 
 	svc.UpdateSettings(map[string]interface{}{

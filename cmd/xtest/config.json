@@ -1,5 +1,5 @@
 {
-    "name": "throttlerTest",
+    "name": "conflictLogLoadTest",
     "logLevel": "Info",
     "debugPort": 7171,
     "memcachedAddr": "127.0.0.1:12000",
@@ -26,19 +26,40 @@
 
     "conflictLogLoadTest": {
         "connType": "memcached",
-        "connLimit": 1,
+        "connLimit": 5,
+        "iopsLimit": 1000,
+
         "loggers": {
             "logger-1": {
-                "docLoadCount": 100,
-                "xmemCount": 4,
-                "batchCount": 1,
+                "docLoadCount": 10000,
+                "xmemCount": 1,
+                "batchCount": 100,
 
                 "logQueue": 1000,
-                "workerCount": 3,
-                "setMetaTimeout": 500,
-                "getPoolTimeout": 500,
+                "workerCount": 10,
+                "setMetaTimeout": 7000,
+                "getPoolTimeout": 2000,
 
-                "docSizeRange": [1024, 2048],
+                "docSizeRange": [100, 200],
+                "target": {
+                    "bucket": "B1",
+                    "ns": {
+                        "ScopeName": "S1",
+                        "CollectionName": "C1"
+                    }
+                }
+            },
+            "logger-2": {
+                "docLoadCount": 1000,
+                "xmemCount": 5,
+                "batchCount": 10,
+
+                "logQueue": 1000,
+                "workerCount": 10,
+                "setMetaTimeout": 7000,
+                "getPoolTimeout": 2000,
+
+                "docSizeRange": [100, 200],
                 "target": {
                     "bucket": "B1",
                     "ns": {
