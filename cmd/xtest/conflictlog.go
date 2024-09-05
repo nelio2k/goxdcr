@@ -234,6 +234,8 @@ func conflictLogLoadTest(cfg Config) (err error) {
 
 	end := time.Now()
 
+	connCount := m.ConnPool().Count()
+	fmt.Printf("connCount in pool: %d\n", connCount)
 	fmt.Printf("Finished in %s\n", end.Sub(start))
 
 	return nil

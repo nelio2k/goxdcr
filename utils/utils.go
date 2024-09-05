@@ -761,7 +761,7 @@ func (u *Utilities) SendHELOWithFeatures(client mcc.ClientIface, userAgent strin
 			}
 			pos += 2
 		}
-		logger.Infof("Successfully sent HELO command with userAgent=%v. attributes=%v", userAgent, respondedFeatures)
+		logger.Infof("Successfully sent HELO command with userAgent=%v. attributes=%#v", userAgent, respondedFeatures)
 	}
 	return
 }

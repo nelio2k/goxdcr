@@ -261,15 +261,7 @@ func main() {
 			os.Exit(1)
 		}
 
-		// Temp change: conflict manager will eventually use security service
-		// At present, the sec service does not have all certs, hence pass them
-		// explicitly
-		certs := &conflictlog.ClientCerts{
-			ClientCertFile: options.clientCertFile,
-			ClientKeyFile:  options.clientKeyFile,
-			ClusterCAFile:  options.caFileLocation,
-		}
-		conflictlog.InitManager(log.DefaultLoggerContext, utils, top_svc, top_svc, certs)
+		conflictlog.InitManager(log.DefaultLoggerContext, utils, top_svc, securitySvc)
 
 		// start replication manager in normal mode
 		rm.StartReplicationManager(host,

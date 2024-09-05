@@ -18,8 +18,8 @@ const (
 	DefaultGetTimeout           = 5 * time.Second
 	DefaultPoolGetTimeout       = 5 * time.Second
 	DefaultLogCapacity          = 5
-	DefaultNetworkRetryCount    = 6
-	DefaultNetworkRetryInterval = 10 * time.Second
+	DefaultNetworkRetryCount    = 5
+	DefaultNetworkRetryInterval = 5 * time.Second
 	LoggerShutdownChCap         = 10
 
 	// ConnPool consts

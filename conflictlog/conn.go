@@ -1,4 +1,4 @@
-package iopool
+package conflictlog
 
 import (
 	"io"

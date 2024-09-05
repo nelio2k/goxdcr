@@ -21,7 +21,7 @@ type fakeConnection struct {
 
 func newFakeConnection(bucketName string) (io.Closer, error) {
 	return &fakeConnection{
-		id: iopool.NewConnId(),
+		id: NewConnId(),
 	}, nil
 }
 
@@ -48,7 +48,7 @@ func TestLoggerImpl_closeWithOutstandingRequest(t *testing.T) {
 	pool := iopool.NewConnPool(nil, 10, func(bucketName string) (io.Closer, error) {
 		return &fakeConnection{
 			sleep: &fakeConnectionSleep,
-			id:    iopool.NewConnId(),
+			id:    NewConnId(),
 		}, nil
 	})
 

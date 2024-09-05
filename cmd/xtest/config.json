@@ -26,8 +26,8 @@
 
     "conflictLogLoadTest": {
         "connType": "memcached",
-        "connLimit": 5,
-        "iopsLimit": 1000,
+        "connLimit": 10,
+        "iopsLimit": 100000,
 
         "loggers": {
             "logger-1": {
@@ -35,12 +35,12 @@
                 "xmemCount": 1,
                 "batchCount": 100,
 
-                "logQueue": 1000,
+                "logQueue": 100,
                 "workerCount": 10,
                 "setMetaTimeout": 7000,
                 "getPoolTimeout": 2000,
 
-                "docSizeRange": [100, 200],
+                "docSizeRange": [50, 100],
                 "target": {
                     "bucket": "B1",
                     "ns": {

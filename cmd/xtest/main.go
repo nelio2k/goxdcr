@@ -86,21 +86,17 @@ func main() {
 		addr: cfg.MemcachedAddr,
 	}
 
-	encLevelGetter := &EncLevelGetter{
-		strict: cfg.EncryptionLevelStrict,
+	xsvc, err := InitXdcrServices(&cfg)
+	if err != nil {
+		fmt.Printf("error in initing services: %v\n", err)
+		os.Exit(1)
 	}
 
 	utils := utils.NewUtilities()
 
-	clientCerts := &conflictlog.ClientCerts{
-		ClientCertFile: cfg.ClientCertFile,
-		ClientKeyFile:  cfg.ClientKeyFile,
-		ClusterCAFile:  cfg.ClusterCAFile,
-	}
+	conflictlog.InitManager(log.DefaultLoggerContext, utils, addrGetter, xsvc.SecuritySvc)
 
-	conflictlog.InitManager(log.DefaultLoggerContext, utils, addrGetter, encLevelGetter, clientCerts)
-
-	switch cfg.Name {
+	switch name {
 	case "conflictLogLoadTest":
 		err = conflictLogLoadTest(cfg)
 	case "gocbcoreTest":

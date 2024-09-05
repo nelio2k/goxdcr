@@ -11,6 +11,12 @@ type CBAuthTest struct {
 }
 
 func cbauthTest(cfg Config) (err error) {
+	encCfg, err := cbauth.GetClusterEncryptionConfig()
+	if err != nil {
+		return
+	}
+
+	fmt.Printf("encCfg: %#v\n", encCfg)
 	for _, addr := range cfg.CBAuthTest.AddrList {
 		user, passwd, err := cbauth.GetMemcachedServiceAuth(addr)
 		if err != nil {

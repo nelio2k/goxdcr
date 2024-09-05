@@ -67,6 +67,9 @@ type ConnPool interface {
 	// will block. Value <= has no effect and its ignored
 	SetLimit(n int)
 
+	// Count returns the number of objects/connections being held by the pool
+	Count() int
+
 	// Close reaps all the connections which are in the pool. It does not deal with connections
 	// which are not yet released back to the pool. The caller should ensure this.
 	Close() error
@@ -116,6 +119,13 @@ type connList struct {
 
 	//list is the actual linked list to hold the pooled objects
 	list *list.List
+}
+
+func (l *connList) len() int {
+	l.mu.Lock()
+	n := l.list.Len()
+	l.mu.Unlock()
+	return n
 }
 
 func (l *connList) pop() io.Closer {
@@ -278,6 +288,18 @@ func (pool *ConnPoolImpl) Put(bucketName string, conn io.Closer, damaged bool) {
 
 	l := pool.getOrCreateListNoLock(bucketName)
 	l.push(conn)
+}
+
+// Count returns the number of objects being held
+func (pool *ConnPoolImpl) Count() (n int) {
+
+	pool.mu.Lock()
+	for _, connList := range pool.buckets {
+		n += connList.len()
+	}
+	pool.mu.Unlock()
+
+	return
 }
 
 // Close shutsdown the GC worker and initiates a final gc with force=true
