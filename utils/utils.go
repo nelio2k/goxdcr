@@ -719,6 +719,10 @@ func (u *Utilities) SendHELOWithFeatures(client mcc.ClientIface, userAgent strin
 		clientFeatureSet = append(clientFeatureSet, mcc.FeatureCollections)
 	}
 
+	if requestedFeatures.DataType {
+		clientFeatureSet = append(clientFeatureSet, mcc.FeatureDataType)
+	}
+
 	client.SetConnName(userAgent)
 	response, err := client.EnableFeatures(clientFeatureSet)
 
@@ -757,7 +761,7 @@ func (u *Utilities) SendHELOWithFeatures(client mcc.ClientIface, userAgent strin
 			}
 			pos += 2
 		}
-		logger.Infof("Successfully sent HELO command with userAgent=%v. attributes=%v", userAgent, respondedFeatures)
+		logger.Infof("Successfully sent HELO command with userAgent=%v. attributes=%#v", userAgent, respondedFeatures)
 	}
 	return
 }
@@ -3608,4 +3612,27 @@ func (u *Utilities) GetReplicasInfo(bucketInfo map[string]interface{}, isStrictl
 		}
 	}
 	return vbReplicaMap, kvToNsServerTranslateMap, numOfReplicas, vbListForBeingAReplica, nil
+}
+
+// ParseClientCertOutput takes the output of /settings/clientCertAuth endpoint and checks if client cert is mandatory
+func (u *Utilities) ParseClientCertOutput(clientCertInput map[string]interface{}) (isMandatory bool, err error) {
+	if clientCertInput == nil {
+		err = fmt.Errorf("ClientCert input is empty")
+		return
+	}
+
+	stateRaw, ok := clientCertInput[base.StateKey]
+	if !ok {
+		err = fmt.Errorf("unable to find state object")
+		return
+	}
+
+	stateStr, ok := stateRaw.(string)
+	if !ok {
+		err = fmt.Errorf("expected state to be string, got %T", stateRaw)
+		return
+	}
+
+	isMandatory = stateStr == base.MandatoryVal
+	return
 }

@@ -21,6 +21,8 @@ tools/.xdcrToolsExport
 tools/clusterRunProvision.sh
 tools/importExporter.sh
 tools/testScripts/testsLibrary.sh
+tools/testScripts/ca.pem
+tools/testScripts/ca.key
 
 # MacOS file
 .DS_Store
@@ -37,3 +39,14 @@ tools/testScripts/vagrant/*.deb
 tools/testScripts/vagrant/.vagrant
 tools/testScripts/vagrant/data
 
+build/
+
+# binaries
+/xtest
+
+# logs
+log
+*.log
+
+#vscode
+.vscode

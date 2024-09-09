@@ -105,6 +105,7 @@ const (
 	TargetTopologyLogFreq             = base.TargetTopologyLogFreqKey
 	CasDriftThresholdSecsKey          = base.CASDriftThresholdSecsKey
 	PreCheckCasDriftThresholdHoursKey = base.PreCheckCasDriftThresholdHoursKey
+	ConflictLoggingKey                = base.ConflictLoggingKey
 	GenericServicesLogLevelKey        = metadata.GenericServicesLogLevelKey
 )
 
@@ -228,6 +229,7 @@ var RestKeyToSettingsKeyMap = map[string]string{
 	TargetTopologyLogFreq:             metadata.TargetTopologyLogFreqKey,
 	CasDriftThresholdSecsKey:          metadata.CASDriftThresholdSecsKey,
 	PreCheckCasDriftThresholdHoursKey: metadata.PreCheckCasDriftThresholdHoursKey,
+	ConflictLoggingKey:                metadata.ConflictLoggingKey,
 	GenericServicesLogLevelKey:        metadata.GenericServicesLogLevelKey,
 }
 
@@ -293,6 +295,7 @@ var SettingsKeyToRestKeyMap = map[string]string{
 	metadata.TargetTopologyLogFreqKey:             TargetTopologyLogFreq,
 	metadata.CASDriftThresholdSecsKey:             CasDriftThresholdSecsKey,
 	metadata.PreCheckCasDriftThresholdHoursKey:    PreCheckCasDriftThresholdHoursKey,
+	metadata.ConflictLoggingKey:                   ConflictLoggingKey,
 	metadata.GenericServicesLogLevelKey:           GenericServicesLogLevelKey,
 }
 

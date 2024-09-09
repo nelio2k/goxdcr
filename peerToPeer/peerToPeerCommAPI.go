@@ -15,13 +15,16 @@ import (
 	"github.com/couchbase/goxdcr/v8/service_def"
 	"github.com/couchbase/goxdcr/v8/utils"
 	"net/http"
+	"strings"
 	"time"
 )
 
-var ErrorInvalidOpcode = fmt.Errorf("Invalid Opcode")
-var ErrorInvalidMagic = fmt.Errorf("Invalid Magic")
-var ErrorReceiveChanFull = fmt.Errorf("Opcode receiver channel is full")
-var ErrorLifecycleMismatch = fmt.Errorf("Lifecycle mismatch")
+var ErrorInvalidOpcode = fmt.Errorf("invalid Opcode")
+var ErrorInvalidMagic = fmt.Errorf("invalid Magic")
+var ErrorReceiveChanFull = fmt.Errorf("opcode receiver channel is full")
+var ErrorLifecycleMismatch = fmt.Errorf("lifecycle mismatch")
+var ErrorMissingClientKey = fmt.Errorf("missing client key")
+var ErrorMissingClientCert = fmt.Errorf("missing client cert")
 
 type OpCode int
 
@@ -117,7 +120,8 @@ func (p2p *P2pCommAPIimpl) P2PSend(req Request, logger *log.CommonLogger) (Handl
 		return nil, err
 	}
 	authType := base.HttpAuthMechPlain
-	var certificates []byte
+	var certificates, clientKey, clientCert []byte
+
 	if p2p.securitySvc.IsClusterEncryptionLevelStrict() {
 		authType = base.HttpAuthMechHttps
 		certificates = p2p.securitySvc.GetCACertificates()
@@ -127,15 +131,61 @@ func (p2p *P2pCommAPIimpl) P2PSend(req Request, logger *log.CommonLogger) (Handl
 				HttpStatusCode: http.StatusInternalServerError,
 			}, base.ErrorNilCertificateStrictMode
 		}
+
+		isMandatory, err := p2p.xdcrCompTopSvc.ClientCertIsMandatory()
+		if err == nil && isMandatory {
+			// If n2n encryption is required and client cert is mandatory, then the traditional
+			// cbauth username/pw "superuser" pairing will not work - and thus we must use clientCert and key
+			// provided by the ns_server
+			clientCert, clientKey = p2p.securitySvc.GetClientCertAndKey()
+			result, err := checkClientCertAndKeyExists(clientCert, clientKey)
+			if err != nil {
+				return result, err
+			}
+		}
 	}
 
 	var out interface{}
-	err, statusCode := p2p.utils.QueryRestApiWithAuth(req.GetTarget(), base.XDCRPeerToPeerPath, false, "", "", authType, certificates, true, nil, nil, base.MethodPost, base.JsonContentType,
+	err, statusCode := p2p.utils.QueryRestApiWithAuth(req.GetTarget(), base.XDCRPeerToPeerPath, false, "", "", authType, certificates, true, clientCert, clientKey, base.MethodPost, base.JsonContentType,
 		payload, base.P2PCommTimeout, &out, nil, false, logger)
 	// utils returns this error because body is empty, which is fine
 	if err == base.ErrorResourceDoesNotExist {
 		err = nil
+	} else if err != nil && strings.Contains(err.Error(), base.ErrorStringClientCertMandatory) {
+		// This is a special case where client cert is set to mandatory but either the propagation
+		// of the setting is not done cluster wide, or if the p2p is done before the cached value
+		// is updated. Try again with client certs
+		clientCert, clientKey = p2p.securitySvc.GetClientCertAndKey()
+		result, err := checkClientCertAndKeyExists(clientCert, clientKey)
+		if err != nil {
+			return result, err
+		}
+		err, statusCode = p2p.utils.QueryRestApiWithAuth(req.GetTarget(), base.XDCRPeerToPeerPath, false, "", "", authType, certificates, true, clientCert, clientKey, base.MethodPost, base.JsonContentType,
+			payload, base.P2PCommTimeout, &out, nil, false, logger)
+		// Client Cert mandatory + n2n encryption turned on is only implemented with p2p already existing
+		// No need to check for 404 return error
 	}
 	result := &HandlerResultImpl{HttpStatusCode: statusCode, Err: err}
 	return result, err
+}
+
+// this is a wrapper function that returns appropriate error if client cert or key are missing
+// generally speaking, this should not happen because ns_server should always be passing in a valid
+// cert or key. If XDCR somehow gets in a terrible situation where the clientCert or key was not
+// loaded successfully, leading to a CBSE or anything, there are 2 ways about it:
+// 1. regenerateCerts or reload certs, which requires customer intervention
+// 2. restart goxdcr ... which will allow security service to reload the key and cert from the files specified
+func checkClientCertAndKeyExists(clientCert []byte, clientKey []byte) (HandlerResult, error) {
+	if len(clientCert) == 0 {
+		return &HandlerResultImpl{
+			Err:            ErrorMissingClientCert,
+			HttpStatusCode: http.StatusInternalServerError,
+		}, ErrorMissingClientCert
+	} else if len(clientKey) == 0 {
+		return &HandlerResultImpl{
+			Err:            ErrorMissingClientKey,
+			HttpStatusCode: http.StatusInternalServerError,
+		}, ErrorMissingClientKey
+	}
+	return nil, nil
 }

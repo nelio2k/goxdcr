@@ -161,6 +161,65 @@ func (_c *SecuritySvc_GetCaPool_Call) RunAndReturn(run func() *x509.CertPool) *S
 	return _c
 }
 
+// GetClientCertAndKey provides a mock function with given fields:
+func (_m *SecuritySvc) GetClientCertAndKey() ([]byte, []byte) {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetClientCertAndKey")
+	}
+
+	var r0 []byte
+	var r1 []byte
+	if rf, ok := ret.Get(0).(func() ([]byte, []byte)); ok {
+		return rf()
+	}
+	if rf, ok := ret.Get(0).(func() []byte); ok {
+		r0 = rf()
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]byte)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func() []byte); ok {
+		r1 = rf()
+	} else {
+		if ret.Get(1) != nil {
+			r1 = ret.Get(1).([]byte)
+		}
+	}
+
+	return r0, r1
+}
+
+// SecuritySvc_GetClientCertAndKey_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetClientCertAndKey'
+type SecuritySvc_GetClientCertAndKey_Call struct {
+	*mock.Call
+}
+
+// GetClientCertAndKey is a helper method to define mock.On call
+func (_e *SecuritySvc_Expecter) GetClientCertAndKey() *SecuritySvc_GetClientCertAndKey_Call {
+	return &SecuritySvc_GetClientCertAndKey_Call{Call: _e.mock.On("GetClientCertAndKey")}
+}
+
+func (_c *SecuritySvc_GetClientCertAndKey_Call) Run(run func()) *SecuritySvc_GetClientCertAndKey_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *SecuritySvc_GetClientCertAndKey_Call) Return(_a0 []byte, _a1 []byte) *SecuritySvc_GetClientCertAndKey_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *SecuritySvc_GetClientCertAndKey_Call) RunAndReturn(run func() ([]byte, []byte)) *SecuritySvc_GetClientCertAndKey_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // IsClusterEncryptionLevelStrict provides a mock function with given fields:
 func (_m *SecuritySvc) IsClusterEncryptionLevelStrict() bool {
 	ret := _m.Called()
@@ -206,6 +265,39 @@ func (_c *SecuritySvc_IsClusterEncryptionLevelStrict_Call) RunAndReturn(run func
 	return _c
 }
 
+// SetClientCertSettingChangeCb provides a mock function with given fields: _a0
+func (_m *SecuritySvc) SetClientCertSettingChangeCb(_a0 func()) {
+	_m.Called(_a0)
+}
+
+// SecuritySvc_SetClientCertSettingChangeCb_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SetClientCertSettingChangeCb'
+type SecuritySvc_SetClientCertSettingChangeCb_Call struct {
+	*mock.Call
+}
+
+// SetClientCertSettingChangeCb is a helper method to define mock.On call
+//   - _a0 func()
+func (_e *SecuritySvc_Expecter) SetClientCertSettingChangeCb(_a0 interface{}) *SecuritySvc_SetClientCertSettingChangeCb_Call {
+	return &SecuritySvc_SetClientCertSettingChangeCb_Call{Call: _e.mock.On("SetClientCertSettingChangeCb", _a0)}
+}
+
+func (_c *SecuritySvc_SetClientCertSettingChangeCb_Call) Run(run func(_a0 func())) *SecuritySvc_SetClientCertSettingChangeCb_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(func()))
+	})
+	return _c
+}
+
+func (_c *SecuritySvc_SetClientCertSettingChangeCb_Call) Return() *SecuritySvc_SetClientCertSettingChangeCb_Call {
+	_c.Call.Return()
+	return _c
+}
+
+func (_c *SecuritySvc_SetClientCertSettingChangeCb_Call) RunAndReturn(run func(func())) *SecuritySvc_SetClientCertSettingChangeCb_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // SetEncryptionLevelChangeCallback provides a mock function with given fields: key, callback
 func (_m *SecuritySvc) SetEncryptionLevelChangeCallback(key string, callback service_def.SecChangeCallback) {
 	_m.Called(key, callback)
@@ -241,8 +333,21 @@ func (_c *SecuritySvc_SetEncryptionLevelChangeCallback_Call) RunAndReturn(run fu
 }
 
 // Start provides a mock function with given fields:
-func (_m *SecuritySvc) Start() {
-	_m.Called()
+func (_m *SecuritySvc) Start() error {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for Start")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func() error); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
 }
 
 // SecuritySvc_Start_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Start'
@@ -262,12 +367,12 @@ func (_c *SecuritySvc_Start_Call) Run(run func()) *SecuritySvc_Start_Call {
 	return _c
 }
 
-func (_c *SecuritySvc_Start_Call) Return() *SecuritySvc_Start_Call {
-	_c.Call.Return()
+func (_c *SecuritySvc_Start_Call) Return(_a0 error) *SecuritySvc_Start_Call {
+	_c.Call.Return(_a0)
 	return _c
 }
 
-func (_c *SecuritySvc_Start_Call) RunAndReturn(run func()) *SecuritySvc_Start_Call {
+func (_c *SecuritySvc_Start_Call) RunAndReturn(run func() error) *SecuritySvc_Start_Call {
 	_c.Call.Return(run)
 	return _c
 }

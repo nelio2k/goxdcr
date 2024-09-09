@@ -37,11 +37,12 @@ type HELOFeatures struct {
 	CompressionType base.CompressionType
 	Xerror          bool
 	Collections     bool
+	DataType        bool
 }
 
 func (h *HELOFeatures) String() string {
-	return fmt.Sprintf("Enabled features: Xattribute: %v CompressionType: %v Xerror: %v Collections: %v",
-		h.Xattribute, base.CompressionTypeStrings[h.CompressionType], h.Xerror, h.Collections)
+	return fmt.Sprintf("Enabled features: Xattribute: %v CompressionType: %v Xerror: %v Collections: %v DataType: %v",
+		h.Xattribute, base.CompressionTypeStrings[h.CompressionType], h.Xerror, h.Collections, h.DataType)
 }
 
 type UtilsIface interface {
@@ -97,6 +98,7 @@ type UtilsIface interface {
 	GetServersListFromBucketInfo(bucketInfo map[string]interface{}) ([]string, error)
 	GetServerVBucketsMap(connStr, bucketName string, bucketInfo map[string]interface{}, recycledMapGetter func(nodes []string) *base.KvVBMapType, serversList []string) (*base.KvVBMapType, error)
 	GetHostNamesFromBucketInfo(bucketInfo map[string]interface{}) ([]string, error)
+	ParseClientCertOutput(clientCertInput map[string]interface{}) (isMandatory bool, err error)
 
 	// Network related utilities
 	ConstructHttpRequest(baseURL string, path string, preservePathEncoding bool, username string, password string, authMech base.HttpAuthMech, userAuthMode base.UserAuthMode, httpCommand string, contentType string, body []byte, logger *log.CommonLogger) (*http.Request, string, error)
