@@ -9,9 +9,10 @@
 package service_def
 
 import (
-	"github.com/couchbase/goxdcr/base"
-	"github.com/couchbase/goxdcr/metadata"
 	"sync"
+
+	"github.com/couchbase/goxdcr/v8/base"
+	"github.com/couchbase/goxdcr/v8/metadata"
 )
 
 type BackfillReplSvc interface {

@@ -14,11 +14,11 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/couchbase/goxdcr/base"
-	"github.com/couchbase/goxdcr/capi_utils"
-	"github.com/couchbase/goxdcr/log"
-	"github.com/couchbase/goxdcr/metadata"
-	utilities "github.com/couchbase/goxdcr/utils"
+	"github.com/couchbase/goxdcr/v8/base"
+	"github.com/couchbase/goxdcr/v8/capi_utils"
+	"github.com/couchbase/goxdcr/v8/log"
+	"github.com/couchbase/goxdcr/v8/metadata"
+	utilities "github.com/couchbase/goxdcr/v8/utils"
 )
 
 var NoSupportForXDCRCheckpointingError = errors.New("No xdcrcheckpointing support on older node")
@@ -182,7 +182,7 @@ func NewEmptyRemoteVBReplicationStatus(vbno uint16) *RemoteVBReplicationStatus {
 	return &RemoteVBReplicationStatus{VBNo: vbno}
 }
 
-//abstract capi apis needed for xdcr
+// abstract capi apis needed for xdcr
 type CAPIService interface {
 	//call at the beginning of the replication to determin the startpoint
 	//PrePrelicate (_pre_replicate)

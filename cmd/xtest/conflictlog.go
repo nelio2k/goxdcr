@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/couchbase/goxdcr/base"
-	"github.com/couchbase/goxdcr/conflictlog"
-	"github.com/couchbase/goxdcr/log"
+	"github.com/couchbase/goxdcr/v8/base"
+	"github.com/couchbase/goxdcr/v8/conflictlog"
+	"github.com/couchbase/goxdcr/v8/log"
 )
 
 type TestStruct struct {
@@ -26,6 +26,9 @@ type ConflictLogLoadTest struct {
 
 	// ConnLimit limits the number of connections
 	ConnLimit int `json:"connLimit"`
+
+	// IOPSLimit is max allowed IOPS to the source cluster
+	IOPSLimit int64 `json:"iopsLimit"`
 
 	DefaultLoggerOptions *ConflictLoggerOptions `json:"defaultLoggerOptions"`
 
@@ -171,7 +174,7 @@ func runLoggerLoad(wg *sync.WaitGroup, logger *log.CommonLogger, opts *ConflictL
 					return
 				}
 
-				logger.Infof("writing to conflict log")
+				logger.Debugf("writing to conflict log")
 				h, err := clog.Log(crd)
 				if err != nil {
 					logger.Errorf("error in sending conflict log err=%v", err)
@@ -207,6 +210,7 @@ func conflictLogLoadTest(cfg Config) (err error) {
 
 	m.SetConnType(opts.ConnType)
 	m.SetConnLimit(opts.ConnLimit)
+	m.SetIOPSLimit(opts.IOPSLimit)
 
 	wg := &sync.WaitGroup{}
 	logger := log.NewLogger("conflictLoadTest", log.DefaultLoggerContext)
@@ -230,6 +234,8 @@ func conflictLogLoadTest(cfg Config) (err error) {
 
 	end := time.Now()
 
+	connCount := m.ConnPool().Count()
+	fmt.Printf("connCount in pool: %d\n", connCount)
 	fmt.Printf("Finished in %s\n", end.Sub(start))
 
 	return nil

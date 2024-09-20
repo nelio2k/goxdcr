@@ -6,8 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/couchbase/goxdcr/base"
-	"github.com/couchbase/goxdcr/utils"
+	"github.com/couchbase/goxdcr/v8/base"
+	"github.com/couchbase/goxdcr/v8/base/iopool"
+	"github.com/couchbase/goxdcr/v8/utils"
 	"github.com/stretchr/testify/require"
 )
 
@@ -20,7 +21,7 @@ type fakeConnection struct {
 
 func newFakeConnection(bucketName string) (io.Closer, error) {
 	return &fakeConnection{
-		id: newConnId(),
+		id: NewConnId(),
 	}, nil
 }
 
@@ -44,16 +45,16 @@ func TestLoggerImpl_closeWithOutstandingRequest(t *testing.T) {
 
 	var fakeConnectionSleep time.Duration
 
-	pool := newConnPool(nil, 10, func(bucketName string) (io.Closer, error) {
+	pool := iopool.NewConnPool(nil, 10, func(bucketName string) (io.Closer, error) {
 		return &fakeConnection{
 			sleep: &fakeConnectionSleep,
-			id:    newConnId(),
+			id:    NewConnId(),
 		}, nil
 	})
 
 	fakeConnectionSleep = 1 * time.Second
 
-	l, err := newLoggerImpl(nil, "1234", utils, pool, WithCapacity(20))
+	l, err := newLoggerImpl(nil, "1234", utils, nil, pool, WithCapacity(20))
 	require.Nil(t, err)
 
 	l.UpdateRules(&base.ConflictLogRules{
@@ -89,9 +90,9 @@ func TestLoggerImpl_closeWithOutstandingRequest(t *testing.T) {
 func TestLoggerImpl_basicClose(t *testing.T) {
 	utils := utils.NewUtilities()
 
-	pool := newConnPool(nil, 10, newFakeConnection)
+	pool := iopool.NewConnPool(nil, 10, newFakeConnection)
 
-	l, err := newLoggerImpl(nil, "1234", utils, pool)
+	l, err := newLoggerImpl(nil, "1234", utils, nil, pool)
 	require.Nil(t, err)
 
 	l.Close()

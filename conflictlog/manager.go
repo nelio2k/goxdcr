@@ -1,12 +1,13 @@
 package conflictlog
 
 import (
-	"fmt"
 	"io"
-	"os"
 
-	"github.com/couchbase/goxdcr/log"
-	"github.com/couchbase/goxdcr/utils"
+	"github.com/couchbase/goxdcr/v8/base/iopool"
+	"github.com/couchbase/goxdcr/v8/log"
+	"github.com/couchbase/goxdcr/v8/service_def/throttlerSvc"
+	"github.com/couchbase/goxdcr/v8/service_impl/throttlerSvcImpl"
+	"github.com/couchbase/goxdcr/v8/utils"
 )
 
 var manager Manager
@@ -16,48 +17,18 @@ var _ Manager = (*managerImpl)(nil)
 // Manager defines behaviour for conflict manager
 type Manager interface {
 	NewLogger(logger *log.CommonLogger, replId string, opts ...LoggerOpt) (l Logger, err error)
-	ConnPool() ConnPool
+	ConnPool() iopool.ConnPool
 	// [TEMP]: SetConnType exists only for perf test
 	SetConnType(connType string) error
 	SetConnLimit(limit int)
+	SetIOPSLimit(limit int64)
 	SetSkipTlsVerify(bool)
 }
 
-// ClientCerts are the certs created and owned by ns_server for node-2-node encrypted
-// connection
-type ClientCerts struct {
-	ClientCertFile string
-	ClientKeyFile  string
-	ClusterCAFile  string
-}
-
-func (c *ClientCerts) LoadCert() (clientCert, clientKey []byte, err error) {
-	clientCert, err = os.ReadFile(c.ClientCertFile)
-	if err != nil {
-		return
-	}
-
-	clientKey, err = os.ReadFile(c.ClientKeyFile)
-	if err != nil {
-		return
-	}
-
-	return
-}
-
-func (c *ClientCerts) LoadCACert() (caCert []byte, err error) {
-	caCert, err = os.ReadFile(c.ClusterCAFile)
-	return
-}
-
-func (c *ClientCerts) Load() (clientCert, clientKey, caCert []byte, err error) {
-	clientCert, clientKey, err = c.LoadCert()
-	if err != nil {
-		return
-	}
-
-	caCert, err = os.ReadFile(c.ClusterCAFile)
-	return
+type SecurityInfo interface {
+	IsClusterEncryptionLevelStrict() bool
+	GetCACertificates() []byte
+	GetClientCertAndKey() ([]byte, []byte)
 }
 
 type MemcachedAddrGetter interface {
@@ -78,20 +49,23 @@ func GetManager() (Manager, error) {
 }
 
 // InitManager intializes global conflict manager
-func InitManager(loggerCtx *log.LoggerContext, utils utils.UtilsIface, memdAddrGetter MemcachedAddrGetter, encInfoGetter EncryptionInfoGetter, certs *ClientCerts) {
+func InitManager(loggerCtx *log.LoggerContext, utils utils.UtilsIface, memdAddrGetter MemcachedAddrGetter, securityInfo SecurityInfo) {
 	logger := log.NewLogger(ConflictManagerLoggerName, loggerCtx)
 
 	logger.Info("intializing conflict manager")
 
+	throttlerSvc := throttlerSvcImpl.NewThroughputThrottlerSvc(loggerCtx)
+	throttlerSvc.Start()
+
 	impl := &managerImpl{
 		logger:         logger,
 		memdAddrGetter: memdAddrGetter,
-		encInfoGetter:  encInfoGetter,
+		securityInfo:   securityInfo,
 		utils:          utils,
 		manifestCache:  newManifestCache(),
 		connLimit:      DefaultPoolConnLimit,
 		connType:       "gocbcore",
-		certs:          certs,
+		throttlerSvc:   throttlerSvc,
 	}
 
 	logger.Info("creating conflict manager writer pool")
@@ -104,10 +78,11 @@ func InitManager(loggerCtx *log.LoggerContext, utils utils.UtilsIface, memdAddrG
 type managerImpl struct {
 	logger         *log.CommonLogger
 	memdAddrGetter MemcachedAddrGetter
-	encInfoGetter  EncryptionInfoGetter
+	securityInfo   SecurityInfo
 	utils          utils.UtilsIface
-	connPool       *connPool
+	connPool       iopool.ConnPool
 	manifestCache  *ManifestCache
+	throttlerSvc   throttlerSvc.ThroughputThrottlerSvc
 
 	// connLimit max number of connections
 	connLimit int
@@ -115,13 +90,12 @@ type managerImpl struct {
 	// [TEMP] connType only exists for perf test
 	connType string
 
-	certs         *ClientCerts
 	skipTlsVerify bool
 }
 
 func (m *managerImpl) NewLogger(logger *log.CommonLogger, replId string, opts ...LoggerOpt) (l Logger, err error) {
 	opts = append(opts, WithSkipTlsVerify(m.skipTlsVerify))
-	l, err = newLoggerImpl(logger, replId, m.utils, m.connPool, opts...)
+	l, err = newLoggerImpl(logger, replId, m.utils, m.throttlerSvc, m.connPool, opts...)
 	return
 }
 
@@ -135,6 +109,13 @@ func (m *managerImpl) SetSkipTlsVerify(v bool) {
 	m.skipTlsVerify = v
 }
 
+func (m *managerImpl) SetIOPSLimit(limit int64) {
+	m.logger.Infof("setting IOPS limit = %d", limit)
+	m.throttlerSvc.UpdateSettings(map[string]interface{}{
+		throttlerSvc.LowTokensKey: limit,
+	})
+}
+
 func (m *managerImpl) setConnPool() {
 	m.logger.Infof("creating conflict manager connection pool type=%s", m.connType)
 
@@ -143,7 +124,7 @@ func (m *managerImpl) setConnPool() {
 		fn = m.newMemcachedConn
 	}
 
-	m.connPool = newConnPool(m.logger, m.connLimit, fn)
+	m.connPool = iopool.NewConnPool(m.logger, m.connLimit, fn)
 	return
 }
 
@@ -164,49 +145,23 @@ func (m *managerImpl) SetConnType(connType string) error {
 	return nil
 }
 
-func (m *managerImpl) ConnPool() ConnPool {
+func (m *managerImpl) ConnPool() iopool.ConnPool {
 	return m.connPool
 }
 
-func (m *managerImpl) newGocbCoreConn(bucketName string) (w io.Closer, err error) {
-	m.logger.Infof("creating new conflict writer bucket=%s certsEnabled=%v", bucketName, m.certs != nil)
+func (m *managerImpl) newGocbCoreConn(bucketName string) (conn io.Closer, err error) {
+	m.logger.Infof("creating new conflict gocbcore bucket=%s encStrict=%v", bucketName, m.securityInfo.IsClusterEncryptionLevelStrict())
 
-	certs, err := m.getCerts()
-	if err != nil {
-		return nil, err
-	}
-
-	return NewGocbConn(m.logger, m.memdAddrGetter, bucketName, certs)
+	return NewGocbConn(m.logger, m.memdAddrGetter, bucketName, m.securityInfo)
 }
 
 func (m *managerImpl) newMemcachedConn(bucketName string) (conn io.Closer, err error) {
+	m.logger.Infof("creating new conflict memcached bucket=%s encStrict=%v", bucketName, m.securityInfo.IsClusterEncryptionLevelStrict())
 	addr, err := m.memdAddrGetter.MyMemcachedAddr()
 	if err != nil {
 		return
 	}
 
-	certs, err := m.getCerts()
-	if err != nil {
-		return nil, err
-	}
-
-	conn, err = NewMemcachedConn(m.logger, m.utils, m.manifestCache, bucketName, addr, certs, m.skipTlsVerify)
-
+	conn, err = NewMemcachedConn(m.logger, m.utils, m.manifestCache, bucketName, addr, m.securityInfo, m.skipTlsVerify)
 	return
-}
-
-func (m *managerImpl) getCerts() (*ClientCerts, error) {
-	isStrict := m.encInfoGetter.IsMyClusterEncryptionLevelStrict()
-	m.logger.Infof("is cluster encryption strict = %v", isStrict)
-	if !isStrict {
-		return nil, nil
-	}
-
-	if m.encInfoGetter.IsMyClusterEncryptionLevelStrict() {
-		if m.certs == nil {
-			return nil, fmt.Errorf("Client certs not provided when encryption is mandatory")
-		}
-	}
-
-	return m.certs, nil
 }

@@ -9,6 +9,8 @@ type Config struct {
 
 	ConflictLogPertest *ConflictLogLoadTest `json:"conflictLogLoadTest"`
 	GocbcoreTest       *GocbcoreTest        `json:"gocbcoreTest"`
+	CBAuthTest         *CBAuthTest          `json:"cbauthTest"`
+	ThrottlerTest      *ThrottlerTest       `json:"throttlerTest"`
 
 	ClientCertFile string `json:"clientCertFile"`
 	ClientKeyFile  string `json:"clientKeyFile"`

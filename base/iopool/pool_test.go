@@ -1,11 +1,11 @@
-package conflictlog
+package iopool
 
 import (
 	"io"
 	"testing"
 	"time"
 
-	"github.com/couchbase/goxdcr/log"
+	"github.com/couchbase/goxdcr/v8/log"
 	"github.com/stretchr/testify/require"
 )
 
@@ -33,7 +33,7 @@ func TestPool_EmptyPool(t *testing.T) {
 		}, nil
 	}
 
-	pool := newConnPool(logger, 10, newConnFn)
+	pool := NewConnPool(logger, 10, newConnFn)
 	pool.UpdateGCInterval(1 * time.Second)
 	pool.UpdateReapInterval(2 * time.Second)
 
@@ -55,7 +55,7 @@ func TestPool_GC(t *testing.T) {
 		}, nil
 	}
 
-	pool := newConnPool(logger, 10, newConnFn)
+	pool := NewConnPool(logger, 10, newConnFn)
 	pool.UpdateGCInterval(1 * time.Second)
 	pool.UpdateReapInterval(3 * time.Second)
 

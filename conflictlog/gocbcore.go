@@ -9,8 +9,8 @@ import (
 	"github.com/couchbase/cbauth"
 	"github.com/couchbase/gocbcore/v9"
 	"github.com/couchbase/gocbcore/v9/memd"
-	"github.com/couchbase/goxdcr/base"
-	"github.com/couchbase/goxdcr/log"
+	"github.com/couchbase/goxdcr/v8/base"
+	"github.com/couchbase/goxdcr/v8/log"
 )
 
 var _ Connection = (*gocbCoreConn)(nil)
@@ -20,26 +20,26 @@ type gocbCoreConn struct {
 	MemcachedAddr  string
 	bucketName     string
 	memdAddrGetter MemcachedAddrGetter
+	securityInfo   SecurityInfo
 	agent          *gocbcore.Agent
 	logger         *log.CommonLogger
 	timeout        time.Duration
 	finch          chan bool
-	certs          *ClientCerts
 }
 
-func NewGocbConn(logger *log.CommonLogger, memdAddrGetter MemcachedAddrGetter, bucketName string, certs *ClientCerts) (conn *gocbCoreConn, err error) {
-	connId := newConnId()
+func NewGocbConn(logger *log.CommonLogger, memdAddrGetter MemcachedAddrGetter, bucketName string, securityInfo SecurityInfo) (conn *gocbCoreConn, err error) {
+	connId := NewConnId()
 
 	logger.Infof("creating new gocbcore connection id=%d", connId)
 	conn = &gocbCoreConn{
 		id:             connId,
 		memdAddrGetter: memdAddrGetter,
+		securityInfo:   securityInfo,
 		bucketName:     bucketName,
 		logger:         logger,
 		//sudeep todo: make it configurable
 		timeout: 60 * time.Second,
 		finch:   make(chan bool),
-		certs:   certs,
 	}
 
 	err = conn.setupAgent()
@@ -51,11 +51,7 @@ func NewGocbConn(logger *log.CommonLogger, memdAddrGetter MemcachedAddrGetter, b
 }
 
 func (conn *gocbCoreConn) getCACertPool() (*x509.CertPool, error) {
-	caCert, err := conn.certs.LoadCACert()
-	if err != nil {
-		return nil, err
-	}
-
+	caCert := conn.securityInfo.GetCACertificates()
 	caCertPool := x509.NewCertPool()
 	caCertPool.AppendCertsFromPEM(caCert)
 
@@ -69,12 +65,13 @@ func (conn *gocbCoreConn) setupAgent() (err error) {
 	}
 
 	auth := &MemcachedAuthProvider{
-		logger:      conn.logger,
-		clientCerts: conn.certs,
+		logger:       conn.logger,
+		securityInfo: conn.securityInfo,
 	}
 
 	var caCertProvider func() *x509.CertPool
-	if conn.certs != nil {
+	isStrict := conn.securityInfo.IsClusterEncryptionLevelStrict()
+	if isStrict {
 		caPool, err := conn.getCACertPool()
 		if err != nil {
 			return err
@@ -91,7 +88,7 @@ func (conn *gocbCoreConn) setupAgent() (err error) {
 		BucketName:             conn.bucketName,
 		UserAgent:              MemcachedConnUserAgent,
 		UseCollections:         true,
-		UseTLS:                 conn.certs != nil,
+		UseTLS:                 isStrict,
 		UseCompression:         true,
 		AuthMechanisms:         []gocbcore.AuthMechanism{gocbcore.PlainAuthMechanism},
 		TLSRootCAProvider:      caCertProvider,
@@ -165,8 +162,8 @@ func (conn *gocbCoreConn) Close() error {
 }
 
 type MemcachedAuthProvider struct {
-	logger      *log.CommonLogger
-	clientCerts *ClientCerts
+	logger       *log.CommonLogger
+	securityInfo SecurityInfo
 }
 
 func (auth *MemcachedAuthProvider) Credentials(req gocbcore.AuthCredsRequest) (
@@ -191,21 +188,21 @@ func (auth *MemcachedAuthProvider) SupportsNonTLS() bool {
 }
 
 func (auth *MemcachedAuthProvider) SupportsTLS() bool {
-	return auth.clientCerts != nil
+	return auth.securityInfo.IsClusterEncryptionLevelStrict()
 }
 
 func (auth *MemcachedAuthProvider) Certificate(req gocbcore.AuthCertRequest) (*tls.Certificate, error) {
-	if auth.clientCerts == nil {
+	if !auth.securityInfo.IsClusterEncryptionLevelStrict() {
 		return nil, nil
 	}
 
 	auth.logger.Infof("loading client certificates")
 
-	clientCert, clientKey, err := auth.clientCerts.LoadCert()
+	clientCert, clientKey := auth.securityInfo.GetClientCertAndKey()
+
+	cert, err := tls.X509KeyPair(clientCert, clientKey)
 	if err != nil {
 		return nil, err
 	}
-
-	cert, err := tls.X509KeyPair(clientCert, clientKey)
 	return &cert, nil
 }

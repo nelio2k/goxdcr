@@ -1,16 +1,30 @@
-package conflictlog
+package iopool
 
 import (
 	"container/list"
+	"errors"
 	"io"
 	"sync"
 	"time"
 
-	"github.com/couchbase/goxdcr/base"
-	"github.com/couchbase/goxdcr/log"
+	"github.com/couchbase/goxdcr/v8/base"
+	"github.com/couchbase/goxdcr/v8/log"
 )
 
-var _ ConnPool = (*connPool)(nil)
+var _ ConnPool = (*ConnPoolImpl)(nil)
+
+const (
+	// ConnPool consts
+	// DefaultPoolGCInterval is the GC frequency for connection pool
+	DefaultPoolGCInterval = 60 * time.Second
+	// DefaultPoolReapInterval is the last used threshold for reaping unused connections
+	DefaultPoolReapInterval = 120 * time.Second
+)
+
+var (
+	ErrClosedConnPool     error = errors.New("use of closed connection pool")
+	ErrConnPoolGetTimeout error = errors.New("conflict logging pool get timedout")
+)
 
 // ConnPool defines the behaviour of a connection pool for objects/resources
 // which implements io.Closer interface. The pool should reap the unused resources by
@@ -53,17 +67,20 @@ type ConnPool interface {
 	// will block. Value <= has no effect and its ignored
 	SetLimit(n int)
 
+	// Count returns the number of objects/connections being held by the pool
+	Count() int
+
 	// Close reaps all the connections which are in the pool. It does not deal with connections
 	// which are not yet released back to the pool. The caller should ensure this.
 	Close() error
 }
 
-// connPool is a connection pool for any object which implements io.Closer interface
+// ConnPoolImpl is a connection pool for any object which implements io.Closer interface
 // This is generic enough to support pooling of wide array of resources like files,
 // sockets, etc
 // The pool has connections per bucket but the user can use empty string as bucket if
 // there is no notion of a bucket.
-type connPool struct {
+type ConnPoolImpl struct {
 	logger *log.CommonLogger
 
 	// buckets is the map of buckets to its connection list
@@ -104,6 +121,13 @@ type connList struct {
 	list *list.List
 }
 
+func (l *connList) len() int {
+	l.mu.Lock()
+	n := l.list.Len()
+	l.mu.Unlock()
+	return n
+}
+
 func (l *connList) pop() io.Closer {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -140,9 +164,9 @@ func (l *connList) closeAll() {
 	}
 }
 
-// newConnPool creates a new connection pool
-func newConnPool(logger *log.CommonLogger, limit int, newConnFn func(bucketName string) (io.Closer, error)) *connPool {
-	p := &connPool{
+// NewConnPool creates a new connection pool
+func NewConnPool(logger *log.CommonLogger, limit int, newConnFn func(bucketName string) (io.Closer, error)) *ConnPoolImpl {
+	p := &ConnPoolImpl{
 		logger:       logger,
 		buckets:      map[string]*connList{},
 		mu:           sync.Mutex{},
@@ -161,7 +185,7 @@ func newConnPool(logger *log.CommonLogger, limit int, newConnFn func(bucketName 
 // getOrCreateListNoLock gets the connection list for the bucket. If the bucket does not
 // exist then it creates one before returning. The function assumes that caller will acquire
 // the lock before calling.
-func (pool *connPool) getOrCreateListNoLock(bucketName string) *connList {
+func (pool *ConnPoolImpl) getOrCreateListNoLock(bucketName string) *connList {
 	clist, ok := pool.buckets[bucketName]
 	if !ok {
 		clist = &connList{
@@ -175,7 +199,7 @@ func (pool *connPool) getOrCreateListNoLock(bucketName string) *connList {
 	return clist
 }
 
-func (pool *connPool) get(bucketName string) (conn io.Closer) {
+func (pool *ConnPoolImpl) get(bucketName string) (conn io.Closer) {
 	pool.mu.Lock()
 	defer pool.mu.Unlock()
 	clist := pool.getOrCreateListNoLock(bucketName)
@@ -185,7 +209,7 @@ func (pool *connPool) get(bucketName string) (conn io.Closer) {
 }
 
 // UpdateGCInterval updates the new GC frequency
-func (pool *connPool) UpdateGCInterval(d time.Duration) {
+func (pool *ConnPoolImpl) UpdateGCInterval(d time.Duration) {
 	// Negative duration will cause the timer to panic.
 	if d <= 0 {
 		return
@@ -196,7 +220,7 @@ func (pool *connPool) UpdateGCInterval(d time.Duration) {
 	pool.mu.Unlock()
 }
 
-func (pool *connPool) getGCTicker() (t *time.Ticker) {
+func (pool *ConnPoolImpl) getGCTicker() (t *time.Ticker) {
 	pool.mu.Lock()
 	t = pool.gcTicker
 	pool.mu.Unlock()
@@ -205,7 +229,7 @@ func (pool *connPool) getGCTicker() (t *time.Ticker) {
 }
 
 // UpdateReapInterval updates the reap interval for unused connections
-func (pool *connPool) UpdateReapInterval(d time.Duration) {
+func (pool *ConnPoolImpl) UpdateReapInterval(d time.Duration) {
 	// Negative duration does not make any sense
 	if d <= 0 {
 		return
@@ -219,7 +243,7 @@ func (pool *connPool) UpdateReapInterval(d time.Duration) {
 // Get returns an object from the pool. If there is none then it creates
 // one by calling newConnFn() and returns it. It is guaranteed that either
 // an error or a non-nil connection object will be returned
-func (pool *connPool) Get(bucketName string, timeout time.Duration) (conn io.Closer, err error) {
+func (pool *ConnPoolImpl) Get(bucketName string, timeout time.Duration) (conn io.Closer, err error) {
 	if pool.closed {
 		err = ErrClosedConnPool
 		return
@@ -245,7 +269,7 @@ func (pool *connPool) Get(bucketName string, timeout time.Duration) (conn io.Clo
 
 // Put releases the connection back to the pool for reuse. It is caller's job
 // to ensure that right bucket name is passed here.
-func (pool *connPool) Put(bucketName string, conn io.Closer, damaged bool) {
+func (pool *ConnPoolImpl) Put(bucketName string, conn io.Closer, damaged bool) {
 	defer pool.limiter.Release()
 
 	if damaged {
@@ -266,8 +290,20 @@ func (pool *connPool) Put(bucketName string, conn io.Closer, damaged bool) {
 	l.push(conn)
 }
 
+// Count returns the number of objects being held
+func (pool *ConnPoolImpl) Count() (n int) {
+
+	pool.mu.Lock()
+	for _, connList := range pool.buckets {
+		n += connList.len()
+	}
+	pool.mu.Unlock()
+
+	return
+}
+
 // Close shutsdown the GC worker and initiates a final gc with force=true
-func (pool *connPool) Close() error {
+func (pool *ConnPoolImpl) Close() error {
 	if pool.closed {
 		return nil
 	}
@@ -284,7 +320,7 @@ func (pool *connPool) Close() error {
 // SetLimit sets the upper limit of number of active connections in the pool and
 // created but not released back to the pool. On reaching the max connections the Get()
 // will block
-func (pool *connPool) SetLimit(n int) {
+func (pool *ConnPoolImpl) SetLimit(n int) {
 	if n <= 0 {
 		return
 	}
@@ -295,7 +331,7 @@ func (pool *connPool) SetLimit(n int) {
 
 // reapConnList collects all the connection lists which have not been used for the reapInterval time
 // This does not close the connection itself
-func (pool *connPool) reapConnList(force bool) []*connList {
+func (pool *ConnPoolImpl) reapConnList(force bool) []*connList {
 	connListList := []*connList{}
 	reapedBuckets := []string{}
 
@@ -325,7 +361,7 @@ func (pool *connPool) reapConnList(force bool) []*connList {
 }
 
 // gcOnce runs one single iteration of reaping the connections
-func (pool *connPool) gcOnce(force bool) {
+func (pool *ConnPoolImpl) gcOnce(force bool) {
 	connListList := pool.reapConnList(force)
 
 	pool.logger.Debugf("conflict connection pool reaping lists. force=%v, count=%d", force, len(connListList))
@@ -348,7 +384,7 @@ func (pool *connPool) gcOnce(force bool) {
 // there is a parallel request connection for the same bucket. This request can be catered to in parallel safely
 // as it will land in a completely new list. This cannot be avoided and it is expected that
 // such cases will be much fewer.
-func (pool *connPool) gc() {
+func (pool *ConnPoolImpl) gc() {
 	for {
 		// we copy the ticker so that it can be modified in parallel
 		gcTicker := pool.getGCTicker()
