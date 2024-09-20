@@ -3109,22 +3109,35 @@ type ConflictLoggingMappingInput map[string]interface{}
 
 var ConflictLoggingOff ConflictLoggingMappingInput = ConflictLoggingMappingInput{}
 
-// ignores unrecognised keys from comparision
-func EqualMaps(clm1, clm2 map[string]interface{}, recognisedKeys []string) bool {
+// ignores unrecognised keys from comparision.
+// recognisedKeys should be a map of keys to compare for equality and
+// the datatype of their values to assert before comparision.
+func EqualMaps(clm1, clm2 map[string]interface{}, recognisedKeys map[string]reflect.Kind) bool {
 	if clm1 == nil || clm2 == nil {
 		return clm1 == nil && clm2 == nil
 	}
 
-	for _, key := range recognisedKeys {
+	for key, datatype := range recognisedKeys {
 		val1, ok1 := clm1[key]
 		val2, ok2 := clm2[key]
 		if ok1 != ok2 {
 			return false
 		}
 
-		valStr1, ok1 := val1.(string)
-		valStr2, ok2 := val2.(string)
-		if ok1 != ok2 || valStr1 != valStr2 {
+		switch datatype {
+		case reflect.String:
+			valStr1, ok1 := val1.(string)
+			valStr2, ok2 := val2.(string)
+			if ok1 != ok2 || valStr1 != valStr2 {
+				return false
+			}
+		case reflect.Bool:
+			valStr1, ok1 := val1.(bool)
+			valStr2, ok2 := val2.(bool)
+			if ok1 != ok2 || valStr1 != valStr2 {
+				return false
+			}
+		default:
 			return false
 		}
 	}
@@ -3211,7 +3224,7 @@ func (clm ConflictLoggingMappingInput) Same(otherClm ConflictLoggingMappingInput
 
 	rules1, ok1 := loggingRules1.(map[string]interface{})
 	rules2, ok2 := loggingRules2.(map[string]interface{})
-	if ok1 != ok2 || !EqualMaps(rules1, rules2, SimpleConflictLoggingKeys) {
+	if ok1 != ok2 || !EqualMaps(rules1, rules2, SimpleConflictLoggingRulesKeys) {
 		return false
 	}
 

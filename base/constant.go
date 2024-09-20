@@ -11,6 +11,7 @@ package base
 import (
 	"errors"
 	"fmt"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -1526,9 +1527,16 @@ const (
 )
 
 // simple keys inside conflict logging mapping. It excludes loggingRules key.
-var SimpleConflictLoggingKeys []string = []string{
-	CLBucketKey,
-	CLCollectionKey,
+var SimpleConflictLoggingKeys map[string]reflect.Kind = map[string]reflect.Kind{
+	CLBucketKey:     reflect.String,
+	CLCollectionKey: reflect.String,
+	CLDisabledKey:   reflect.Bool,
+}
+
+// simple keys inside loggingRules mapping.
+var SimpleConflictLoggingRulesKeys map[string]reflect.Kind = map[string]reflect.Kind{
+	CLBucketKey:     reflect.String,
+	CLCollectionKey: reflect.String,
 }
 
 // Required for conflict resolution
