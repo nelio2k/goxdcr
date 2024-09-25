@@ -161,7 +161,7 @@ func (meta *CRMetadata) UpdateMetaForSetBack() (pvBytes, mvBytes []byte, err err
 	if len(mv) > 0 {
 		mvlen := 0
 		for src := range mv {
-			mvlen = mvlen + len(src) + base.MaxHexCASLength + base.QuotesAndSepLenForVVEntry
+			mvlen = mvlen + len(src) + base.MaxHexCASLength + base.QuotesAndSepLenForHLVEntry
 		}
 		mvlen = mvlen + 2 // { and }
 		// TODO(MB-41808): data pool
@@ -171,12 +171,19 @@ func (meta *CRMetadata) UpdateMetaForSetBack() (pvBytes, mvBytes []byte, err err
 		for _, delta := range mvDeltas {
 			src := delta.GetSource()
 			ver := delta.GetVersion()
-			value := base.Uint64ToHexLittleEndianAndStrip0s(ver)
-			mvBytes, mvPos = base.WriteJsonRawMsg(mvBytes, []byte(src), mvPos, base.WriteJsonKey, len(src), firstKey /*firstKey*/)
-			mvBytes, mvPos = base.WriteJsonRawMsg(mvBytes, value, mvPos, base.WriteJsonValue, len(value), false /*firstKey*/)
+			var value []byte
+			if firstKey {
+				value = base.Uint64ToHexLittleEndian(ver)
+			} else {
+				value = base.Uint64ToHexLittleEndianAndStrip0s(ver)
+			}
+
+			hlvEntry := ComposeHLVEntry(src, value)
+
+			mvBytes, mvPos = base.WriteJsonRawMsg(mvBytes, hlvEntry, mvPos, base.WriteJsonArrayEntry, len(hlvEntry), firstKey /*firstKey*/)
 			firstKey = false
 		}
-		mvBytes[mvPos] = '}'
+		mvBytes[mvPos] = ']'
 		mvPos++
 	} else {
 		// If there is no mv, then cv and document.CAS represent mutation events. It needs to be in pv
@@ -193,10 +200,10 @@ func (meta *CRMetadata) UpdateMetaForSetBack() (pvBytes, mvBytes []byte, err err
 	if len(pv) > 0 {
 		pvlen := 0
 		for src := range pv {
-			pvlen = pvlen + len(src) + base.MaxHexCASLength + base.QuotesAndSepLenForVVEntry
+			pvlen = pvlen + len(src) + base.MaxHexCASLength + base.QuotesAndSepLenForHLVEntry
 		}
 		// We may need to add cv and document CAS to it also
-		pvlen = pvlen + len(meta.hlv.GetCvSrc()) + (base.MaxHexCASLength + base.QuotesAndSepLenForVVEntry)
+		pvlen = pvlen + len(meta.hlv.GetCvSrc()) + (base.MaxHexCASLength + base.QuotesAndSepLenForHLVEntry)
 		pvlen = pvlen + len(base.EmptyJsonObject) // { and }
 
 		// TODO(MB-41808): data pool
@@ -206,17 +213,23 @@ func (meta *CRMetadata) UpdateMetaForSetBack() (pvBytes, mvBytes []byte, err err
 		for _, delta := range pvDeltas {
 			src := delta.GetSource()
 			ver := delta.GetVersion()
-			value := base.Uint64ToHexLittleEndianAndStrip0s(ver)
-			pvBytes, pvPos = base.WriteJsonRawMsg(pvBytes, []byte(src), pvPos, base.WriteJsonKey, len(src), firstKey /*firstKey*/)
-			pvBytes, pvPos = base.WriteJsonRawMsg(pvBytes, value, pvPos, base.WriteJsonValue, len(value), false /*firstKey*/)
+			var value []byte
+			if firstKey {
+				value = base.Uint64ToHexLittleEndian(ver)
+			} else {
+				value = base.Uint64ToHexLittleEndianAndStrip0s(ver)
+			}
+
+			hlvEntry := ComposeHLVEntry(src, value)
+
+			pvBytes, pvPos = base.WriteJsonRawMsg(pvBytes, hlvEntry, pvPos, base.WriteJsonArrayEntry, len(hlvEntry), firstKey /*firstKey*/)
 			firstKey = false
 		}
-		pvBytes[pvPos] = '}'
+		pvBytes[pvPos] = ']'
 		pvPos++
 	}
 
 	return pvBytes[:pvPos], mvBytes[:mvPos], nil
-
 }
 
 func (source *CRMetadata) Diff(target *CRMetadata, sourcePruningFunc, targetPruningFunc base.PruningFunc) (bool, error) {

@@ -1612,6 +1612,7 @@ const (
 	WriteJsonKey           WriteJsonRawMsgType = iota
 	WriteJsonValue         WriteJsonRawMsgType = iota
 	WriteJsonValueNoQuotes WriteJsonRawMsgType = iota
+	WriteJsonArrayEntry    WriteJsonRawMsgType = iota
 )
 
 // Given a correctly allocatedBytes slice that can contain the whole rawJSON message, write the given information without
@@ -1631,6 +1632,28 @@ const (
 //	original byte slice reference
 //	updated position
 func WriteJsonRawMsg(allocatedBytes, bytesToWrite []byte, pos int, mode WriteJsonRawMsgType, size int, isFirstKey bool) ([]byte, int) {
+	// JSON array
+	if mode == WriteJsonArrayEntry {
+		if isFirstKey {
+			// Need to do an open bracket
+			allocatedBytes[pos] = '['
+			pos++
+		} else {
+			allocatedBytes[pos] = ','
+			pos++
+		}
+		allocatedBytes[pos] = '"'
+		pos++
+		copy(allocatedBytes[pos:], bytesToWrite[:size])
+		pos += size
+		allocatedBytes[pos] = '"'
+		pos++
+		allocatedBytes[pos] = ']'
+
+		return allocatedBytes, pos
+	}
+
+	// JSON object
 	if mode == WriteJsonKey {
 		if isFirstKey {
 			// Need to do an open bracket
@@ -1642,7 +1665,7 @@ func WriteJsonRawMsg(allocatedBytes, bytesToWrite []byte, pos int, mode WriteJso
 		}
 		allocatedBytes[pos] = '"'
 		pos++
-		copy(allocatedBytes[pos:], bytesToWrite[:])
+		copy(allocatedBytes[pos:], bytesToWrite[:size])
 		pos += size
 		allocatedBytes[pos] = '"'
 		pos++
@@ -1653,7 +1676,7 @@ func WriteJsonRawMsg(allocatedBytes, bytesToWrite []byte, pos int, mode WriteJso
 			allocatedBytes[pos] = '"'
 			pos++
 		}
-		copy(allocatedBytes[pos:], bytesToWrite[:])
+		copy(allocatedBytes[pos:], bytesToWrite[:size])
 		pos += size
 		if mode == WriteJsonValue {
 			allocatedBytes[pos] = '"'
@@ -2114,17 +2137,16 @@ func (h *HighSeqnoAndVbUuidMap) Diff(prev HighSeqnoAndVbUuidMap) HighSeqnoAndVbU
 	}
 	return diffMap
 }
-func DecodeSetMetaReq(req *WrappedMCRequest) DocumentMetadata {
+func DecodeSetMetaReq(wrappedReq *WrappedMCRequest) DocumentMetadata {
+	req := wrappedReq.Req
 	ret := DocumentMetadata{}
-	ret.Key = req.Req.Key
-	ret.Flags = binary.BigEndian.Uint32(req.Req.Extras[0:4])
-	ret.Expiry = binary.BigEndian.Uint32(req.Req.Extras[4:8])
-	ret.RevSeq = binary.BigEndian.Uint64(req.Req.Extras[8:16])
-	ret.Cas = req.Req.Cas
-	ret.Deletion = (req.Req.Opcode == DELETE_WITH_META)
-	ret.DataType = req.Req.DataType
-	ret.Seqno = req.Seqno
-	ret.VbUUID = req.VbUUID
+	ret.Key = req.Key
+	ret.Flags = binary.BigEndian.Uint32(req.Extras[0:4])
+	ret.Expiry = binary.BigEndian.Uint32(req.Extras[4:8])
+	ret.RevSeq = binary.BigEndian.Uint64(req.Extras[8:16])
+	ret.Cas = req.Cas
+	ret.Deletion = (wrappedReq.GetMemcachedCommand() == DELETE_WITH_META)
+	ret.DataType = req.DataType
 
 	return ret
 }
