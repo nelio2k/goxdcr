@@ -178,7 +178,10 @@ func (meta *CRMetadata) UpdateMetaForSetBack() (pvBytes, mvBytes []byte, err err
 				value = base.Uint64ToHexLittleEndianAndStrip0s(ver)
 			}
 
-			hlvEntry := ComposeHLVEntry(src, value)
+			hlvEntry, err := ComposeHLVEntry(src, value)
+			if err != nil {
+				return pvBytes, mvBytes, err
+			}
 
 			mvBytes, mvPos = base.WriteJsonRawMsg(mvBytes, hlvEntry, mvPos, base.WriteJsonArrayEntry, len(hlvEntry), firstKey /*firstKey*/)
 			firstKey = false
@@ -220,7 +223,10 @@ func (meta *CRMetadata) UpdateMetaForSetBack() (pvBytes, mvBytes []byte, err err
 				value = base.Uint64ToHexLittleEndianAndStrip0s(ver)
 			}
 
-			hlvEntry := ComposeHLVEntry(src, value)
+			hlvEntry, err := ComposeHLVEntry(src, value)
+			if err != nil {
+				return pvBytes, mvBytes, err
+			}
 
 			pvBytes, pvPos = base.WriteJsonRawMsg(pvBytes, hlvEntry, pvPos, base.WriteJsonArrayEntry, len(hlvEntry), firstKey /*firstKey*/)
 			firstKey = false
@@ -230,6 +236,7 @@ func (meta *CRMetadata) UpdateMetaForSetBack() (pvBytes, mvBytes []byte, err err
 	}
 
 	return pvBytes[:pvPos], mvBytes[:mvPos], nil
+
 }
 
 func (source *CRMetadata) Diff(target *CRMetadata, sourcePruningFunc, targetPruningFunc base.PruningFunc) (bool, error) {
