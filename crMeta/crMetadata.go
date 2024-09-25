@@ -31,8 +31,8 @@ const (
 	// These are the fields in the HLV
 	HLV_SRC_FIELD = "src" // src and ver combined is the cv in the design
 	HLV_VER_FIELD = "ver" //
-	HLV_MV_FIELD  = "mv"  // the MV field in _xdcr
-	HLV_PV_FIELD  = "pv"  // The PV field in _xdcr
+	HLV_MV_FIELD  = "mv"  // the MV field in _vv
+	HLV_PV_FIELD  = "pv"  // The PV field in _vv
 
 	XATTR_CVCAS_PATH = base.XATTR_HLV + base.PERIOD + HLV_CVCAS_FIELD
 	XATTR_SRC_PATH   = base.XATTR_HLV + base.PERIOD + HLV_SRC_FIELD
@@ -42,6 +42,10 @@ const (
 
 	XATTR_IMPORTCAS   = base.XATTR_IMPORTCAS
 	XATTR_PREVIOUSREV = base.XATTR_PREVIOUSREV
+
+	// separator between source and version in version deltas entry
+	// i.e <version>@<source>
+	HLV_SEPARATOR = '@'
 )
 
 // CRMetadata contains the metadata required to perform conflict resolution. It has two main parts:
@@ -184,7 +188,7 @@ func NewSourceDocument(req *base.WrappedMCRequest, source hlv.DocumentSourceId) 
 }
 
 func (doc *SourceDocument) GetMetadata(uncompressFunc base.UncompressFunc) (*CRMetadata, error) {
-	docMeta := base.DecodeSetMetaReq(doc.req.Req)
+	docMeta := base.DecodeSetMetaReq(doc.req)
 	cas, cvCas, cvSrc, cvVer, pvMap, mvMap, importCas, pRev, err := getHlvFromMCRequest(doc.req, uncompressFunc)
 	if err != nil {
 		return nil, err
@@ -345,7 +349,7 @@ func GetMetadataForCR(req *base.WrappedMCRequest, resp *mc.MCResponse, specs []b
 	if resp.Opcode == base.GET_WITH_META {
 		// GET_WITH_META will also be used when only ECCV is on (mobile is off) and cas < max_cas.
 		// source HLV is not parsed and target HLV is not fetched.
-		doc_meta_source = base.DecodeSetMetaReq(req.Req)
+		doc_meta_source = base.DecodeSetMetaReq(req)
 		doc_meta_target, err = base.DecodeGetMetaResp(req.Req.Key, resp, xattrEnabled)
 		if err != nil {
 			err = fmt.Errorf("error decoding GET_META response for key=%v%s%v, respBody=%v%v%v, err=%v", base.UdTagBegin, req.Req.Key, base.UdTagEnd, base.UdTagBegin, resp.Body, base.UdTagEnd, err)
@@ -662,9 +666,29 @@ type MergeResultNotifier interface {
 	NotifyMergeResult(input *ConflictParams, mergeResult interface{}, mergeError error)
 }
 
+// returns version@source, which is one entry of a PV or MV.
+func ComposeHLVEntry(source hlv.DocumentSourceId, version []byte) []byte {
+	hlvEntryLen := len(version) + 1 + len(source)
+	hlvEntry := make([]byte, hlvEntryLen)
+	idx := 0
+	// copy the version
+	n := copy(hlvEntry[idx:], version)
+	idx += n
+	// copy the separator
+	hlvEntry[idx] = HLV_SEPARATOR
+	idx++
+	// copy the source
+	for i := 0; i < len(source); i++ {
+		hlvEntry[idx+i] = source[i]
+	}
+	idx += len(source)
+	return hlvEntry[:idx]
+}
+
 // given a version map (PV or MV), this function,
 // 1. applies the pruning function on top of the version entries if they are PVs i.e. if the pruning function is passed in.
 // 2. converts the entries into version deltas, strips the leading zeroes of delta values and composes the PV or MV for the target doc.
+// 3. PVs and MVs will be of the format of JSON arrays with individual string entries of the form "<version>@<source>".
 func VersionMapToDeltasBytes(vMap hlv.VersionsMap, body []byte, pos int, pruneFunction *base.PruningFunc) (int, bool) {
 	startPos := pos
 	first := true
@@ -684,19 +708,19 @@ func VersionMapToDeltasBytes(vMap hlv.VersionsMap, body []byte, pos int, pruneFu
 
 	// deltas need to be recomputed from the non-pruned versions
 	deltas := vMap.VersionsDeltas()
-	firstEntry := true
 	for _, delta := range deltas {
 		key := delta.GetSource()
 		ver := delta.GetVersion()
 		var value []byte
-		if firstEntry {
+		if first {
 			value = base.Uint64ToHexLittleEndian(ver)
-			firstEntry = false
 		} else {
 			value = base.Uint64ToHexLittleEndianAndStrip0s(ver)
 		}
-		body, pos = base.WriteJsonRawMsg(body, []byte(key), pos, base.WriteJsonKey, len(key), first /*firstKey*/)
-		body, pos = base.WriteJsonRawMsg(body, value, pos, base.WriteJsonValue, len(value), false /*firstKey*/)
+
+		hlvEntry := ComposeHLVEntry(key, value)
+
+		body, pos = base.WriteJsonRawMsg(body, hlvEntry, pos, base.WriteJsonArrayEntry, len(hlvEntry), first /*firstKey*/)
 		first = false
 	}
 
@@ -704,7 +728,7 @@ func VersionMapToDeltasBytes(vMap hlv.VersionsMap, body []byte, pos int, pruneFu
 		// We haven't added anything
 		return startPos, pruned
 	}
-	body[pos] = '}'
+	body[pos] = ']'
 	pos++
 	return pos, pruned
 }
@@ -734,6 +758,29 @@ func (meta *CRMetadata) HadPv() bool {
 	return meta.hadPv
 }
 
+// input is expected to be of the format <version>@<source>
+// returns <source> and <version>
+func ParseOneVersionDeltaEntry(entry []byte) (source, version []byte, err error) {
+	sep := -1
+	for idx := 0; idx < len(entry); idx++ {
+		if entry[idx] == HLV_SEPARATOR {
+			sep = idx
+			break
+		}
+	}
+
+	if sep == -1 {
+		err = fmt.Errorf("invalid version delta entry=%s", entry)
+		return
+	}
+
+	// sep points to the HLV_SEPARATOR now
+	version = entry[:sep]
+	source = entry[sep+1:]
+	err = nil
+	return
+}
+
 func xattrVVtoDeltas(vvBytes []byte) (hlv.VersionsMap, error) {
 	vv := make(hlv.VersionsMap)
 
@@ -741,18 +788,29 @@ func xattrVVtoDeltas(vvBytes []byte) (hlv.VersionsMap, error) {
 		return vv, nil
 	}
 
-	it, err := base.NewCCRXattrFieldIterator(vvBytes)
+	it, err := base.NewArrayXattrFieldIterator(vvBytes)
 	if err != nil {
 		return nil, err
 	}
 	var lastEntryVersion uint64
 	for it.HasNext() {
-		k, v, err := it.Next()
+		v, err := it.Next()
 		if err != nil {
 			return nil, err
 		}
-		src := hlv.DocumentSourceId(k)
-		ver, err := base.HexLittleEndianToUint64(v)
+
+		if len(v) <= 2 {
+			err = fmt.Errorf("invalid vv entry=%v in vvBytes=%v", v, vvBytes)
+			return nil, err
+		}
+
+		source, version, err := ParseOneVersionDeltaEntry(v[1 : len(v)-1])
+		if err != nil {
+			return nil, err
+		}
+
+		src := hlv.DocumentSourceId(source)
+		ver, err := base.HexLittleEndianToUint64(version)
 		if err != nil {
 			return nil, err
 		}
@@ -775,7 +833,7 @@ func (meta *CRMetadata) UpdateMetaForSetBack() (pvBytes, mvBytes []byte, err err
 	if len(mv) > 0 {
 		mvlen := 0
 		for src := range mv {
-			mvlen = mvlen + len(src) + base.MaxHexCASLength + base.QuotesAndSepLenForVVEntry
+			mvlen = mvlen + len(src) + base.MaxHexCASLength + base.QuotesAndSepLenForHLVEntry
 		}
 		mvlen = mvlen + 2 // { and }
 		// TODO(MB-41808): data pool
@@ -785,12 +843,19 @@ func (meta *CRMetadata) UpdateMetaForSetBack() (pvBytes, mvBytes []byte, err err
 		for _, delta := range mvDeltas {
 			src := delta.GetSource()
 			ver := delta.GetVersion()
-			value := base.Uint64ToHexLittleEndianAndStrip0s(ver)
-			mvBytes, mvPos = base.WriteJsonRawMsg(mvBytes, []byte(src), mvPos, base.WriteJsonKey, len(src), firstKey /*firstKey*/)
-			mvBytes, mvPos = base.WriteJsonRawMsg(mvBytes, value, mvPos, base.WriteJsonValue, len(value), false /*firstKey*/)
+			var value []byte
+			if firstKey {
+				value = base.Uint64ToHexLittleEndian(ver)
+			} else {
+				value = base.Uint64ToHexLittleEndianAndStrip0s(ver)
+			}
+
+			hlvEntry := ComposeHLVEntry(src, value)
+
+			mvBytes, mvPos = base.WriteJsonRawMsg(mvBytes, hlvEntry, mvPos, base.WriteJsonArrayEntry, len(hlvEntry), firstKey /*firstKey*/)
 			firstKey = false
 		}
-		mvBytes[mvPos] = '}'
+		mvBytes[mvPos] = ']'
 		mvPos++
 	} else {
 		// If there is no mv, then cv and document.CAS represent mutation events. It needs to be in pv
@@ -807,10 +872,10 @@ func (meta *CRMetadata) UpdateMetaForSetBack() (pvBytes, mvBytes []byte, err err
 	if len(pv) > 0 {
 		pvlen := 0
 		for src := range pv {
-			pvlen = pvlen + len(src) + base.MaxHexCASLength + base.QuotesAndSepLenForVVEntry
+			pvlen = pvlen + len(src) + base.MaxHexCASLength + base.QuotesAndSepLenForHLVEntry
 		}
 		// We may need to add cv and document CAS to it also
-		pvlen = pvlen + len(meta.hlv.GetCvSrc()) + (base.MaxHexCASLength + base.QuotesAndSepLenForVVEntry)
+		pvlen = pvlen + len(meta.hlv.GetCvSrc()) + (base.MaxHexCASLength + base.QuotesAndSepLenForHLVEntry)
 		pvlen = pvlen + len(base.EmptyJsonObject) // { and }
 
 		// TODO(MB-41808): data pool
@@ -820,12 +885,19 @@ func (meta *CRMetadata) UpdateMetaForSetBack() (pvBytes, mvBytes []byte, err err
 		for _, delta := range pvDeltas {
 			src := delta.GetSource()
 			ver := delta.GetVersion()
-			value := base.Uint64ToHexLittleEndianAndStrip0s(ver)
-			pvBytes, pvPos = base.WriteJsonRawMsg(pvBytes, []byte(src), pvPos, base.WriteJsonKey, len(src), firstKey /*firstKey*/)
-			pvBytes, pvPos = base.WriteJsonRawMsg(pvBytes, value, pvPos, base.WriteJsonValue, len(value), false /*firstKey*/)
+			var value []byte
+			if firstKey {
+				value = base.Uint64ToHexLittleEndian(ver)
+			} else {
+				value = base.Uint64ToHexLittleEndianAndStrip0s(ver)
+			}
+
+			hlvEntry := ComposeHLVEntry(src, value)
+
+			pvBytes, pvPos = base.WriteJsonRawMsg(pvBytes, hlvEntry, pvPos, base.WriteJsonArrayEntry, len(hlvEntry), firstKey /*firstKey*/)
 			firstKey = false
 		}
-		pvBytes[pvPos] = '}'
+		pvBytes[pvPos] = ']'
 		pvPos++
 	}
 
