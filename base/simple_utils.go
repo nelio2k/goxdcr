@@ -2147,6 +2147,8 @@ func DecodeSetMetaReq(wrappedReq *WrappedMCRequest) DocumentMetadata {
 	ret.Cas = req.Cas
 	ret.Deletion = (wrappedReq.GetMemcachedCommand() == DELETE_WITH_META)
 	ret.DataType = req.DataType
+	ret.Seqno = wrappedReq.Seqno
+	ret.VbUUID = wrappedReq.VbUUID
 
 	return ret
 }
