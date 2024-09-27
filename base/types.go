@@ -3298,8 +3298,26 @@ func (clm ConflictLoggingMappingInput) Same(otherClm ConflictLoggingMappingInput
 
 	rules1, ok1 := loggingRules1.(map[string]interface{})
 	rules2, ok2 := loggingRules2.(map[string]interface{})
-	if ok1 != ok2 || !EqualMaps(rules1, rules2, SimpleConflictLoggingRulesKeys) {
+	if ok1 != ok2 || len(rules1) != len(rules2) {
 		return false
+	}
+
+	for source1, target1 := range rules1 {
+		target2, exists := rules2[source1]
+		if !exists {
+			return false
+		}
+
+		// null is a valid value here
+		if target1 == nil || target2 == nil {
+			return target1 == nil && target2 == nil
+		}
+
+		rule1, ok1 := target1.(map[string]interface{})
+		rule2, ok2 := target2.(map[string]interface{})
+		if ok1 != ok2 || !EqualMaps(rule1, rule2, SimpleConflictLoggingRulesKeys) {
+			return false
+		}
 	}
 
 	return true
