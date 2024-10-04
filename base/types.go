@@ -3237,14 +3237,17 @@ func ParseConflictLoggingInputType(in interface{}) (ConflictLoggingMappingInput,
 }
 
 func (clm ConflictLoggingMappingInput) Disabled() bool {
+	if clm == nil {
+		// this is not a valid value
+		return false
+	}
+
 	// check explicitly for "disabled" key first.
-	if clm != nil {
-		disabledVal, ok := clm[CLDisabledKey]
+	disabledVal, ok := clm[CLDisabledKey]
+	if ok {
+		disabled, ok := disabledVal.(bool)
 		if ok {
-			disabled, ok := disabledVal.(bool)
-			if ok {
-				return disabled
-			}
+			return disabled
 		}
 	}
 
@@ -3345,10 +3348,18 @@ func ValidateAndConvertJsonMapToConflictLoggingMapping(value string) (ConflictLo
 
 	conflictLoggingMap := ConflictLoggingMappingInput(jsonMap)
 
-	// validate if input is semantically valid
-	_, err = ParseConflictLogRules(conflictLoggingMap)
-	if err != nil {
-		return nil, fmt.Errorf("error parsing conflict logging input %v to rules, err=%v", conflictLoggingMap, err)
+	if conflictLoggingMap == nil {
+		// null is not a acceptable input by design.
+		return nil, fmt.Errorf("null conflict logging map not allowed. Use {} or {\"disabled\":true} for disabling the feature")
+	}
+
+	enabled := !conflictLoggingMap.Disabled()
+	if enabled {
+		// validate if input is semantically valid
+		_, err = ParseConflictLogRules(conflictLoggingMap)
+		if err != nil {
+			return nil, fmt.Errorf("error parsing conflict logging input %v to rules, err=%v", conflictLoggingMap, err)
+		}
 	}
 
 	return conflictLoggingMap, nil
