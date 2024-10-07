@@ -1324,12 +1324,13 @@ func (xmem *XmemNozzle) batchSetMetaWithRetry(batch *dataBatch, numOfRetry int) 
 					err = xmem.log(item, resp)
 					if err != nil {
 						// warn and continue to replicate
-						if err == conflictlog.ErrQueueFull {
-							// TODO - can spam, good to update it to a counter.
-							xmem.Logger().Warnf("%v Conflict logging queue full, could not log for key=%v%s%v",
-								xmem.Id(),
-								base.UdTagBegin, item.Req.Key, base.UdTagEnd,
-							)
+						if err == conflictlog.ErrQueueFull || err == conflictlog.ErrLoggerClosed {
+							// SUMUKH TODO - can spam, good to update it to a counter.
+
+							// xmem.Logger().Warnf("%v Conflict logging queue full, could not log for key=%v%s%v",
+							// 	xmem.Id(),
+							// 	base.UdTagBegin, item.Req.Key, base.UdTagEnd,
+							// )
 						} else {
 							xmem.Logger().Warnf("%v Error when logging conflict for key=%v%s%v, req=%v%s%v, reqBody=%v%v%v, resp=%v, respBody=%v%v%v, specs=%v, err=%v",
 								xmem.Id(),
