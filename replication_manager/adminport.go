@@ -1459,6 +1459,31 @@ func (adminport *Adminport) doChangeConflictLogSetting(request *http.Request) (*
 			}
 			logger_ap.Infof("changing worker count = %s => %v", workerCnt, i)
 			conflictlog.DefaultLoggerWorkerCount = i
+		case "queueLen":
+			queueLen := valArr[0]
+			i, err := strconv.Atoi(queueLen)
+			if err != nil {
+				errorsMap[fmt.Sprintf("error_queueLen=%s", queueLen)] = err
+				return EncodeObjectIntoResponse(errorsMap)
+			}
+			logger_ap.Infof("changing queueLen = %s => %v", queueLen, i)
+			conflictlog.DefaultLogCapacity = i
+		case "connLimit":
+			connLimit := valArr[0]
+			i, err := strconv.Atoi(connLimit)
+			if err != nil {
+				errorsMap[fmt.Sprintf("error_connLimit=%s", connLimit)] = err
+				return EncodeObjectIntoResponse(errorsMap)
+			}
+
+			m, err := conflictlog.GetManager()
+			if err != nil {
+				errorsMap["error_ManagerConnLimit"] = err
+				return EncodeObjectIntoResponse(errorsMap)
+			}
+
+			logger_ap.Infof("changing connLimit = %s => %v", connLimit, i)
+			m.SetConnLimit(i)
 		default:
 			continue
 		}

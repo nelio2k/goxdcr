@@ -17,7 +17,6 @@ const (
 	DefaultSetMetaTimeout       = 5 * time.Second
 	DefaultGetTimeout           = 5 * time.Second
 	DefaultPoolGetTimeout       = 5 * time.Second
-	DefaultLogCapacity          = 5
 	DefaultNetworkRetryCount    = 5
 	DefaultNetworkRetryInterval = 5 * time.Second
 	LoggerShutdownChCap         = 10
@@ -43,4 +42,5 @@ const (
 // [TEMP] - SUMUKH TODO - can move to const when actually implemented.
 var (
 	DefaultLoggerWorkerCount = 3
+	DefaultLogCapacity       = 5
 )
