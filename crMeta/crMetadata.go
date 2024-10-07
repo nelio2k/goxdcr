@@ -58,11 +58,11 @@ const (
 // 1. Update its HLV, with cvCAS set to the pre-import document CAS.
 // 2. Update mobile metadata (_sync XATTR)
 // 3. Write back the document.
-// This results in a new mutation with new CAS. Mobile will set an XATTR _importCAS to the same value as the new CAS
+// This results in a new mutation with new CAS. Mobile will set an XATTR importCAS (_mou.cas) to the same value as the new CAS
 // using macro-expansion.
 //
 // The resulting import mutation has the following properties:
-// 1. importCAS == document.CAS
+// 1. importCAS (_mou.cas) == document.CAS
 // 2. cvCAS == pre-import document CAS
 // We don't want import mutation to win over its pre-import predecessor. To achieve that,
 // we will use pre-import CAS value for conflict resolution so docMeta.Cas will be set to this value.
@@ -70,7 +70,7 @@ const (
 // revId CR cannot be supported either (unless mobile savs pre-import revId)
 //
 // If there is a new mutation after the import, the new mutation will have:
-// - document.CAS > importCAS
+// - document.CAS > importCAS (_mou.cas)
 // This document is no longer considered import mutation. It is a local mutation. When it is replicated to a
 // target, the importCAS XATTR will be removed.
 type CRMetadata struct {
@@ -86,9 +86,9 @@ type CRMetadata struct {
 	hadHlv bool
 	// If the document has _mou, we need the following to decide whether to delete _mou in the subdoc command.
 	hadMou bool
-	// It is import mutation if importCas == document.CAS. In that case, docMeta.Cas is the pre-import CAS value.
+	// It is import mutation if importCas (_mou.cas) == document.CAS. In that case, docMeta.Cas is the pre-import CAS value.
 	isImport bool
-	// This is the value parsed from the XATTR _importCAS.
+	// This is the value parsed from the XATTR importCAS (_mou.cas).
 	importCas uint64
 	// if isImport is true, we will use this to store the actual Cas,
 	// since we replace doc.Cas with pre-import Cas i.e. cvCas for conflict resolution
@@ -197,7 +197,7 @@ func (doc *SourceDocument) GetMetadata(uncompressFunc base.UncompressFunc) (*CRM
 	meta := CRMetadata{
 		docMeta:   &docMeta,
 		actualCas: docMeta.Cas,
-		hadMou:    importCas > 0, // we will use the presence of importCAS to determine if we have _mou
+		hadMou:    importCas > 0, // we will use the presence of importCAS (_mou.cas) to determine if we have _mou
 	}
 
 	err = meta.UpdateHLVIfNeeded(doc.source, cas, cvCas, cvSrc, cvVer, pvMap, mvMap, importCas, pRev)
@@ -264,7 +264,7 @@ func (doc *TargetDocument) GetMetadata() (*CRMetadata, error) {
 				return nil, err
 			}
 
-			// We will use the presence of importCAS to determine if we have _mou
+			// We will use the presence of importCAS (_mou.cas) to determine if we have _mou
 			meta.hadMou = importCas > 0
 
 			err = meta.UpdateHLVIfNeeded(doc.source, cas, cvCas, cvSrc, cvVer, pvMap, mvMap, importCas, pRev)
@@ -389,7 +389,8 @@ func GetMetadataForCR(req *base.WrappedMCRequest, resp *mc.MCResponse, specs []b
 		}
 		doc_meta_target = *target_meta.docMeta
 
-		if target_meta.IsImportMutation() && source_meta.actualCas < target_meta.actualCas {
+		if req.HLVModeOptions.PreserveSync &&
+			target_meta.IsImportMutation() && source_meta.actualCas < target_meta.actualCas {
 			// This is the case when target CAS will rollback if source wins
 			// So use subdoc command in this case instead of *_WITH_META commands
 			req.SetSubdocOp()
@@ -502,7 +503,7 @@ func NeedToUpdateHlv(meta *CRMetadata, vbMaxCas uint64, pruningWindow time.Durat
 		return false
 	}
 	hlv := meta.hlv
-	// We need to update if CAS has changed from ver.CAS
+	// We need to update if CAS has changed from cvCas
 	if hlv.Updated {
 		return true
 	}
@@ -544,116 +545,52 @@ func ConstructXattrFromHlvForSetMeta(meta *CRMetadata, pruningWindow time.Durati
 		return -1, false, err
 	}
 
+	var pruned bool
+	*pos, pruned, err = ConstructHlv(body, *pos, meta, pruningWindow)
+	if err != nil {
+		return *pos, pruned, err
+	}
+
+	*pos, err = xattrComposer.CommitRawKVPair()
+	return *pos, pruned, err
+}
+
+// constructs hlv content and writes it to "body" from "pos" index.
+// Increments pos and returns the last position.
+func ConstructHlv(body []byte, pos int, meta *CRMetadata, pruningWindow time.Duration) (int, bool, error) {
+	var err error
 	pruneFunc := base.GetHLVPruneFunction(meta.GetDocumentMetadata().Cas, pruningWindow)
-	*pos = formatCv(meta, body, *pos)
+	pos = formatCv(meta, body, pos)
 	// Format MV
 	mv := meta.GetHLV().GetMV()
 	if len(mv) > 0 {
 		// This is not the first since we have cv before this
-		body, *pos = base.WriteJsonRawMsg(body, []byte(HLV_MV_FIELD), *pos, base.WriteJsonKey, len([]byte(HLV_MV_FIELD)), false)
-		*pos, _, err = VersionMapToDeltasBytes(mv, body, *pos, nil)
+		body, pos = base.WriteJsonRawMsg(body, []byte(HLV_MV_FIELD), pos, base.WriteJsonKey, len([]byte(HLV_MV_FIELD)), false)
+		pos, _, err = VersionMapToDeltasBytes(mv, body, pos, nil)
 		if err != nil {
-			return *pos, false, err
+			return pos, false, err
 		}
 	}
 	// Format PV
 	pv := meta.GetHLV().GetPV()
 	var pruned bool
 	if len(pv) > 0 {
-		startPos := *pos
-		body, *pos = base.WriteJsonRawMsg(body, []byte(HLV_PV_FIELD), *pos, base.WriteJsonKey, len([]byte(HLV_PV_FIELD)), false)
-		afterKeyPos := *pos
-		*pos, pruned, err = VersionMapToDeltasBytes(pv, body, *pos, &pruneFunc)
+		startPos := pos
+		body, pos = base.WriteJsonRawMsg(body, []byte(HLV_PV_FIELD), pos, base.WriteJsonKey, len([]byte(HLV_PV_FIELD)), false)
+		afterKeyPos := pos
+		pos, pruned, err = VersionMapToDeltasBytes(pv, body, pos, &pruneFunc)
 		if err != nil {
-			return *pos, pruned, err
+			return pos, pruned, err
 		}
-		if *pos == afterKeyPos {
+		if pos == afterKeyPos {
 			// Did not add PV, need to back off and remove the PV key
-			*pos = startPos
+			pos = startPos
 		}
 	}
-	body[*pos] = '}'
-	*pos++
+	body[pos] = '}'
+	pos++
 
-	*pos, err = xattrComposer.CommitRawKVPair()
-	return *pos, pruned, err
-}
-
-// This routine contructs HLV related operational specs for subdoc operation
-func ConstructSpecsFromHlvForSubdocOp(meta *CRMetadata, pruningWindow time.Duration, specs *base.SubdocMutationPathSpecs, targetHasPV, targetHasMv bool, pvSlice, mvSlice []byte) (bool, error) {
-	if meta == nil {
-		return false, fmt.Errorf("metadata cannot be nil")
-	}
-
-	var spec base.SubdocMutationPathSpec
-	var idx int
-	var err error
-
-	pruneFunc := base.GetHLVPruneFunction(meta.GetDocumentMetadata().Cas, pruningWindow)
-	HLV := meta.GetHLV()
-
-	// set cvCas as regenerated Cas from mc.SET/DELETE using macro expansion.
-	// MKDIR_P is not set, because we know for sure there exists cvCas on target since we used it for conflict resolution, otherwise there is something wrong
-	spec = base.NewSubdocMutationPathSpec(uint8(base.SUBDOC_DICT_UPSERT), uint8(base.SUBDOC_FLAG_XATTR|base.SUBDOC_FLAG_EXPAND_MACROS), []byte(XATTR_CVCAS_PATH), []byte(base.CAS_MACRO_EXPANSION))
-	*specs = append(*specs, spec)
-
-	// format CV
-	// src
-	srcVal := HLV.GetCvSrc()
-	src := []byte("\"" + string(srcVal) + "\"")
-	spec = base.NewSubdocMutationPathSpec(uint8(base.SUBDOC_DICT_UPSERT), uint8(base.SUBDOC_FLAG_MKDIR_P|base.SUBDOC_FLAG_XATTR), []byte(XATTR_SRC_PATH), src)
-	*specs = append(*specs, spec)
-
-	// ver should also be macro expanded cas and should not need MKDIR_P
-	spec = base.NewSubdocMutationPathSpec(uint8(base.SUBDOC_DICT_UPSERT), uint8(base.SUBDOC_FLAG_XATTR|base.SUBDOC_FLAG_EXPAND_MACROS), []byte(XATTR_VER_PATH), []byte(base.CAS_MACRO_EXPANSION))
-	*specs = append(*specs, spec)
-
-	// Format MV
-	mv := HLV.GetMV()
-	if len(mv) > 0 {
-		idx = 0
-		idx, _, err = VersionMapToDeltasBytes(mv, mvSlice, idx, nil)
-		if err != nil {
-			return false, err
-		}
-		spec = base.NewSubdocMutationPathSpec(uint8(base.SUBDOC_DICT_UPSERT), uint8(base.SUBDOC_FLAG_MKDIR_P|base.SUBDOC_FLAG_XATTR), []byte(XATTR_MV_PATH), mvSlice[:idx])
-		*specs = append(*specs, spec)
-	} else if targetHasMv {
-		// no mv left after processing - remove from target if mv already exists
-		spec = base.NewSubdocMutationPathSpec(uint8(base.SUBDOC_DELETE), uint8(base.SUBDOC_FLAG_XATTR), []byte(XATTR_MV_PATH), nil)
-		*specs = append(*specs, spec)
-	}
-
-	// Format PV, after pruning
-	pv := HLV.GetPV()
-	var pruned bool
-	if len(pv) > 0 {
-		idx = 0
-		afterKeyPos := idx
-		idx, pruned, err = VersionMapToDeltasBytes(pv, pvSlice, idx, &pruneFunc)
-		if err != nil {
-			return pruned, err
-		}
-		if idx == afterKeyPos {
-			// PV is all pruned - remove from target
-			if !targetHasPV {
-				// _vv doesn't exist on target or pv doesn't exist already, no need to remove
-				return pruned, nil
-			}
-			// pv exists on target, but the source mutation PV is all pruned, so delete the one on target.
-			spec = base.NewSubdocMutationPathSpec(uint8(base.SUBDOC_DELETE), uint8(base.SUBDOC_FLAG_XATTR), []byte(XATTR_PV_PATH), nil)
-			*specs = append(*specs, spec)
-		} else {
-			spec = base.NewSubdocMutationPathSpec(uint8(base.SUBDOC_DICT_UPSERT), uint8(base.SUBDOC_FLAG_MKDIR_P|base.SUBDOC_FLAG_XATTR), []byte(XATTR_PV_PATH), pvSlice[:idx])
-			*specs = append(*specs, spec)
-		}
-	} else if targetHasPV {
-		// no pv left after processing - remove from target if pv already exists
-		spec = base.NewSubdocMutationPathSpec(uint8(base.SUBDOC_DELETE), uint8(base.SUBDOC_FLAG_XATTR), []byte(XATTR_PV_PATH), nil)
-		*specs = append(*specs, spec)
-	}
-
-	return pruned, nil
+	return pos, pruned, nil
 }
 
 type ConflictParams struct {
@@ -1031,7 +968,9 @@ func getHlvFromMCResponse(lookupResp *base.SubdocLookupResponse) (cas, cvCas uin
 		}
 	}
 
-	// It is ok to not find _mou.importCAS or _mou.pRev, since we may not be getting it if enableCrossClusterVersioning is not on, or target is not an import mutation.
+	// It is ok to not find _mou.cas (importCas) or _mou.pRev,
+	// since we may not be getting it if enableCrossClusterVersioning is not on,
+	// or target is not an import mutation.
 	xattr, err1 = lookupResp.ResponseForAPath(XATTR_IMPORTCAS)
 	xattrLen := len(xattr)
 	if err1 == nil && xattrLen == base.MaxHexCASLength {
@@ -1084,7 +1023,7 @@ func GetImportCasAndPrevFromMou(mou []byte) (newMou []byte, atleastOneLeft bool,
 	return
 }
 
-// This will find the custom CR XATTR from the req body, including HLV and _importCas
+// This will find the custom CR XATTR from the req body, including HLV and importCas (_mou.cas)
 func getHlvFromMCRequest(wrappedReq *base.WrappedMCRequest, uncompressFunc base.UncompressFunc) (cas, cvCas uint64, cvSrc hlv.DocumentSourceId, cvVer uint64, pvMap, mvMap hlv.VersionsMap, importCas uint64, pRev uint64, err error) {
 
 	req := wrappedReq.Req

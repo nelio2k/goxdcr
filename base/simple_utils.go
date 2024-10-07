@@ -144,6 +144,14 @@ func GetVbListFromKvVbMap(kv_vb_map map[string][]uint16) []uint16 {
 	return vb_list
 }
 
+func CloneStringList(list []string) []string {
+	cloneList := make([]string, len(list))
+	for i, v := range list {
+		cloneList[i] = v
+	}
+	return cloneList
+}
+
 // type to facilitate the sorting of uint16 lists
 type Uint16List []uint16
 
@@ -359,8 +367,34 @@ func (s StringList) Len() int           { return len(s) }
 func (s StringList) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
 func (s StringList) Less(i, j int) bool { return s[i] < s[j] }
 
+func (s StringList) RemoveInstances(str string) StringList {
+	var replacementList StringList
+	for _, oneStr := range s {
+		if str == oneStr {
+			continue
+		}
+		replacementList = append(replacementList, oneStr)
+	}
+	return replacementList
+}
+
 // Not safe from concurrent access.
 // Caller has to make sure synchronisation is achieved, if necessary.
+func (s StringList) Search(str string, alreadySorted bool) (found bool) {
+	var listToSearch StringList
+	if !alreadySorted {
+		listToSearch = SortStringList(s)
+	} else {
+		listToSearch = s
+	}
+
+	searchIdx := sort.SearchStrings(listToSearch, str)
+	doesNotExist := searchIdx == len(listToSearch) || listToSearch[searchIdx] != str
+
+	found = !doesNotExist
+	return
+}
+
 func SortStringList(list []string) []string {
 	sort.Sort(StringList(list))
 	return list
@@ -887,15 +921,6 @@ func ShuffleVbList(list []uint16) {
 	}
 }
 
-func StringListContains(list []string, checkStr string) bool {
-	for _, str := range list {
-		if str == checkStr {
-			return true
-		}
-	}
-	return false
-}
-
 // Linearly combine two lists into one and also deduplicates duplicated entries, returns the result
 func StringListsDedupAndCombine(list1 []string, list2 []string) []string {
 	combineMap := make(map[string]bool)
@@ -1265,6 +1290,16 @@ func Uint64ToHexLittleEndian(u64 uint64) []byte {
 	binary.LittleEndian.PutUint64(le, u64)
 	encoded := make([]byte, hex.EncodedLen(8)+2)
 	hex.Encode(encoded[2:], le)
+	encoded[0] = '0'
+	encoded[1] = 'x'
+	return encoded
+}
+
+func Uint64ToHexBigEndian(u64 uint64) []byte {
+	be := make([]byte, 8)
+	binary.BigEndian.PutUint64(be, u64)
+	encoded := make([]byte, hex.EncodedLen(8)+2)
+	hex.Encode(encoded[2:], be)
 	encoded[0] = '0'
 	encoded[1] = 'x'
 	return encoded
@@ -1687,6 +1722,19 @@ func GetNumberOfVbs(kvVBMap map[string][]uint16) int {
 // check whether source byte array contains the same string as target string
 // this impl avoids converting byte array to string
 func Equals(source []byte, target string) bool {
+	if len(source) != len(target) {
+		return false
+	}
+	for i := 0; i < len(target); i++ {
+		if target[i] != source[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// checks whether two byte slices are equal in content
+func EqualBytes(source []byte, target []byte) bool {
 	if len(source) != len(target) {
 		return false
 	}

@@ -64,6 +64,7 @@ const CollectionsManifestPath = "/scopes"
 const ScopesPath = "/scopes/"
 const CollectionsPath = "/collections/"
 const ClientCertAuthPath = "/settings/clientCertAuth"
+const TerseClusterInfoPath = "/pools/default/terseClusterInfo"
 
 // Streaming API paths. They are used for source clusters only
 const ObservePoolPath = "/poolsStreaming/default"
@@ -86,6 +87,7 @@ const WhoAmIPath = "/whoami"
 // keys used in parsing cluster info
 var NodesKey = "nodes"
 var HostNameKey = "hostname"
+var ClusterNameKey = "clusterName"
 var ThisNodeKey = "thisNode"
 var SSLPortKey = "httpsMgmt"
 var SSLMgtPortKey = "mgmtSSL"
@@ -117,6 +119,8 @@ var DeveloperPreviewKey = "isDeveloperPreview"
 var StatusKey = "status"
 var NumberOfReplicas = "numReplicas"
 var StorageBackendKey = "storageBackend"
+var OrchestratorNodeKey = "orchestrator"
+var OtpNodeKey = "otpNode"
 
 // Value for StorageBackendKey
 var Magma = "magma"
@@ -715,6 +719,7 @@ var VersionForClientCertSupport = ServerVersion{5, 5}
 var VersionForHttpScramShaSupport = ServerVersion{5, 5}
 var VersionForCollectionSupport = ServerVersion{7, 0}
 var VersionForAdvErrorMapSupport = ServerVersion{7, 5}
+var VersionForHeartbeatSupport = ServerVersion{8, 0}
 
 // ns_server and support would like to start seeing 3 digits for versions
 var VersionForAdvFilteringSupport = ServerVersion{6, 5, 0}
@@ -727,6 +732,7 @@ var VersionForSupportability = ServerVersion{7, 6, 0}
 var VersionForP2PManifestSharing = ServerVersion{7, 6, 0}
 var VersionForMobileSupport = ServerVersion{7, 6, 4}
 var VersionForCasPoisonDetection = ServerVersion{8, 0, 0}
+var VersionForSrcHeartbeatSupport = ServerVersion{8, 0, 0}
 
 func (s ServerVersion) String() string {
 	builder := strings.Builder{}
@@ -915,6 +921,9 @@ var CapiDataChanSizeMultiplier = 1
 
 // interval for refreshing remote cluster references
 var RefreshRemoteClusterRefInterval = 15 * time.Second
+
+// interval for potentially posting heartbeats
+var RemoteHeartbeatCheckInterval = 60 * time.Second
 
 // max retry for capi batchUpdateDocs operation
 var CapiMaxRetryBatchUpdateDocs = 6
@@ -1292,7 +1301,8 @@ func InitConstants(topologyChangeCheckInterval time.Duration, maxTopologyChangeC
 	P2PRetryWaitTimeMilliSec time.Duration,
 	p2pManifestsGetterSleepTimeSecs int, p2pManifestsGetterMaxRetry int,
 	datapoolLogFrequency int, capellaHostNameSuffix string,
-	nwLatencyToleranceMilliSec time.Duration, casPoisoningPreCheckEnabled int) {
+	nwLatencyToleranceMilliSec time.Duration, casPoisoningPreCheckEnabled int,
+	srcHeartbeatExpiration time.Duration, srcHeartbeatCooldownSecs time.Duration) {
 	TopologyChangeCheckInterval = topologyChangeCheckInterval
 	MaxTopologyChangeCountBeforeRestart = maxTopologyChangeCountBeforeRestart
 	MaxTopologyStableCountBeforeRestart = maxTopologyStableCountBeforeRestart
@@ -1451,6 +1461,8 @@ func InitConstants(topologyChangeCheckInterval time.Duration, maxTopologyChangeC
 	CapellaHostnameSuffix = capellaHostNameSuffix
 	NWLatencyToleranceMilliSec = nwLatencyToleranceMilliSec
 	CasPoisoningPreCheckEnabled = casPoisoningPreCheckEnabled
+	SrcHeartbeatExpirationTimeout = srcHeartbeatExpiration
+	SrcHeartbeatCooldownPeriod = srcHeartbeatCooldownSecs
 }
 
 // XDCR Dev hidden replication settings
@@ -1530,7 +1542,7 @@ var (
 // Required for conflict resolution
 const (
 	PERIOD      = "."
-	IMPORTCAS   = "importCAS"
+	IMPORTCAS   = "cas"
 	PREVIOUSREV = "pRev"
 
 	// This is for subdoc set operation
@@ -1668,17 +1680,19 @@ const FilterBinaryDocs = "filterBinary"
 type ConnPreChkMsgType int
 
 const (
-	ConnPreChkIsCompatibleVersion       ConnPreChkMsgType = iota
-	ConnPreChkIsIntraClusterReplication ConnPreChkMsgType = iota
-	ConnPreChkSendingRequest            ConnPreChkMsgType = iota
-	ConnPreChkResponseWait              ConnPreChkMsgType = iota
-	ConnPreChkResponseObtained          ConnPreChkMsgType = iota
-	ConnPreChkP2PSuccessful             ConnPreChkMsgType = iota
-	ConnPreChkSuccessful                ConnPreChkMsgType = iota
+	ConnPreChkIsCompatibleVersion ConnPreChkMsgType = iota
+	ConnPreChkUnableToFetchUUID
+	ConnPreChkIsIntraClusterReplication
+	ConnPreChkSendingRequest
+	ConnPreChkResponseWait
+	ConnPreChkResponseObtained
+	ConnPreChkP2PSuccessful
+	ConnPreChkSuccessful
 )
 
 var ConnectionPreCheckMsgs = map[ConnPreChkMsgType]string{
 	ConnPreChkIsCompatibleVersion:       "This version of some or all the nodes doesn't support the connection pre-check",
+	ConnPreChkUnableToFetchUUID:         "Unable to fetch source cluster's UUID",
 	ConnPreChkIsIntraClusterReplication: "Intra-cluster replication detected, skipping connection pre-check",
 	ConnPreChkSendingRequest:            "Sending requests to the peer",
 	ConnPreChkResponseWait:              "P2PSend was successful, waiting for the node's response",
@@ -1804,3 +1818,8 @@ const (
 	StateKey                       = "state"
 	MandatoryVal                   = "mandatory"
 )
+
+var SrcHeartbeatExpirationTimeout = 5 * time.Minute
+var SrcHeartbeatCooldownPeriod = 60 * time.Second
+
+const XDCRSourceClustersPath = XDCRPrefix + "/sourceClusters"

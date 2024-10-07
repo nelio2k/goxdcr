@@ -750,6 +750,16 @@ type WrappedMCRequest struct {
 	MouAfterProcessing []byte
 }
 
+// Set options to replicate using HLV.
+func (req *WrappedMCRequest) SetHLVModeOptions(isMobile, isCCR, crossClusterVersioning bool) {
+	if isMobile {
+		req.HLVModeOptions.PreserveSync = true
+	}
+	if crossClusterVersioning || isCCR {
+		req.HLVModeOptions.SendHlv = true
+	}
+}
+
 // set the intent to use subdoc command
 func (req *WrappedMCRequest) SetSubdocOp() {
 	if req == nil {
@@ -907,7 +917,7 @@ func (req *WrappedMCRequest) IsCasLockingRequest() bool {
 	if req.Req.Opcode == ADD_WITH_META && req.Req.Cas == 0 {
 		return true
 	}
-	if req.Req.Opcode == SET_WITH_META && req.Req.Cas != 0 {
+	if (req.Req.Opcode == SET_WITH_META || req.Req.Opcode == DELETE_WITH_META) && req.Req.Cas != 0 {
 		return true
 	}
 	if req.IsSubdocOp() {
@@ -1900,8 +1910,8 @@ func (xfi *ArrayXattrFieldIterator) Next() (value []byte, err error) {
 		sep = bytes.Index(xfi.xattr[begin:], []byte{']'})
 	}
 	end := begin + sep - 1
-	if sep == -1 || (xfi.xattr[begin] != '"' || xfi.xattr[end] != '"') &&
-		(xfi.xattr[begin] != '{' || xfi.xattr[end] != '}') {
+	if sep == -1 || ((xfi.xattr[begin] != '"' || xfi.xattr[end] != '"') &&
+		(xfi.xattr[begin] != '{' || xfi.xattr[end] != '}')) {
 		err = fmt.Errorf("array XATTR %s invalid format at pos=%v, char '%c', end=%v", xfi.xattr, xfi.pos, xfi.xattr[xfi.pos], end)
 		return
 	}
@@ -1913,9 +1923,10 @@ func (xfi *ArrayXattrFieldIterator) Next() (value []byte, err error) {
 type SubdocSpecOption struct {
 	IncludeHlv        bool // Get target HLV only for CCR
 	IncludeMobileSync bool // Get target _sync if we need to preserve target _sync
-	IncludeImportCas  bool // Include target importCas if enableCrossClusterVersioning.
+	IncludeImportCas  bool // Include target importCas (_mou.cas) if enableCrossClusterVersioning if enabled and cas >= max_cas.
 	IncludeBody       bool // Get the target body for merge
 	IncludeVXattr     bool // Get the target document metadata as Virtual so we can perform CR and format target HLV
+	IncludeXTOC       bool // Get xattr table of content (all xattr keys)
 }
 
 func ComposeSpecForSubdocGet(option SubdocSpecOption) (specs []SubdocLookupPathSpec) {
@@ -1969,6 +1980,11 @@ func ComposeSpecForSubdocGet(option SubdocSpecOption) (specs []SubdocLookupPathS
 		specs = append(specs, spec)
 
 		spec = SubdocLookupPathSpec{gomemcached.SUBDOC_GET, gomemcached.SUBDOC_FLAG_XATTR_PATH, []byte(XATTR_PREVIOUSREV)}
+		specs = append(specs, spec)
+	}
+	if option.IncludeXTOC {
+		// $document.XTOC
+		spec := SubdocLookupPathSpec{gomemcached.SUBDOC_GET, gomemcached.SUBDOC_FLAG_XATTR_PATH, []byte(XattributeToc)}
 		specs = append(specs, spec)
 	}
 	if option.IncludeBody {
@@ -2969,6 +2985,7 @@ func ComposeRequestForSubdocMutation(specs []SubdocMutationPathSpec, source *mc.
 	// Each path has: 1B Opcode -> 1B flag -> 2B path length -> 4B value length -> path -> value
 	pos := 0
 	n := 0
+
 	for i := 0; i < len(specs); i++ {
 		if targetDocIsTombstone {
 			if specs[i].Opcode == uint8(mc.DELETE) {
@@ -3000,15 +3017,17 @@ func ComposeRequestForSubdocMutation(specs []SubdocMutationPathSpec, source *mc.
 		pos = pos + n
 	}
 
-	var extras []byte
 	cas := targetCas
 
-	// Set expiry
+	var expiry []byte // document expiry value
+	var flags uint8   // subdoc command doc level flags
+	var extrasLen int
+
 	if len(source.Extras) >= 8 && binary.BigEndian.Uint32(source.Extras[4:8]) != 0 {
-		extras = source.Extras[4:8]
+		expiry = source.Extras[4:8]
+		extrasLen += len(expiry)
 	}
 
-	var flags uint8 = 0
 	if targetDocIsTombstone {
 		if !sourceDocIsTombstone {
 			// The subdoc command will follow the ADD semantics i.e.
@@ -3023,10 +3042,26 @@ func ComposeRequestForSubdocMutation(specs []SubdocMutationPathSpec, source *mc.
 			flags |= mc.SUBDOC_FLAG_ACCESS_DELETED
 		}
 	}
-
-	// Set Flags
 	if flags != 0 {
-		extras = append(extras, flags)
+		extrasLen += 1
+	}
+
+	// extras for the command can be:
+	// 1. len=0 => no flags, no expiry
+	// 2. len=1 => only flags
+	// 3. len=4 => only expiry
+	// 4. len=5 => both flags and expiry.
+	extras := make([]byte, 0, extrasLen)
+	if extrasLen != 0 {
+		// Set expiry
+		if len(expiry) != 0 {
+			extras = append(extras, expiry...)
+		}
+
+		// Set flags
+		if flags != 0 {
+			extras = append(extras, flags)
+		}
 	}
 
 	if reuseReq {
@@ -3054,3 +3089,101 @@ func ComposeRequestForSubdocMutation(specs []SubdocMutationPathSpec, source *mc.
 }
 
 type ExternalMgmtHostAndPortGetter func(map[string]interface{}, bool) (string, int, error)
+
+type XTOCIterator struct {
+	xtoc     []byte
+	endPos   int
+	pos      int
+	hasItems bool
+}
+
+func NewXTOCIterator(xtoc []byte) (*XTOCIterator, error) {
+	length := len(xtoc)
+	if length == 0 {
+		return &XTOCIterator{hasItems: false}, nil
+	}
+
+	startPos := -1
+	endPos := -1
+
+	for i := 0; i < length; i++ {
+		if xtoc[i] == '"' {
+			startPos = i
+			break
+		}
+	}
+
+	for i := length - 1; i >= 0; i-- {
+		if xtoc[i] == '"' {
+			endPos = i
+			break
+		}
+	}
+
+	if startPos == -1 || endPos == -1 {
+		// could be empty list i.e. []
+		return &XTOCIterator{hasItems: false}, nil
+	}
+
+	return &XTOCIterator{
+		xtoc:     xtoc,
+		pos:      startPos,
+		endPos:   endPos,
+		hasItems: !Equals(xtoc, EmptyJsonArray),
+	}, nil
+}
+
+func (xti *XTOCIterator) HasNext() bool {
+	return xti.hasItems && xti.pos <= xti.endPos
+}
+
+// Expected input format is: ["string","escaped,\"string"]
+// returns `string` and `escaped,\"string`
+func (xti *XTOCIterator) Next() (value []byte, err error) {
+	begin := xti.pos
+	startQuote := -1
+	endQuote := -1
+	for i := begin; i < len(xti.xtoc); i++ {
+		if xti.xtoc[i] == '"' && i-1 >= 0 && xti.xtoc[i-1] != '\\' {
+			if startQuote == -1 {
+				startQuote = i
+			} else {
+				endQuote = i
+				break
+			}
+		}
+	}
+
+	if startQuote == -1 || endQuote == -1 || endQuote-startQuote+1 <= 2 {
+		err = fmt.Errorf("XTOC %s invalid format at pos=%v, char '%c', start=%v, end=%v",
+			xti.xtoc, xti.pos, xti.xtoc[xti.pos], startQuote, endQuote)
+		return
+	}
+
+	xti.pos = endQuote + 1
+
+	return xti.xtoc[startQuote+1 : endQuote], nil
+}
+
+func (xi *XTOCIterator) Len() (int, error) {
+	var len int
+	pos := xi.pos
+	defer func() {
+		xi.pos = pos
+	}()
+
+	l, err := NewXTOCIterator(xi.xtoc)
+	if err != nil {
+		return 0, err
+	}
+
+	for l.HasNext() {
+		_, err := l.Next()
+		if err != nil {
+			return len, err
+		}
+		len++
+	}
+
+	return len, nil
+}

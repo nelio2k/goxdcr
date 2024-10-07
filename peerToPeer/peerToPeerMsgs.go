@@ -38,6 +38,7 @@ const (
 	ReqReplSpecManifests  OpCode = iota
 	ReqManualBackfill     OpCode = iota
 	ReqDeleteBackfill     OpCode = iota
+	ReqSrcHeartbeat       OpCode = iota
 	ReqMaxInvalid         OpCode = iota
 )
 
@@ -57,6 +58,8 @@ func (o OpCode) String() string {
 		return "ReqManualBackfill"
 	case ReqDeleteBackfill:
 		return "ReqDeleteBackfill"
+	case ReqSrcHeartbeat:
+		return "ReqSrcHeartbeat"
 	default:
 		return "?? (InvalidRequest)"
 	}
@@ -77,6 +80,8 @@ func (o OpCode) IsInterruptable() bool {
 	case ReqManualBackfill:
 		return false
 	case ReqDeleteBackfill:
+		return false
+	case ReqSrcHeartbeat:
 		return false
 	default:
 		return false
@@ -499,6 +504,23 @@ func generateRequest(utils utilities.UtilsIface, reqCommon RequestCommon, body [
 		}
 		reqDelBackfill.RequestCommon = reqCommon
 		return reqDelBackfill, err
+	case ReqSrcHeartbeat:
+		reqHeartbeat := &SourceHeartbeatReq{}
+		err = reqHeartbeat.DeSerialize(body)
+		if err != nil {
+			err = fmt.Errorf("SourceHeartbeatReq deSerialize err: %v", err)
+		}
+		reqHeartbeat.RequestCommon = reqCommon
+		// When a source node sends a heartbeat, this node is not expected to be able to
+		// contact back to the source node because it may not have the credentials
+		// The source node can send to here because it has a remote cluster reference
+		// But this node does not have a "source cluster reference"
+		// In the future, we could look at if bi-directional replication can do something about
+		// it. But in the meantime, it's best to just not do any proper response
+		reqCommon.responseCb = func(resp Response) (HandlerResult, error) {
+			return &HandlerResultImpl{Err: base.ErrorNotSupported, HttpStatusCode: http.StatusNotImplemented}, base.ErrorNotSupported
+		}
+		return reqHeartbeat, err
 	default:
 		return nil, fmt.Errorf("Unknown request %v", reqCommon.ReqType)
 	}
@@ -2092,4 +2114,143 @@ func (b *BackfillDelResponse) Serialize() ([]byte, error) {
 
 func (b *BackfillDelResponse) DeSerialize(stream []byte) error {
 	return json.Unmarshal(stream, b)
+}
+
+type SourceHeartbeatReq struct {
+	RequestCommon
+
+	SourceClusterUUID string
+	SourceClusterName string
+	NodesList         []string
+	ProxyMode         bool // ProxyMode is set when the receiver node needs to forward the request to its peers
+
+	specs []*metadata.ReplicationSpecification // Use this but not meant for over the wire
+
+	SpecsCompressed []byte // No need to touch as this is populated as part of Serialize
+}
+
+func NewSourceHeartbeatReq(common RequestCommon) *SourceHeartbeatReq {
+	req := &SourceHeartbeatReq{
+		RequestCommon: common,
+		ProxyMode:     true,
+	}
+	req.ReqType = ReqSrcHeartbeat
+	return req
+}
+
+func (s *SourceHeartbeatReq) LoadInfoFrom(orig *SourceHeartbeatReq) *SourceHeartbeatReq {
+	s.SourceClusterUUID = orig.SourceClusterUUID
+	s.SourceClusterName = orig.SourceClusterName
+	s.specs = orig.specs
+	s.NodesList = orig.NodesList
+	s.ProxyMode = orig.ProxyMode
+	return s
+}
+
+func (s *SourceHeartbeatReq) AppendSpec(spec *metadata.ReplicationSpecification) {
+	s.specs = append(s.specs, spec)
+}
+
+func (s *SourceHeartbeatReq) SetUUID(uuid string) *SourceHeartbeatReq {
+	s.SourceClusterUUID = uuid
+	return s
+}
+
+func (s *SourceHeartbeatReq) SetClusterName(name string) *SourceHeartbeatReq {
+	s.SourceClusterName = name
+	return s
+}
+
+func (s *SourceHeartbeatReq) DisableProxyMode() *SourceHeartbeatReq {
+	s.ProxyMode = false
+	return s
+}
+
+func (s *SourceHeartbeatReq) SetNodesList(nodesList []string) *SourceHeartbeatReq {
+	s.NodesList = nodesList
+	return s
+}
+
+func (s *SourceHeartbeatReq) Serialize() ([]byte, error) {
+	specsPayload, err := json.Marshal(s.specs)
+	if err != nil {
+		return nil, err
+	}
+	s.SpecsCompressed = snappy.Encode(nil, specsPayload)
+
+	return json.Marshal(s)
+}
+
+func (s *SourceHeartbeatReq) DeSerialize(stream []byte) error {
+	if err := json.Unmarshal(stream, s); err != nil {
+		return err
+	}
+
+	specsPayload, err := snappy.Decode(nil, s.SpecsCompressed)
+	if err != nil {
+		return err
+	}
+
+	if err = json.Unmarshal(specsPayload, &s.specs); err != nil {
+		return err
+	}
+
+	for _, spec := range s.specs {
+		spec.Settings.PostProcessAfterUnmarshalling()
+	}
+
+	return nil
+}
+
+func (s *SourceHeartbeatReq) SameAs(otherRaw interface{}) (bool, error) {
+	other, ok := otherRaw.(*SourceHeartbeatReq)
+	if !ok {
+		return false, getWrongTypeErr("*SourceHeartbeatReq", otherRaw)
+	}
+
+	// Ignore compressed payload because it's mostly used for serialization
+
+	if s.SourceClusterUUID != other.SourceClusterUUID ||
+		s.SourceClusterName != other.SourceClusterName ||
+		len(s.NodesList) != len(other.NodesList) ||
+		len(s.specs) != len(other.specs) {
+		return false, nil
+	}
+
+	for i, node := range s.NodesList {
+		if other.NodesList[i] != node {
+			return false, nil
+		}
+	}
+
+	for i, spec := range s.specs {
+		if !spec.SameSpec(other.specs[i]) {
+			return false, nil
+		}
+	}
+
+	return s.RequestCommon.SameAs(&other.RequestCommon)
+}
+
+func (s *SourceHeartbeatReq) GenerateResponse() interface{} {
+	common := NewResponseCommon(s.ReqType, s.RemoteLifeCycleId, s.LocalLifeCycleId, s.Opaque, s.TargetAddr)
+	common.RespType = s.ReqType
+	resp := &SourceHeartbeatResp{
+		ResponseCommon: common,
+	}
+	return resp
+}
+
+type SourceHeartbeatResp struct {
+	ResponseCommon
+
+	TargetClusterUUID string
+}
+
+func (s *SourceHeartbeatResp) Serialize() ([]byte, error) {
+	return json.Marshal(s)
+}
+
+func (s *SourceHeartbeatResp) DeSerialize(stream []byte) error {
+	return json.Unmarshal(stream, s)
 }

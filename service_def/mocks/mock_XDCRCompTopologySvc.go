@@ -455,6 +455,61 @@ func (_c *XDCRCompTopologySvc_IsMyClusterIpv6_Call) RunAndReturn(run func() bool
 	return _c
 }
 
+// IsOrchestratorNode provides a mock function with given fields:
+func (_m *XDCRCompTopologySvc) IsOrchestratorNode() (bool, error) {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for IsOrchestratorNode")
+	}
+
+	var r0 bool
+	var r1 error
+	if rf, ok := ret.Get(0).(func() (bool, error)); ok {
+		return rf()
+	}
+	if rf, ok := ret.Get(0).(func() bool); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Get(0).(bool)
+	}
+
+	if rf, ok := ret.Get(1).(func() error); ok {
+		r1 = rf()
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// XDCRCompTopologySvc_IsOrchestratorNode_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'IsOrchestratorNode'
+type XDCRCompTopologySvc_IsOrchestratorNode_Call struct {
+	*mock.Call
+}
+
+// IsOrchestratorNode is a helper method to define mock.On call
+func (_e *XDCRCompTopologySvc_Expecter) IsOrchestratorNode() *XDCRCompTopologySvc_IsOrchestratorNode_Call {
+	return &XDCRCompTopologySvc_IsOrchestratorNode_Call{Call: _e.mock.On("IsOrchestratorNode")}
+}
+
+func (_c *XDCRCompTopologySvc_IsOrchestratorNode_Call) Run(run func()) *XDCRCompTopologySvc_IsOrchestratorNode_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *XDCRCompTopologySvc_IsOrchestratorNode_Call) Return(_a0 bool, _a1 error) *XDCRCompTopologySvc_IsOrchestratorNode_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *XDCRCompTopologySvc_IsOrchestratorNode_Call) RunAndReturn(run func() (bool, error)) *XDCRCompTopologySvc_IsOrchestratorNode_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // MyAdminPort provides a mock function with given fields:
 func (_m *XDCRCompTopologySvc) MyAdminPort() (uint16, error) {
 	ret := _m.Called()
@@ -565,12 +620,12 @@ func (_c *XDCRCompTopologySvc_MyClusterCompatibility_Call) RunAndReturn(run func
 	return _c
 }
 
-// MyClusterUuid provides a mock function with given fields:
-func (_m *XDCRCompTopologySvc) MyClusterUuid() (string, error) {
+// MyClusterName provides a mock function with given fields:
+func (_m *XDCRCompTopologySvc) MyClusterName() (string, error) {
 	ret := _m.Called()
 
 	if len(ret) == 0 {
-		panic("no return value specified for MyClusterUuid")
+		panic("no return value specified for MyClusterName")
 	}
 
 	var r0 string
@@ -593,29 +648,84 @@ func (_m *XDCRCompTopologySvc) MyClusterUuid() (string, error) {
 	return r0, r1
 }
 
-// XDCRCompTopologySvc_MyClusterUuid_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'MyClusterUuid'
-type XDCRCompTopologySvc_MyClusterUuid_Call struct {
+// XDCRCompTopologySvc_MyClusterName_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'MyClusterName'
+type XDCRCompTopologySvc_MyClusterName_Call struct {
 	*mock.Call
 }
 
-// MyClusterUuid is a helper method to define mock.On call
-func (_e *XDCRCompTopologySvc_Expecter) MyClusterUuid() *XDCRCompTopologySvc_MyClusterUuid_Call {
-	return &XDCRCompTopologySvc_MyClusterUuid_Call{Call: _e.mock.On("MyClusterUuid")}
+// MyClusterName is a helper method to define mock.On call
+func (_e *XDCRCompTopologySvc_Expecter) MyClusterName() *XDCRCompTopologySvc_MyClusterName_Call {
+	return &XDCRCompTopologySvc_MyClusterName_Call{Call: _e.mock.On("MyClusterName")}
 }
 
-func (_c *XDCRCompTopologySvc_MyClusterUuid_Call) Run(run func()) *XDCRCompTopologySvc_MyClusterUuid_Call {
+func (_c *XDCRCompTopologySvc_MyClusterName_Call) Run(run func()) *XDCRCompTopologySvc_MyClusterName_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		run()
 	})
 	return _c
 }
 
-func (_c *XDCRCompTopologySvc_MyClusterUuid_Call) Return(_a0 string, _a1 error) *XDCRCompTopologySvc_MyClusterUuid_Call {
+func (_c *XDCRCompTopologySvc_MyClusterName_Call) Return(_a0 string, _a1 error) *XDCRCompTopologySvc_MyClusterName_Call {
 	_c.Call.Return(_a0, _a1)
 	return _c
 }
 
-func (_c *XDCRCompTopologySvc_MyClusterUuid_Call) RunAndReturn(run func() (string, error)) *XDCRCompTopologySvc_MyClusterUuid_Call {
+func (_c *XDCRCompTopologySvc_MyClusterName_Call) RunAndReturn(run func() (string, error)) *XDCRCompTopologySvc_MyClusterName_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// MyClusterUUID provides a mock function with given fields:
+func (_m *XDCRCompTopologySvc) MyClusterUUID() (string, error) {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for MyClusterUUID")
+	}
+
+	var r0 string
+	var r1 error
+	if rf, ok := ret.Get(0).(func() (string, error)); ok {
+		return rf()
+	}
+	if rf, ok := ret.Get(0).(func() string); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Get(0).(string)
+	}
+
+	if rf, ok := ret.Get(1).(func() error); ok {
+		r1 = rf()
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// XDCRCompTopologySvc_MyClusterUUID_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'MyClusterUUID'
+type XDCRCompTopologySvc_MyClusterUUID_Call struct {
+	*mock.Call
+}
+
+// MyClusterUUID is a helper method to define mock.On call
+func (_e *XDCRCompTopologySvc_Expecter) MyClusterUUID() *XDCRCompTopologySvc_MyClusterUUID_Call {
+	return &XDCRCompTopologySvc_MyClusterUUID_Call{Call: _e.mock.On("MyClusterUUID")}
+}
+
+func (_c *XDCRCompTopologySvc_MyClusterUUID_Call) Run(run func()) *XDCRCompTopologySvc_MyClusterUUID_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *XDCRCompTopologySvc_MyClusterUUID_Call) Return(_a0 string, _a1 error) *XDCRCompTopologySvc_MyClusterUUID_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *XDCRCompTopologySvc_MyClusterUUID_Call) RunAndReturn(run func() (string, error)) *XDCRCompTopologySvc_MyClusterUUID_Call {
 	_c.Call.Return(run)
 	return _c
 }

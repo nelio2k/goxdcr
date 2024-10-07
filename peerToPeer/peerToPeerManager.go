@@ -36,6 +36,7 @@ var ErrorPreCheckP2PSendFailure error = fmt.Errorf("Could not send request to pe
 type P2PManager interface {
 	VBMasterCheck
 	ConnectionPreCheck
+	service_def.ClusterHeartbeatAPI
 
 	Start() (PeerToPeerCommAPI, error)
 	Stop() error
@@ -83,6 +84,7 @@ type P2PManagerImpl struct {
 	backfillReplSvc   service_def.BackfillReplSvc
 	securitySvc       service_def.SecuritySvc
 	backfillMgrSvc    func() service_def.BackfillMgrIface
+	remoteClusterSvc  service_def.RemoteClusterSvc
 
 	lifeCycleId string
 	logger      *log.CommonLogger
@@ -109,7 +111,7 @@ type P2PManagerImpl struct {
 	pushReqMerger func(string, string, interface{}) error
 }
 
-func NewPeerToPeerMgr(loggerCtx *log.LoggerContext, xdcrCompTopologySvc service_def.XDCRCompTopologySvc, utilsIn utils.UtilsIface, bucketTopologySvc service_def.BucketTopologySvc, replicationSpecSvc service_def.ReplicationSpecSvc, cleanupInt time.Duration, ckptSvc service_def.CheckpointsService, colManifestSvc service_def.CollectionsManifestSvc, backfillReplSvc service_def.BackfillReplSvc, securitySvc service_def.SecuritySvc, backfillMgr func() service_def.BackfillMgrIface) (*P2PManagerImpl, error) {
+func NewPeerToPeerMgr(loggerCtx *log.LoggerContext, xdcrCompTopologySvc service_def.XDCRCompTopologySvc, utilsIn utils.UtilsIface, bucketTopologySvc service_def.BucketTopologySvc, replicationSpecSvc service_def.ReplicationSpecSvc, cleanupInt time.Duration, ckptSvc service_def.CheckpointsService, colManifestSvc service_def.CollectionsManifestSvc, backfillReplSvc service_def.BackfillReplSvc, securitySvc service_def.SecuritySvc, backfillMgr func() service_def.BackfillMgrIface, remoteClusterSvc service_def.RemoteClusterSvc) (*P2PManagerImpl, error) {
 	randId, err := base.GenerateRandomId(randIdLen, 100)
 	if err != nil {
 		return nil, err
@@ -136,6 +138,7 @@ func NewPeerToPeerMgr(loggerCtx *log.LoggerContext, xdcrCompTopologySvc service_
 		securitySvc:         securitySvc,
 		replicatorInitCh:    make(chan bool, 1),
 		backfillMgrSvc:      backfillMgr,
+		remoteClusterSvc:    remoteClusterSvc,
 	}, nil
 }
 
@@ -146,6 +149,8 @@ func initReceiveChsMap() map[OpCode][]chan interface{} {
 
 func (p *P2PManagerImpl) Start() (PeerToPeerCommAPI, error) {
 	if atomic.CompareAndSwapUint32(&p.started, 0, 1) {
+		p.remoteClusterSvc.SetHeartbeatSenderAPI(p)
+
 		p.waitForMergerToBeSet()
 		err := p.runHandlers()
 		if err != nil {
@@ -215,6 +220,11 @@ func (p *P2PManagerImpl) runHandlers() error {
 				p.receiveChsMap[i] = append(p.receiveChsMap[i], make(chan interface{}, base.MaxP2PReceiveChLen/int(InvalidType)))
 			}
 			p.receiveHandlers[i] = NewBackfillDelHandler(p.receiveChsMap[i], p.logger, p.lifeCycleId, p.cleanupInterval, p.replSpecSvc, p.backfillMgrSvc)
+		case ReqSrcHeartbeat:
+			for j := RequestType; j < InvalidType; j++ {
+				p.receiveChsMap[i] = append(p.receiveChsMap[i], make(chan interface{}, base.MaxP2PReceiveChLen/int(InvalidType)))
+			}
+			p.receiveHandlers[i] = NewSrcHeartbeatHandler(p.receiveChsMap[i], p.logger, p.lifeCycleId, p.cleanupInterval, p.replSpecSvc, p.xdcrCompSvc, p.sendToEachPeerOnce, p.GetLifecycleId)
 		default:
 			return fmt.Errorf(fmt.Sprintf("Unknown opcode %v", i))
 		}
@@ -278,10 +288,21 @@ func (p *P2PManagerImpl) getSendPreReq() ([]string, string, error) {
 	return peers, myHostAddr, nil
 }
 
+type sendPeerOnceFunc func(opCode OpCode, getReqFunc GetReqFunc, cbOpts *SendOpts) (error, map[string]bool)
+
 func (p *P2PManagerImpl) sendToEachPeerOnce(opCode OpCode, getReqFunc GetReqFunc, cbOpts *SendOpts) (error, map[string]bool) {
 	peers, myHost, err := p.getSendPreReq()
 	if err != nil {
 		return err, nil
+	}
+
+	if cbOpts != nil && cbOpts.remoteClusterRef != nil {
+		// override "peers" to mean "target reference"
+		peerAddr, err := cbOpts.remoteClusterRef.MyConnectionStr()
+		if err != nil {
+			return err, nil
+		}
+		peers = []string{peerAddr}
 	}
 
 	peersToRetry := make(map[string]bool)
@@ -327,11 +348,16 @@ func (p *P2PManagerImpl) handlePreCheckP2PSendSuccess(taskId string, src string,
 }
 
 func (p *P2PManagerImpl) sendToSpecifiedPeersOnce(opCode OpCode, getReqFunc GetReqFunc, cbOpts *SendOpts, peersToRetryOrig map[string]bool, myHost string) (error, map[string]bool) {
-	successOpaqueMap := make(map[string]*uint32)
 	peersToRetry := make(map[string]bool)
+	if len(peersToRetryOrig) == 0 {
+		p.logger.Debugf("No peer nodes provided, skipping send of %v request", opCode.String())
+		return nil, peersToRetry
+	}
+
 	for k, v := range peersToRetryOrig {
 		peersToRetry[k] = v
 	}
+	successOpaqueMap := make(map[string]*uint32)
 
 	retryOp := func() error {
 		peersToRetryReplacement := make(map[string]bool)
@@ -370,7 +396,13 @@ func (p *P2PManagerImpl) sendToSpecifiedPeersOnce(opCode OpCode, getReqFunc GetR
 					return
 				}
 
-				handlerResult, p2pSendErr := p.commAPI.P2PSend(compiledReq, p.logger)
+				var handlerResult HandlerResult
+				var p2pSendErr error
+				if cbOpts.remoteClusterRef == nil {
+					handlerResult, p2pSendErr = p.commAPI.P2PSend(compiledReq, p.logger)
+				} else {
+					handlerResult, p2pSendErr = p.commAPI.P2PRemoteSend(compiledReq, cbOpts.remoteClusterRef, p.logger)
+				}
 
 				if p2pSendErr != nil {
 					p.logger.Errorf("P2PSend resulted in %v", p2pSendErr)
@@ -396,6 +428,13 @@ func (p *P2PManagerImpl) sendToSpecifiedPeersOnce(opCode OpCode, getReqFunc GetR
 					peersToRetryReplacement[peerAddr] = true
 					peersToRetryMtx.Unlock()
 					// If unable to send properly, there is no reason to hear back from an opaque
+					p.receiveHandlersMtx.RLock()
+					p.receiveHandlers[opCode].GetReqAndClearOpaque(compiledReq.GetOpaque())
+					p.receiveHandlersMtx.RUnlock()
+				} else if cbOpts.remoteClusterRef != nil {
+					// If we are sending to a remote cluster, the remote cluster won't be able
+					// to directly reply back to us because they do not have response back capability since they are not
+					// in the same cluster
 					p.receiveHandlersMtx.RLock()
 					p.receiveHandlers[opCode].GetReqAndClearOpaque(compiledReq.GetOpaque())
 					p.receiveHandlersMtx.RUnlock()
@@ -461,6 +500,8 @@ type SendOpts struct {
 	respMap    SendOptsMap // If synchronous, then the sent requests and responses are stored
 
 	maxRetry int
+
+	remoteClusterRef *metadata.RemoteClusterReference // non-nil if we plan to send to a remote cluster's XDCR
 }
 
 type SendOptsMap map[string]chan ReqRespPair
@@ -477,6 +518,11 @@ func NewSendOpts(sync bool, timeout time.Duration, maxRetry int) *SendOpts {
 		newOpt.finCh = make(chan bool)
 	}
 	return newOpt
+}
+
+func (s *SendOpts) SetRemoteClusterRef(ref *metadata.RemoteClusterReference) *SendOpts {
+	s.remoteClusterRef = ref
+	return s
 }
 
 func (s *SendOpts) GetSentTime(key string) (time.Time, error) {
@@ -896,16 +942,15 @@ func (p *P2PManagerImpl) SendConnectionPreCheckRequest(remoteRef *metadata.Remot
 		return
 	}
 
-	srcUUID, err := p.xdcrCompSvc.MyClusterUuid()
-	if err != nil {
-		errMsg := fmt.Sprintf("Connection Pre-Check exited because of the error in getting srcUUID, err=%v", err)
-		sendConnectionPreCheckRequestErrHelper(errMsg, taskId, myHostAddr, false, nil, logger)
+	// check for intra-cluster replication
+	var sourceClusterUUID string
+	if sourceClusterUUID, err = p.xdcrCompSvc.MyClusterUUID(); err != nil {
+		logger.Infof("Connection Pre-Check exited because of an error in fetching source cluster UUID: %v", err)
+		sendConnectionPreCheckRequestErrHelper(base.ConnectionPreCheckMsgs[base.ConnPreChkUnableToFetchUUID], taskId, myHostAddr, false, nil, logger)
 		return
 	}
-
-	// check for intra-cluster replication
-	if srcUUID == targetUUID {
-		logger.Infof("Connection Pre-Check exited because: srcUUID=%v and tgtUUID=%v", srcUUID, targetUUID)
+	if sourceClusterUUID == targetUUID {
+		logger.Infof("Connection Pre-Check exited because: srcUUID=%v and tgtUUID=%v", sourceClusterUUID, targetUUID)
 		sendConnectionPreCheckRequestErrHelper(base.ConnectionPreCheckMsgs[base.ConnPreChkIsIntraClusterReplication], taskId, myHostAddr, true, nil, logger)
 		return
 	}
@@ -1145,4 +1190,71 @@ func (p *P2PManagerImpl) SendDelBackfill(specId string) error {
 		return errors.New(errStr)
 	}
 	return nil
+}
+
+func (p *P2PManagerImpl) SendHeartbeatToRemoteV1(reference *metadata.RemoteClusterReference, specs []*metadata.ReplicationSpecification) error {
+	srcStr, err := p.xdcrCompSvc.MyHostAddr()
+	if err != nil {
+		return err
+	}
+	target, err := reference.MyConnectionStr()
+	if err != nil {
+		return err
+	}
+
+	nodesList, err := p.xdcrCompSvc.PeerNodesAdminAddrs()
+	if err != nil {
+		return err
+	}
+	// Add myself back in amongst the peers
+	nodesList = append(nodesList, srcStr)
+
+	var sourceClusterUUID, sourceClusterName string
+	if sourceClusterUUID, err = p.xdcrCompSvc.MyClusterUUID(); err != nil {
+		return err
+	}
+	if sourceClusterName, err = p.xdcrCompSvc.MyClusterName(); err != nil {
+		return err
+	}
+
+	getReqFunc := func(src, tgt string) Request {
+		common := NewRequestCommon(srcStr, target, p.GetLifecycleId(), "", getOpaqueWrapper())
+		req := NewSourceHeartbeatReq(common).SetUUID(sourceClusterUUID).SetClusterName(sourceClusterName).SetNodesList(nodesList)
+		for _, spec := range specs {
+			req.AppendSpec(spec)
+		}
+		return req
+	}
+
+	// Cannot be synchronous because remote cluster may not be able to respond back
+	// This will be a send and forget operation, no ack from the remote
+	opts := NewSendOpts(false, 0, base.PeerToPeerMaxRetry).SetRemoteClusterRef(reference)
+	err, failedToSend := p.sendToEachPeerOnce(ReqSrcHeartbeat, getReqFunc, opts)
+	if err != nil {
+		return err
+	}
+
+	if len(failedToSend) > 0 {
+		errStr := "Unable to send to the following nodes: "
+		for k, _ := range failedToSend {
+			errStr += fmt.Sprintf("%v ", k)
+		}
+		return errors.New(errStr)
+	}
+
+	return nil
+}
+
+func (p *P2PManagerImpl) GetHeartbeatsReceivedV1() (map[string]string, map[string][]*metadata.ReplicationSpecification, map[string][]string, error) {
+	p.receiveHandlersMtx.RLock()
+	handlerGeneric, ok := p.receiveHandlers[ReqSrcHeartbeat]
+	p.receiveHandlersMtx.RUnlock()
+	if !ok {
+		return nil, nil, nil, fmt.Errorf("unable to find heartbeat handler")
+	}
+	srcClustersProvider, ok := handlerGeneric.(SourceClustersProvider)
+	if !ok {
+		return nil, nil, nil, fmt.Errorf("unable to cast heartbeat handler as source cluster provider")
+	}
+	return srcClustersProvider.GetSourceClustersInfoV1()
 }

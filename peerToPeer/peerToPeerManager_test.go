@@ -10,6 +10,11 @@ package peerToPeer
 
 import (
 	"fmt"
+	"net/http"
+	"sync"
+	"testing"
+	"time"
+
 	base2 "github.com/couchbase/goxdcr/v8/base"
 	"github.com/couchbase/goxdcr/v8/metadata"
 	service_def_real "github.com/couchbase/goxdcr/v8/service_def"
@@ -18,13 +23,9 @@ import (
 	utilsMock2 "github.com/couchbase/goxdcr/v8/utils/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
-	"net/http"
-	"sync"
-	"testing"
-	"time"
 )
 
-func setupBoilerPlate() (*service_def.XDCRCompTopologySvc, *utilsMock2.UtilsIface, *service_def.BucketTopologySvc, *service_def.ReplicationSpecSvc, *utils.Utilities, []error, []int, []string, string, chan service_def_real.SourceNotification, *service_def.CheckpointsService, *service_def.BackfillReplSvc, *service_def.CollectionsManifestSvc, *service_def.SecuritySvc, *service_def.BackfillMgrIface) {
+func setupBoilerPlate() (*service_def.XDCRCompTopologySvc, *utilsMock2.UtilsIface, *service_def.BucketTopologySvc, *service_def.ReplicationSpecSvc, *utils.Utilities, []error, []int, []string, string, chan service_def_real.SourceNotification, *service_def.CheckpointsService, *service_def.BackfillReplSvc, *service_def.CollectionsManifestSvc, *service_def.SecuritySvc, *service_def.BackfillMgrIface, *service_def.RemoteClusterSvc) {
 	xdcrComp := &service_def.XDCRCompTopologySvc{}
 	utilsMock := &utilsMock2.UtilsIface{}
 	bucketTopSvc := &service_def.BucketTopologySvc{}
@@ -35,16 +36,17 @@ func setupBoilerPlate() (*service_def.XDCRCompTopologySvc, *utilsMock2.UtilsIfac
 	colManifestSvc := &service_def.CollectionsManifestSvc{}
 	securityMock := &service_def.SecuritySvc{}
 	backfillMgr := &service_def.BackfillMgrIface{}
+	remClusterSvc := &service_def.RemoteClusterSvc{}
 
 	queryResultErrs := []error{nil, nil}
 	queryResultsStatusCode := []int{http.StatusOK, http.StatusOK}
 	peerNodes := []string{"10.1.1.1:8091", "10.2.2.2:8091"}
 	myHostAddr := "127.0.0.1:8091"
 	srcCh := make(chan service_def_real.SourceNotification, 50)
-	return xdcrComp, utilsMock, bucketTopSvc, replSpecSvc, utilsReal, queryResultErrs, queryResultsStatusCode, peerNodes, myHostAddr, srcCh, ckptSvc, backfillReplSvc, colManifestSvc, securityMock, backfillMgr
+	return xdcrComp, utilsMock, bucketTopSvc, replSpecSvc, utilsReal, queryResultErrs, queryResultsStatusCode, peerNodes, myHostAddr, srcCh, ckptSvc, backfillReplSvc, colManifestSvc, securityMock, backfillMgr, remClusterSvc
 }
 
-func setupMocks(utilsMock *utilsMock2.UtilsIface, utilsReal *utils.Utilities, xdcrComp *service_def.XDCRCompTopologySvc, peerNodes []string, myAddr string, specList []*metadata.ReplicationSpecification, replSpecSvc *service_def.ReplicationSpecSvc, queryErrs []error, queryStatuses []int, srcCh chan service_def_real.SourceNotification, subscribeErr error, bucketSvc *service_def.BucketTopologySvc, ckptSvc *service_def.CheckpointsService, backfillReplSvc *service_def.BackfillReplSvc, collectionsManifestSvc *service_def.CollectionsManifestSvc, securitySvc *service_def.SecuritySvc) {
+func setupMocks(utilsMock *utilsMock2.UtilsIface, utilsReal *utils.Utilities, xdcrComp *service_def.XDCRCompTopologySvc, peerNodes []string, myAddr string, specList []*metadata.ReplicationSpecification, replSpecSvc *service_def.ReplicationSpecSvc, queryErrs []error, queryStatuses []int, srcCh chan service_def_real.SourceNotification, subscribeErr error, bucketSvc *service_def.BucketTopologySvc, ckptSvc *service_def.CheckpointsService, backfillReplSvc *service_def.BackfillReplSvc, collectionsManifestSvc *service_def.CollectionsManifestSvc, securitySvc *service_def.SecuritySvc, remClusterSvc *service_def.RemoteClusterSvc) {
 	utilsMock.On("ExponentialBackoffExecutor", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
 		utilsReal.ExponentialBackoffExecutor(args.Get(0).(string), args.Get(1).(time.Duration), args.Get(2).(int), args.Get(3).(int), args.Get(4).(utils.ExponentialOpFunc))
 	}).Return(nil)
@@ -58,6 +60,9 @@ func setupMocks(utilsMock *utilsMock2.UtilsIface, utilsReal *utils.Utilities, xd
 
 	xdcrComp.On("PeerNodesAdminAddrs").Return(peerNodes, nil)
 	xdcrComp.On("MyHostAddr").Return(myAddr, nil)
+	xdcrComp.On("MyClusterUUID").Return("dummyClusterUUID", nil)
+	xdcrComp.On("MyClusterName").Return("dummyClusterName", nil)
+	xdcrComp.On("IsOrchestratorNode").Return(true, nil)
 
 	retMap := make(map[string]*metadata.ReplicationSpecification)
 	for _, spec := range specList {
@@ -72,6 +77,8 @@ func setupMocks(utilsMock *utilsMock2.UtilsIface, utilsReal *utils.Utilities, xd
 	securitySvc.On("IsClusterEncryptionLevelStrict").Return(false)
 
 	collectionsManifestSvc.On("SetPeerManifestsGetter", mock.Anything).Return(nil)
+
+	remClusterSvc.On("SetHeartbeatSenderAPI", mock.Anything).Return(nil)
 }
 
 func TestPeerToPeerMgrSendVBCheck(t *testing.T) {
@@ -89,14 +96,14 @@ func TestPeerToPeerMgrSendVBCheck(t *testing.T) {
 	queryResultErrs := []error{nil, nil}
 	queryResultsStatusCode := []int{http.StatusOK, http.StatusOK}
 
-	xdcrComp, utilsMock, bucketSvc, replSvc, utilsReal, queryResultErrs, queryResultsStatusCode, peerNodes, myHostAddr, srcCh, ckptSvc, backfillReplSvc, colManifestSvc, securitySvc, backfillMgr := setupBoilerPlate()
-	setupMocks(utilsMock, utilsReal, xdcrComp, peerNodes, myHostAddr, specList, replSvc, queryResultErrs, queryResultsStatusCode, srcCh, nil, bucketSvc, ckptSvc, backfillReplSvc, colManifestSvc, securitySvc)
+	xdcrComp, utilsMock, bucketSvc, replSvc, utilsReal, queryResultErrs, queryResultsStatusCode, peerNodes, myHostAddr, srcCh, ckptSvc, backfillReplSvc, colManifestSvc, securitySvc, backfillMgr, remClusterSvc := setupBoilerPlate()
+	setupMocks(utilsMock, utilsReal, xdcrComp, peerNodes, myHostAddr, specList, replSvc, queryResultErrs, queryResultsStatusCode, srcCh, nil, bucketSvc, ckptSvc, backfillReplSvc, colManifestSvc, securitySvc, remClusterSvc)
 
 	dummyMerger := func(string, string, interface{}) error { return nil }
 	getBackfillMgr := func() service_def_real.BackfillMgrIface {
 		return backfillMgr
 	}
-	mgr, err := NewPeerToPeerMgr(nil, xdcrComp, utilsMock, bucketSvc, replSvc, 100*time.Millisecond, ckptSvc, colManifestSvc, backfillReplSvc, securitySvc, getBackfillMgr)
+	mgr, err := NewPeerToPeerMgr(nil, xdcrComp, utilsMock, bucketSvc, replSvc, 100*time.Millisecond, ckptSvc, colManifestSvc, backfillReplSvc, securitySvc, getBackfillMgr, remClusterSvc)
 	assert.Nil(err)
 	assert.NotNil(mgr)
 	mgr.SetPushReqMergerOnce(dummyMerger)
@@ -232,14 +239,14 @@ func TestSendSameHostDualSimultaneousReqs(t *testing.T) {
 	queryResultErrs := []error{nil, nil}
 	queryResultsStatusCode := []int{http.StatusOK, http.StatusOK}
 
-	xdcrComp, utilsMock, bucketSvc, replSvc, utilsReal, queryResultErrs, queryResultsStatusCode, peerNodes, myHostAddr, srcCh, ckptSvc, backfillReplSvc, colManifestSvc, securitySvc, backfillMgr := setupBoilerPlate()
-	setupMocks(utilsMock, utilsReal, xdcrComp, peerNodes, myHostAddr, specList, replSvc, queryResultErrs, queryResultsStatusCode, srcCh, nil, bucketSvc, ckptSvc, backfillReplSvc, colManifestSvc, securitySvc)
+	xdcrComp, utilsMock, bucketSvc, replSvc, utilsReal, queryResultErrs, queryResultsStatusCode, peerNodes, myHostAddr, srcCh, ckptSvc, backfillReplSvc, colManifestSvc, securitySvc, backfillMgr, remClusterSvc := setupBoilerPlate()
+	setupMocks(utilsMock, utilsReal, xdcrComp, peerNodes, myHostAddr, specList, replSvc, queryResultErrs, queryResultsStatusCode, srcCh, nil, bucketSvc, ckptSvc, backfillReplSvc, colManifestSvc, securitySvc, remClusterSvc)
 
 	dummyMerger := func(string, string, interface{}) error { return nil }
 	getBackfillMgr := func() service_def_real.BackfillMgrIface {
 		return backfillMgr
 	}
-	mgr, err := NewPeerToPeerMgr(nil, xdcrComp, utilsMock, bucketSvc, replSvc, 100*time.Millisecond, ckptSvc, colManifestSvc, backfillReplSvc, securitySvc, getBackfillMgr)
+	mgr, err := NewPeerToPeerMgr(nil, xdcrComp, utilsMock, bucketSvc, replSvc, 100*time.Millisecond, ckptSvc, colManifestSvc, backfillReplSvc, securitySvc, getBackfillMgr, remClusterSvc)
 	assert.Nil(err)
 	assert.NotNil(mgr)
 	mgr.SetPushReqMergerOnce(dummyMerger)

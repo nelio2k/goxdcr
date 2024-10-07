@@ -37,7 +37,7 @@ import (
 	_ "net/http/pprof"
 )
 
-var StaticPaths = []string{base.RemoteClustersPath, CreateReplicationPath, SettingsReplicationsPath, AllReplicationsPath, AllReplicationInfosPath, RegexpValidationPrefix, MemStatsPath, BlockProfileStartPath, BlockProfileStopPath, XDCRInternalSettingsPath, XDCRPrometheusStatsPath, XDCRPrometheusStatsHighPath, base.XDCRPeerToPeerPath, base.XDCRConnectionPreCheckPath}
+var StaticPaths = []string{base.RemoteClustersPath, CreateReplicationPath, SettingsReplicationsPath, AllReplicationsPath, AllReplicationInfosPath, RegexpValidationPrefix, MemStatsPath, BlockProfileStartPath, BlockProfileStopPath, XDCRInternalSettingsPath, XDCRPrometheusStatsPath, XDCRPrometheusStatsHighPath, base.XDCRPeerToPeerPath, base.XDCRConnectionPreCheckPath, base.XDCRSourceClustersPath}
 var DynamicPathPrefixes = []string{base.RemoteClustersPath, DeleteReplicationPrefix, SettingsReplicationsPath, StatisticsPrefix, AllReplicationsPath}
 
 var logger_ap *log.CommonLogger = log.NewLogger(base.AdminPortKey, log.GetOrCreateContext(base.AdminPortKey))
@@ -242,6 +242,8 @@ func (adminport *Adminport) handleRequest(
 		response, err = adminport.doPostConnectionPreCheckRequest(request)
 	case base.XDCRConnectionPreCheckPath + base.UrlDelimiter + base.MethodGet:
 		response, err = adminport.doGetConnectionPreCheckResultRequest(request)
+	case base.XDCRSourceClustersPath + base.UrlDelimiter + base.MethodGet:
+		response, err = adminport.doGetSourceClustersRequest(request)
 	default:
 		errOutput := base.InvalidPathInHttpRequestError(key)
 		response, err = EncodeObjectIntoResponseWithStatusCode(errOutput.Error(), http.StatusNotFound)
@@ -307,6 +309,10 @@ type getRemoteClusterOpts struct {
 	RemoteClusterUuid        string
 }
 
+type getSourcesOpt struct {
+	getOptsCommon
+}
+
 func (g getRemoteClusterOpts) ShouldPopulateRemoteBucketManifest() bool {
 	return g.BucketManifestBucketName != "" && g.RemoteClusterUuid != ""
 }
@@ -347,6 +353,22 @@ func parseGetOptsCommon(query url.Values, opt *getOptsCommon) {
 
 func parseGetReplicationsRequestQuery(request *http.Request) getReplicationsOpt {
 	var opt getReplicationsOpt
+	if request == nil {
+		return opt
+	}
+
+	query := request.URL.Query()
+	if query == nil || len(query) == 0 {
+		return opt
+	}
+
+	parseGetOptsCommon(query, &opt.getOptsCommon)
+
+	return opt
+}
+
+func parseGetSourcesRequestQuery(request *http.Request) getSourcesOpt {
+	var opt getSourcesOpt
 	if request == nil {
 		return opt
 	}
@@ -1310,6 +1332,13 @@ func (adminport *Adminport) doGetPrometheusStatsRequest(request *http.Request, h
 		return nil, err
 	}
 	adminport.prometheusExporter.LoadExpVarMap(expVarMap)
+
+	sourceClusterNames, sourceSpecs, sourceNodes, err := adminport.p2pMgr.GetHeartbeatsReceivedV1()
+	if err != nil {
+		return nil, err
+	}
+	adminport.prometheusExporter.LoadSourceClustersInfoV1(sourceClusterNames, sourceSpecs, sourceNodes)
+
 	outputBytes, err := adminport.prometheusExporter.Export()
 	if err != nil {
 		return EncodeErrorMessageIntoResponse(err, http.StatusInternalServerError)
@@ -1399,4 +1428,32 @@ func (adminport *Adminport) doGetConnectionPreCheckResultRequest(request *http.R
 	res, done, err := adminport.p2pMgr.RetrieveConnectionPreCheckResult(taskId)
 
 	return NewConnectionPreCheckGetResponse(taskId, res, done)
+}
+
+func (adminport *Adminport) doGetSourceClustersRequest(request *http.Request) (*ap.Response, error) {
+	logger_ap.Infof("doGetSourceClustersRequest req=%v\n", base.CloneAndTagHttpRequest(request))
+	defer logger_ap.Infof("Finished doGetSourceClustersRequest\n")
+
+	// Since getting source clusters information will return replication and its settings, use the same
+	// limiting privilege as what it takes to retrieve a replication and its settings
+	response, err := authWebCreds(request, base.PermissionXDCRInternalRead)
+	if response != nil || err != nil {
+		return response, err
+	}
+
+	options := parseGetSourcesRequestQuery(request)
+
+	srcNames, srcSpecs, srcNodes, err := adminport.p2pMgr.GetHeartbeatsReceivedV1()
+	if err != nil {
+		return nil, err
+	}
+
+	if options.RedactRequested {
+		for sourceUuid, specList := range srcSpecs {
+			list := metadata.ReplSpecList(specList)
+			srcSpecs[sourceUuid] = list.Redact()
+		}
+	}
+
+	return NewSourceClustersV1Response(srcNames, srcSpecs, srcNodes)
 }

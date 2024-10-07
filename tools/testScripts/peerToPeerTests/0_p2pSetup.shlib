@@ -64,6 +64,7 @@ function runOneReplicationCycleAndPause {
 	# Wait for vbuckets and all the other things to propagate before XDCR provisioning
 	sleep 5
 	createRemoteClusterReference "C1" "C2"
+	createRemoteClusterReference "C2" "C1"
 	sleep 1
 	createBucketReplication "C1" "B0" "C2" "B1" DefaultBucketReplProperties
 	printGlobalScopeAndCollectionInfo
@@ -156,7 +157,7 @@ function runReplicationResume {
 
 function runTestCase {
 	echo "============================================================================"
-	echo "Running P2P Setup secure"
+	echo "Running P2P Setup"
 	echo "============================================================================"
 
 	# At this point, settings need to be restored IF the script was forced exited
