@@ -2160,6 +2160,29 @@ func (xmem *XmemNozzle) log(req *base.WrappedMCRequest, resp *base.SubdocLookupR
 	return nil
 }
 
+// conflicts are only logged when:
+// 1. required settings are on: ECCV on and conflictLogging on.
+// 2. sourceDoc.Cas >= max_cas (doc on source was updated after ECCV was turned on)
+// 3. targetDoc.Cas >= max_cas (doc on target was updated after ECCV was turned on)
+// where max_cas is the max_cas of the doc's vb when ECCV was turned on in this cluster.
+func (xmem *XmemNozzle) shouldLogConflicts(source *base.WrappedMCRequest, target *base.SubdocLookupResponse) bool {
+	if !xmem.getCrossClusterVers() || !source.HLVModeOptions.ConflictLoggingEnabled ||
+		xmem.config.vbHlvMaxCas == nil || target.Resp == nil {
+		// required settings are not enabled
+		return false
+	}
+
+	vbMaxCas, ok := xmem.config.vbHlvMaxCas[source.Req.VBucket]
+	if !ok {
+		// this path should not be hit
+		return false
+	}
+
+	// The document should be updated atleast once,
+	// both on source and target after ECCV was turned on.
+	return source.HLVModeOptions.ActualCas >= vbMaxCas && target.Resp.Cas >= vbMaxCas
+}
+
 // This routine will call either getMeta or subdoc_multi_lookup based on the specs set for the batch and the mutation,
 // and return all the result in the result_map
 // Input:
@@ -2234,7 +2257,8 @@ func (xmem *XmemNozzle) batchGet(get_map base.McRequestMap) (noRep_map map[strin
 				delete(get_map, uniqueKey)
 				resp.Resp.Recycle()
 			} else if base.IsSuccessGetResponse(resp.Resp) {
-				logConflicts := wrappedReq.HLVModeOptions.ConflictLoggingEnabled
+				logConflicts := xmem.shouldLogConflicts(wrappedReq, resp)
+
 				CDResult, CRResult, err := xmem.conflict_resolver(wrappedReq, resp.Resp, resp.Specs, xmem.sourceActorId, xmem.targetActorId, xmem.xattrEnabled, logConflicts, xmem.uncompressBody, xmem.Logger())
 				if err != nil {
 					// Log the error. We will retry
