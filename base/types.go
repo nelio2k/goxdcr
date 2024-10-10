@@ -3356,7 +3356,7 @@ func ValidateAndConvertJsonMapToConflictLoggingMapping(value string) (ConflictLo
 
 	enabled := !conflictLoggingMap.Disabled()
 	if enabled {
-		// validate if input is semantically valid
+		// validate if input is syntactically and semantically valid
 		_, err = ParseConflictLogRules(conflictLoggingMap)
 		if err != nil {
 			return nil, fmt.Errorf("error parsing conflict logging input %v to rules, err=%v", conflictLoggingMap, err)
