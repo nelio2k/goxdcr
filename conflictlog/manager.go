@@ -31,8 +31,9 @@ type SecurityInfo interface {
 	GetClientCertAndKey() ([]byte, []byte)
 }
 
-type MemcachedAddrGetter interface {
+type AddrsGetter interface {
 	MyMemcachedAddr() (string, error)
+	MyHostAddr() (string, error)
 }
 
 type EncryptionInfoGetter interface {
@@ -49,7 +50,7 @@ func GetManager() (Manager, error) {
 }
 
 // InitManager intializes global conflict manager
-func InitManager(loggerCtx *log.LoggerContext, utils utils.UtilsIface, memdAddrGetter MemcachedAddrGetter, securityInfo SecurityInfo) {
+func InitManager(loggerCtx *log.LoggerContext, utils utils.UtilsIface, addrsGetter AddrsGetter, securityInfo SecurityInfo) {
 	logger := log.NewLogger(ConflictManagerLoggerName, loggerCtx)
 
 	logger.Info("intializing conflict manager")
@@ -58,14 +59,14 @@ func InitManager(loggerCtx *log.LoggerContext, utils utils.UtilsIface, memdAddrG
 	throttlerSvc.Start()
 
 	impl := &managerImpl{
-		logger:         logger,
-		memdAddrGetter: memdAddrGetter,
-		securityInfo:   securityInfo,
-		utils:          utils,
-		manifestCache:  newManifestCache(),
-		connLimit:      DefaultPoolConnLimit,
-		connType:       "gocbcore",
-		throttlerSvc:   throttlerSvc,
+		logger:        logger,
+		AddrsGetter:   addrsGetter,
+		securityInfo:  securityInfo,
+		utils:         utils,
+		manifestCache: newManifestCache(),
+		connLimit:     DefaultPoolConnLimit,
+		connType:      "gocbcore",
+		throttlerSvc:  throttlerSvc,
 	}
 
 	logger.Info("creating conflict manager writer pool")
@@ -76,13 +77,13 @@ func InitManager(loggerCtx *log.LoggerContext, utils utils.UtilsIface, memdAddrG
 
 // managerImpl implements conflict manager
 type managerImpl struct {
-	logger         *log.CommonLogger
-	memdAddrGetter MemcachedAddrGetter
-	securityInfo   SecurityInfo
-	utils          utils.UtilsIface
-	connPool       iopool.ConnPool
-	manifestCache  *ManifestCache
-	throttlerSvc   throttlerSvc.ThroughputThrottlerSvc
+	logger        *log.CommonLogger
+	AddrsGetter   AddrsGetter
+	securityInfo  SecurityInfo
+	utils         utils.UtilsIface
+	connPool      iopool.ConnPool
+	manifestCache *ManifestCache
+	throttlerSvc  throttlerSvc.ThroughputThrottlerSvc
 
 	// connLimit max number of connections
 	connLimit int
@@ -152,12 +153,12 @@ func (m *managerImpl) ConnPool() iopool.ConnPool {
 func (m *managerImpl) newGocbCoreConn(bucketName string) (conn io.Closer, err error) {
 	m.logger.Infof("creating new conflict gocbcore bucket=%s encStrict=%v", bucketName, m.securityInfo.IsClusterEncryptionLevelStrict())
 
-	return NewGocbConn(m.logger, m.memdAddrGetter, bucketName, m.securityInfo)
+	return NewGocbConn(m.logger, m.AddrsGetter, bucketName, m.securityInfo)
 }
 
 func (m *managerImpl) newMemcachedConn(bucketName string) (conn io.Closer, err error) {
 	m.logger.Infof("creating new conflict memcached bucket=%s encStrict=%v", bucketName, m.securityInfo.IsClusterEncryptionLevelStrict())
-	addr, err := m.memdAddrGetter.MyMemcachedAddr()
+	addr, err := m.AddrsGetter.MyMemcachedAddr()
 	if err != nil {
 		return
 	}

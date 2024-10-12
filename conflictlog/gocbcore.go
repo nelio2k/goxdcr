@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/couchbase/cbauth"
-	"github.com/couchbase/gocbcore/v9"
-	"github.com/couchbase/gocbcore/v9/memd"
+	"github.com/couchbase/gocbcore/v10"
+	"github.com/couchbase/gocbcore/v10/memd"
 	"github.com/couchbase/goxdcr/v8/base"
 	"github.com/couchbase/goxdcr/v8/log"
 )
@@ -19,7 +19,7 @@ type gocbCoreConn struct {
 	id             int64
 	MemcachedAddr  string
 	bucketName     string
-	memdAddrGetter MemcachedAddrGetter
+	memdAddrGetter AddrsGetter
 	securityInfo   SecurityInfo
 	agent          *gocbcore.Agent
 	logger         *log.CommonLogger
@@ -27,7 +27,7 @@ type gocbCoreConn struct {
 	finch          chan bool
 }
 
-func NewGocbConn(logger *log.CommonLogger, memdAddrGetter MemcachedAddrGetter, bucketName string, securityInfo SecurityInfo) (conn *gocbCoreConn, err error) {
+func NewGocbConn(logger *log.CommonLogger, memdAddrGetter AddrsGetter, bucketName string, securityInfo SecurityInfo) (conn *gocbCoreConn, err error) {
 	connId := NewConnId()
 
 	logger.Infof("creating new gocbcore connection id=%d", connId)
@@ -64,6 +64,11 @@ func (conn *gocbCoreConn) setupAgent() (err error) {
 		return
 	}
 
+	httpAddr, err := conn.memdAddrGetter.MyHostAddr()
+	if err != nil {
+		return
+	}
+
 	auth := &MemcachedAuthProvider{
 		logger:       conn.logger,
 		securityInfo: conn.securityInfo,
@@ -83,19 +88,24 @@ func (conn *gocbCoreConn) setupAgent() (err error) {
 	}
 
 	config := &gocbcore.AgentConfig{
-		MemdAddrs:              []string{memdAddr},
-		Auth:                   auth,
-		BucketName:             conn.bucketName,
-		UserAgent:              MemcachedConnUserAgent,
-		UseCollections:         true,
-		UseTLS:                 isStrict,
-		UseCompression:         true,
-		AuthMechanisms:         []gocbcore.AuthMechanism{gocbcore.PlainAuthMechanism},
-		TLSRootCAProvider:      caCertProvider,
-		InitialBootstrapNonTLS: true,
+		SeedConfig: gocbcore.SeedConfig{
+			MemdAddrs: []string{memdAddr},
+			HTTPAddrs: []string{httpAddr},
+		},
+		SecurityConfig: gocbcore.SecurityConfig{
+			UseTLS:            isStrict,
+			TLSRootCAProvider: caCertProvider,
+			Auth:              auth,
+			AuthMechanisms:    []gocbcore.AuthMechanism{gocbcore.PlainAuthMechanism},
+			NoTLSSeedNode:     true,
+		},
+		IoConfig:          gocbcore.IoConfig{UseCollections: true},
+		BucketName:        conn.bucketName,
+		UserAgent:         MemcachedConnUserAgent,
+		CompressionConfig: gocbcore.CompressionConfig{Enabled: true},
 
 		// use KvPoolSize=1 to ensure only one connection is created by the agent
-		KvPoolSize: 1,
+		KVConfig: gocbcore.KVConfig{PoolSize: 1},
 	}
 
 	conn.agent, err = gocbcore.CreateAgent(config)

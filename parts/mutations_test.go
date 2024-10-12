@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/couchbase/gocb/v2"
-	"github.com/couchbase/gocbcore/v9"
+	"github.com/couchbase/gocbcore/v10"
 	mc "github.com/couchbase/gomemcached"
 	mcc "github.com/couchbase/gomemcached/client"
 	"github.com/couchbase/goxdcr/v8/base"
@@ -143,14 +143,16 @@ func getVBucketNo(key string, vbCount int) uint16 {
 
 func setMeta(kvAddr, bucketName string, key, value []byte, datatype uint8, cas, revID uint64, lww bool) error {
 	tgtAgentgentConfig := &gocbcore.AgentConfig{
-		BucketName:        bucketName,
-		UserAgent:         "XmemTestSetMeta",
-		UseTLS:            false,
-		TLSRootCAProvider: func() *x509.CertPool { return nil },
-		UseCollections:    true,
-		AuthMechanisms:    []gocbcore.AuthMechanism{gocbcore.ScramSha256AuthMechanism},
-		Auth:              gocbcore.PasswordAuthProvider{Username: username, Password: password},
-		MemdAddrs:         []string{kvAddr},
+		BucketName: bucketName,
+		UserAgent:  "XmemTestSetMeta",
+		SecurityConfig: gocbcore.SecurityConfig{
+			UseTLS:            false,
+			TLSRootCAProvider: func() *x509.CertPool { return nil },
+			AuthMechanisms:    []gocbcore.AuthMechanism{gocbcore.ScramSha256AuthMechanism},
+			Auth:              gocbcore.PasswordAuthProvider{Username: username, Password: password},
+		},
+		SeedConfig: gocbcore.SeedConfig{MemdAddrs: []string{kvAddr}},
+		IoConfig:   gocbcore.IoConfig{UseCollections: true},
 	}
 
 	ch := make(chan error)

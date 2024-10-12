@@ -10,11 +10,12 @@ import (
 )
 
 type GocbcoreTest struct {
-	Addr   string                 `json:"addr"`
-	Target base.ConflictLogTarget `json:"target"`
-	Count  int                    `json:"count"`
-	Key    string                 `json:"key"`
-	Doc    map[string]interface{} `json:"doc"`
+	MemdAddr string                 `json:"memcachedAddr"`
+	HttpAddr string                 `json:"httpAddr"`
+	Target   base.ConflictLogTarget `json:"target"`
+	Count    int                    `json:"count"`
+	Key      string                 `json:"key"`
+	Doc      map[string]interface{} `json:"doc"`
 }
 
 func gocbcoreTest(cfg Config) (err error) {
@@ -22,8 +23,9 @@ func gocbcoreTest(cfg Config) (err error) {
 
 	logger := log.NewLogger("gocbcoreTest", log.DefaultLoggerContext)
 
-	memdAddrGetter := &MemAddrGetter{
-		addr: opts.Addr,
+	memdAddrGetter := &AddrsGetter{
+		memdAddr: opts.MemdAddr,
+		httpAddr: opts.HttpAddr,
 	}
 
 	conn, err := conflictlog.NewGocbConn(logger, memdAddrGetter, opts.Target.Bucket, nil)

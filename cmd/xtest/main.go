@@ -13,8 +13,9 @@ import (
 	_ "net/http/pprof"
 )
 
-type MemAddrGetter struct {
-	addr string
+type AddrGetter struct {
+	memdAddr string
+	httpAddr string
 }
 
 type EncLevelGetter struct {
@@ -25,8 +26,12 @@ func (e *EncLevelGetter) IsMyClusterEncryptionLevelStrict() bool {
 	return e.strict
 }
 
-func (m *MemAddrGetter) MyMemcachedAddr() (string, error) {
-	return m.addr, nil
+func (m *AddrGetter) MyMemcachedAddr() (string, error) {
+	return m.memdAddr, nil
+}
+
+func (m *AddrGetter) MyHostAddr() (string, error) {
+	return m.httpAddr, nil
 }
 
 func loadConfigFile(filepath string) (cfg Config, err error) {
@@ -82,8 +87,9 @@ func main() {
 
 	log.DefaultLoggerContext.SetLogLevel(logLevel)
 
-	addrGetter := &MemAddrGetter{
-		addr: cfg.MemcachedAddr,
+	addrGetter := &AddrGetter{
+		memdAddr: cfg.MemcachedAddr,
+		httpAddr: cfg.HttpAddr,
 	}
 
 	xsvc, err := InitXdcrServices(&cfg)
