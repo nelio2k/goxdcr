@@ -16,27 +16,27 @@ import (
 var _ Connection = (*gocbCoreConn)(nil)
 
 type gocbCoreConn struct {
-	id             int64
-	MemcachedAddr  string
-	bucketName     string
-	memdAddrGetter AddrsGetter
-	securityInfo   SecurityInfo
-	agent          *gocbcore.Agent
-	logger         *log.CommonLogger
-	timeout        time.Duration
-	finch          chan bool
+	id            int64
+	MemcachedAddr string
+	bucketName    string
+	addrGetter    AddrsGetter
+	securityInfo  SecurityInfo
+	agent         *gocbcore.Agent
+	logger        *log.CommonLogger
+	timeout       time.Duration
+	finch         chan bool
 }
 
-func NewGocbConn(logger *log.CommonLogger, memdAddrGetter AddrsGetter, bucketName string, securityInfo SecurityInfo) (conn *gocbCoreConn, err error) {
+func NewGocbConn(logger *log.CommonLogger, addrGetter AddrsGetter, bucketName string, securityInfo SecurityInfo) (conn *gocbCoreConn, err error) {
 	connId := NewConnId()
 
 	logger.Infof("creating new gocbcore connection id=%d", connId)
 	conn = &gocbCoreConn{
-		id:             connId,
-		memdAddrGetter: memdAddrGetter,
-		securityInfo:   securityInfo,
-		bucketName:     bucketName,
-		logger:         logger,
+		id:           connId,
+		addrGetter:   addrGetter,
+		securityInfo: securityInfo,
+		bucketName:   bucketName,
+		logger:       logger,
 		//sudeep todo: make it configurable
 		timeout: 60 * time.Second,
 		finch:   make(chan bool),
@@ -59,12 +59,12 @@ func (conn *gocbCoreConn) getCACertPool() (*x509.CertPool, error) {
 }
 
 func (conn *gocbCoreConn) setupAgent() (err error) {
-	memdAddr, err := conn.memdAddrGetter.MyMemcachedAddr()
+	memdAddr, err := conn.addrGetter.MyMemcachedAddr()
 	if err != nil {
 		return
 	}
 
-	httpAddr, err := conn.memdAddrGetter.MyHostAddr()
+	httpAddr, err := conn.addrGetter.MyHostAddr()
 	if err != nil {
 		return
 	}
