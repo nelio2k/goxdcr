@@ -3,6 +3,7 @@
     "logLevel": "Info",
     "debugPort": 7171,
     "memcachedAddr": "127.0.0.1:12000",
+    "httpAddr": "127.0.0.1:9000",
 
     "clientCertFile": "/Users/sudeepjathar/cb/clog/ns_server/data/n_0/config/certs/client_chain.pem",
     "clientKeyFile":  "/Users/sudeepjathar/cb/clog/ns_server/data/n_0/config/certs/client_pkey.pem",
@@ -72,7 +73,8 @@
     },
 
     "gocbcoreTest": {
-        "addr": "127.0.0.1:12000",
+        "memcachedAddr": "127.0.0.1:12000",
+        "httpAddr": "127.0.0.1:9000",
         "target": {
             "bucket": "B1",
             "scope": "S1",

@@ -6,6 +6,7 @@ type Config struct {
 	LogLevel      string `json:"logLevel"`
 	DebugPort     int    `json:"debugPort"`
 	MemcachedAddr string `json:"memcachedAddr"`
+	HttpAddr      string `json:"httpAddr"`
 
 	ConflictLogPertest *ConflictLogLoadTest `json:"conflictLogLoadTest"`
 	GocbcoreTest       *GocbcoreTest        `json:"gocbcoreTest"`

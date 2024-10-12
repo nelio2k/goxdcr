@@ -44,7 +44,7 @@ const defaultScopeCol = "_default"
 
 type SubdocInternal struct {
 	DocFlags gocb.SubdocDocFlag
-	User     []byte
+	User     string
 }
 
 func createBucket(connStr, bucketName string, crType gocb.ConflictResolutionType) (cluster *gocb.Cluster, bucket *gocb.Bucket, err error) {
