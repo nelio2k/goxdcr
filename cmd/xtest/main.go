@@ -30,7 +30,7 @@ func (m *AddrGetter) MyMemcachedAddr() (string, error) {
 	return m.memdAddr, nil
 }
 
-func (m *AddrGetter) MyHostAddr() (string, error) {
+func (m *AddrGetter) MyConnectionStr() (string, error) {
 	return m.httpAddr, nil
 }
 

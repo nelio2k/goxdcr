@@ -33,7 +33,7 @@ type SecurityInfo interface {
 
 type AddrsGetter interface {
 	MyMemcachedAddr() (string, error)
-	MyHostAddr() (string, error)
+	MyConnectionStr() (string, error)
 }
 
 type EncryptionInfoGetter interface {
@@ -126,7 +126,6 @@ func (m *managerImpl) setConnPool() {
 	}
 
 	m.connPool = iopool.NewConnPool(m.logger, m.connLimit, fn)
-	return
 }
 
 func (m *managerImpl) SetConnType(connType string) error {
