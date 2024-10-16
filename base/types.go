@@ -823,10 +823,10 @@ func (req *WrappedMCRequest) WaitForConflictLogging(finCh chan bool, logger *log
 		err := req.HLVModeOptions.ConflictLoggerWait.Wait(finCh)
 		if err != nil {
 			// SUMUKH TODO: Make this a counter.
-			logger.Errorf("Error during conflict logging to finish, key=%v%s%v, err=%v",
-				UdTagBegin, req.Req.Key, UdTagEnd,
-				err,
-			)
+			// logger.Errorf("Error during conflict logging to finish, key=%v%s%v, err=%v",
+			// 	UdTagBegin, req.Req.Key, UdTagEnd,
+			// 	err,
+			// )
 		}
 	}
 }
