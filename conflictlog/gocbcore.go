@@ -30,7 +30,7 @@ type gocbCoreConn struct {
 func NewGocbConn(logger *log.CommonLogger, addrGetter AddrsGetter, bucketName string, securityInfo SecurityInfo) (conn *gocbCoreConn, err error) {
 	connId := NewConnId()
 
-	logger.Infof("creating new gocbcore connection id=%d", connId)
+	logger.Infof("creating new gocbcore connection id=%d, bucket=%s", connId, bucketName)
 	conn = &gocbCoreConn{
 		id:           connId,
 		addrGetter:   addrGetter,
@@ -108,13 +108,15 @@ func (conn *gocbCoreConn) setupAgent() (err error) {
 		KVConfig: gocbcore.KVConfig{PoolSize: 1},
 	}
 
+	conn.logger.Debugf("Creating gocbcore agent: %+v", config)
+
 	conn.agent, err = gocbcore.CreateAgent(config)
 	if err != nil {
 		return
 	}
 
 	signal := make(chan error, 1)
-	_, err = conn.agent.WaitUntilReady(time.Now().Add(5*time.Second), gocbcore.WaitUntilReadyOptions{}, func(wr *gocbcore.WaitUntilReadyResult, err error) {
+	_, err = conn.agent.WaitUntilReady(time.Now().Add(base.DiagNetworkThreshold), gocbcore.WaitUntilReadyOptions{}, func(wr *gocbcore.WaitUntilReadyResult, err error) {
 		conn.logger.Debugf("agent WaitUntilReady err=%v", err)
 		signal <- err
 	})

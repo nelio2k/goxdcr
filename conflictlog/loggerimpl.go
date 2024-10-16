@@ -368,13 +368,15 @@ func (l *loggerImpl) writeDocRetry(bucketName string, fn func(conn Connection) e
 		if err != nil {
 			// This is to account for nw errors while connecting
 			if !l.utils.IsSeriousNetError(err) {
+				l.logger.Debugf("not serious network error, err=%v, cid=%d lid=%d rid=%s", err, conn.Id(), l.id, l.replId)
 				return
 			}
+			l.logger.Debugf("serious network error, err=%v, cid=%d lid=%d rid=%s", err, conn.Id(), l.id, l.replId)
 			time.Sleep(l.opts.networkRetryInterval)
 			continue
 		}
 
-		l.logger.Debugf("got connection from pool, id=%d", conn.Id())
+		l.logger.Debugf("got connection from pool, cid=%d lid=%d rid=%s", conn.Id(), l.id, l.replId)
 
 		// The call to connPool.Put is not advised to be done in a defer here.
 		// This is because calling defer in a loop accumulates multiple defers
@@ -382,14 +384,14 @@ func (l *loggerImpl) writeDocRetry(bucketName string, fn func(conn Connection) e
 		// will be error prone in this case
 		err = fn(conn)
 		if err == nil {
-			l.logger.Debugf("releasing connection to pool after success, id=%d damaged=%v", conn.Id(), false)
+			l.logger.Debugf("releasing connection to pool after success, cid=%d damaged=%v lid=%d rid=%s", conn.Id(), false, l.id, l.replId)
 			l.connPool.Put(bucketName, conn, false)
 			break
 		}
 
-		l.logger.Errorf("error in writing doc to conflict bucket err=%v", err)
+		l.logger.Errorf("error in writing doc to conflict bucket err=%v, cid=%d lid=%d rid=%s", err, conn.Id(), l.id, l.replId)
 		nwError := l.utils.IsSeriousNetError(err)
-		l.logger.Debugf("releasing connection to pool after failure, id=%d damaged=%v", conn.Id(), nwError)
+		l.logger.Debugf("releasing connection to pool after failure, cid=%d damaged=%v lid=%d rid=%s", conn.Id(), nwError, l.id, l.replId)
 		l.connPool.Put(bucketName, conn, nwError)
 		if !nwError {
 			break
