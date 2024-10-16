@@ -23,7 +23,7 @@ func gocbcoreTest(cfg Config) (err error) {
 
 	logger := log.NewLogger("gocbcoreTest", log.DefaultLoggerContext)
 
-	memdAddrGetter := &AddrsGetter{
+	memdAddrGetter := &AddrGetter{
 		memdAddr: opts.MemdAddr,
 		httpAddr: opts.HttpAddr,
 	}

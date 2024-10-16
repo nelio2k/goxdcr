@@ -61,11 +61,13 @@ func (conn *gocbCoreConn) getCACertPool() (*x509.CertPool, error) {
 func (conn *gocbCoreConn) setupAgent() (err error) {
 	memdAddr, err := conn.addrGetter.MyMemcachedAddr()
 	if err != nil {
+		conn.logger.Errorf("SUMUKH DEBUG1 err=%v", err)
 		return
 	}
 
 	httpAddr, err := conn.addrGetter.MyHostAddr()
 	if err != nil {
+		conn.logger.Errorf("SUMUKH DEBUG2 err=%v", err)
 		return
 	}
 
@@ -86,6 +88,8 @@ func (conn *gocbCoreConn) setupAgent() (err error) {
 			return caPool
 		}
 	}
+
+	conn.logger.Infof("SUMUKH DEBUG3 memd=%v, http=%v", memdAddr, httpAddr)
 
 	config := &gocbcore.AgentConfig{
 		SeedConfig: gocbcore.SeedConfig{
@@ -110,14 +114,20 @@ func (conn *gocbCoreConn) setupAgent() (err error) {
 
 	conn.agent, err = gocbcore.CreateAgent(config)
 	if err != nil {
+		conn.logger.Errorf("SUMUKH DEBUG4 err=%v", err)
 		return
 	}
 
 	signal := make(chan error, 1)
 	_, err = conn.agent.WaitUntilReady(time.Now().Add(5*time.Second), gocbcore.WaitUntilReadyOptions{}, func(wr *gocbcore.WaitUntilReadyResult, err error) {
 		conn.logger.Debugf("agent WaitUntilReady err=%v", err)
+		conn.logger.Errorf("SUMUKH DEBUG1 err=%v", err)
 		signal <- err
 	})
+	if err != nil {
+		conn.logger.Errorf("SUMUKH DEBUG1 err=%v", err)
+		return
+	}
 
 	err = <-signal
 
