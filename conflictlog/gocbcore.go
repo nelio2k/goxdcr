@@ -105,7 +105,10 @@ func (conn *gocbCoreConn) setupAgent() (err error) {
 		CompressionConfig: gocbcore.CompressionConfig{Enabled: true},
 
 		// use KvPoolSize=1 to ensure only one connection is created by the agent
-		KVConfig: gocbcore.KVConfig{PoolSize: 1},
+		KVConfig: gocbcore.KVConfig{
+			PoolSize:             1,
+			ConnectionBufferSize: 1 * 1024 * 1024,
+		},
 	}
 
 	conn.logger.Debugf("Creating gocbcore agent: %+v", config)
@@ -155,7 +158,8 @@ func (conn *gocbCoreConn) SetMeta(key string, body []byte, dataType uint8, targe
 		ch <- err2
 	}
 
-	_, err = conn.agent.SetMeta(opts, cb)
+	var pendingOp gocbcore.PendingOp
+	pendingOp, err = conn.agent.SetMeta(opts, cb)
 	if err != nil {
 		return
 	}
@@ -163,9 +167,13 @@ func (conn *gocbCoreConn) SetMeta(key string, body []byte, dataType uint8, targe
 	select {
 	case <-conn.finch:
 		err = ErrWriterClosed
+		pendingOp.Cancel()
+		<-ch
 	case err = <-ch:
 	case <-time.After(conn.timeout):
 		err = ErrWriterTimeout
+		pendingOp.Cancel()
+		<-ch
 	}
 
 	return
