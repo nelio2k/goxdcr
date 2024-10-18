@@ -376,6 +376,7 @@ func (l *loggerImpl) writeDocs(req logRequest, target base.ConflictLogTarget) (e
 func (l *loggerImpl) writeDocRetry(bucketName string, fn func(conn Connection) error) (err error) {
 	var conn Connection
 
+	l.opts.networkRetryCount = 1
 	for i := 0; i < l.opts.networkRetryCount; i++ {
 		// conn, err = l.getFromPool(bucketName)
 		conn = l.conn
@@ -386,7 +387,7 @@ func (l *loggerImpl) writeDocRetry(bucketName string, fn func(conn Connection) e
 				return
 			}
 			l.logger.Debugf("serious network error, err=%v, cid=%d lid=%d rid=%s", err, conn.Id(), l.id, l.replId)
-			time.Sleep(l.opts.networkRetryInterval)
+			// time.Sleep(l.opts.networkRetryInterval)
 			continue
 		}
 
@@ -399,18 +400,18 @@ func (l *loggerImpl) writeDocRetry(bucketName string, fn func(conn Connection) e
 		err = fn(conn)
 		if err == nil {
 			l.logger.Debugf("releasing connection to pool after success, cid=%d damaged=%v lid=%d rid=%s", conn.Id(), false, l.id, l.replId)
-			l.connPool.Put(bucketName, conn, false)
+			// l.connPool.Put(bucketName, conn, false)
 			break
 		}
 
-		l.logger.Errorf("error in writing doc to conflict bucket err=%v, cid=%d lid=%d rid=%s", err, conn.Id(), l.id, l.replId)
+		// l.logger.Errorf("error in writing doc to conflict bucket err=%v, cid=%d lid=%d rid=%s", err, conn.Id(), l.id, l.replId)
 		nwError := l.utils.IsSeriousNetError(err)
 		l.logger.Debugf("releasing connection to pool after failure, cid=%d damaged=%v lid=%d rid=%s", conn.Id(), nwError, l.id, l.replId)
 		// l.connPool.Put(bucketName, conn, nwError)
 		if !nwError {
 			break
 		}
-		time.Sleep(l.opts.networkRetryInterval)
+		//time.Sleep(l.opts.networkRetryInterval)
 	}
 
 	return err

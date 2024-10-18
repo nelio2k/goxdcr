@@ -181,8 +181,13 @@ func (conn *gocbCoreConn) SetMeta(key string, body []byte, dataType uint8, targe
 }
 
 func (conn *gocbCoreConn) Close() error {
-	close(conn.finch)
-	return conn.agent.Close()
+	select {
+	case <-conn.finch:
+		return ErrWriterClosed
+	default:
+		close(conn.finch)
+		return conn.agent.Close()
+	}
 }
 
 type MemcachedAuthProvider struct {
