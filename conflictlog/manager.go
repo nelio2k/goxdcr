@@ -122,8 +122,10 @@ func (m *managerImpl) setConnPool() {
 	m.logger.Infof("creating conflict manager connection pool type=%s", m.connType)
 
 	fn := m.newGocbCoreConn
+	ConnType = 0
 	if m.connType == "memcached" {
 		fn = m.newMemcachedConn
+		ConnType = 1
 	}
 
 	m.connPool = iopool.NewConnPool(m.logger, m.connLimit, fn)
