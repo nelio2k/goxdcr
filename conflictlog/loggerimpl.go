@@ -54,6 +54,8 @@ type loggerImpl struct {
 
 	// wg is used to wait for outstanding log requests to be finished
 	wg sync.WaitGroup
+
+	conn *gocbCoreConn
 }
 
 type logRequest struct {
@@ -65,6 +67,11 @@ type logRequest struct {
 // newLoggerImpl creates a new logger impl instance.
 // throttlerSvc is allowed to be nil, which means no throttling
 func newLoggerImpl(logger *log.CommonLogger, replId string, utils utils.UtilsIface, throttlerSvc throttlerSvc.ThroughputThrottlerSvc, connPool iopool.ConnPool, opts ...LoggerOpt) (l *loggerImpl, err error) {
+	m, err := GetManager()
+	if err != nil {
+		return nil, err
+	}
+
 	// set the defaults
 	options := LoggerOptions{
 		rules:                nil,
@@ -80,6 +87,11 @@ func newLoggerImpl(logger *log.CommonLogger, replId string, utils utils.UtilsIfa
 	// override the defaults
 	for _, opt := range opts {
 		opt(&options)
+	}
+
+	conn, err := m.GetConn(options.rules.Target.Bucket)
+	if err != nil {
+		return nil, err
 	}
 
 	loggerId := newLoggerId()
@@ -99,6 +111,7 @@ func newLoggerImpl(logger *log.CommonLogger, replId string, utils utils.UtilsIfa
 		finch:            make(chan bool, 1),
 		shutdownWorkerCh: make(chan bool, LoggerShutdownChCap),
 		wg:               sync.WaitGroup{},
+		conn:             conn,
 	}
 
 	logger.Infof("spawning conflict logger workers replId=%s count=%d", l.replId, l.opts.workerCount)
@@ -186,6 +199,10 @@ func (l *loggerImpl) Close() (err error) {
 	close(l.logReqCh)
 
 	defer l.mu.Unlock()
+
+	if ConnType == 0 && l.conn.agent != nil {
+		l.conn.agent.Close()
+	}
 
 	l.wg.Wait()
 	l.logger.Infof("closing of conflict logger done id=%d replId=%s", l.id, l.replId)
@@ -364,17 +381,23 @@ func (l *loggerImpl) writeDocRetry(bucketName string, fn func(conn Connection) e
 	var conn Connection
 
 	for i := 0; i < l.opts.networkRetryCount; i++ {
-		conn, err = l.getFromPool(bucketName)
+		if ConnType != 0 {
+			conn, err = l.getFromPool(bucketName)
+		} else {
+			conn = l.conn
+		}
 		if err != nil {
 			// This is to account for nw errors while connecting
 			if !l.utils.IsSeriousNetError(err) {
+				l.logger.Debugf("not serious network error, err=%v, cid=%d lid=%d rid=%s", err, conn.Id(), l.id, l.replId)
 				return
 			}
+			l.logger.Debugf("serious network error, err=%v, cid=%d lid=%d rid=%s", err, conn.Id(), l.id, l.replId)
 			time.Sleep(l.opts.networkRetryInterval)
 			continue
 		}
 
-		l.logger.Debugf("got connection from pool, id=%d", conn.Id())
+		l.logger.Debugf("got connection from pool, cid=%d lid=%d rid=%s", conn.Id(), l.id, l.replId)
 
 		// The call to connPool.Put is not advised to be done in a defer here.
 		// This is because calling defer in a loop accumulates multiple defers
@@ -382,15 +405,19 @@ func (l *loggerImpl) writeDocRetry(bucketName string, fn func(conn Connection) e
 		// will be error prone in this case
 		err = fn(conn)
 		if err == nil {
-			l.logger.Debugf("releasing connection to pool after success, id=%d damaged=%v", conn.Id(), false)
-			l.connPool.Put(bucketName, conn, false)
+			l.logger.Debugf("releasing connection to pool after success, cid=%d damaged=%v lid=%d rid=%s", conn.Id(), false, l.id, l.replId)
+			if ConnType != 0 {
+				l.connPool.Put(bucketName, conn, false)
+			}
 			break
 		}
 
-		l.logger.Errorf("error in writing doc to conflict bucket err=%v", err)
+		// l.logger.Errorf("error in writing doc to conflict bucket err=%v, cid=%d lid=%d rid=%s", err, conn.Id(), l.id, l.replId)
 		nwError := l.utils.IsSeriousNetError(err)
-		l.logger.Debugf("releasing connection to pool after failure, id=%d damaged=%v", conn.Id(), nwError)
-		l.connPool.Put(bucketName, conn, nwError)
+		l.logger.Debugf("releasing connection to pool after failure, cid=%d damaged=%v lid=%d rid=%s", conn.Id(), nwError, l.id, l.replId)
+		if ConnType != 0 {
+			l.connPool.Put(bucketName, conn, nwError)
+		}
 		if !nwError {
 			break
 		}

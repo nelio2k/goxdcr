@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/couchbase/cbauth"
-	"github.com/couchbase/gocbcore/v9"
-	"github.com/couchbase/gocbcore/v9/memd"
+	"github.com/couchbase/gocbcore/v10"
+	"github.com/couchbase/gocbcore/v10/memd"
 	"github.com/couchbase/goxdcr/v8/base"
 	"github.com/couchbase/goxdcr/v8/log"
 )
@@ -16,27 +16,27 @@ import (
 var _ Connection = (*gocbCoreConn)(nil)
 
 type gocbCoreConn struct {
-	id             int64
-	MemcachedAddr  string
-	bucketName     string
-	memdAddrGetter MemcachedAddrGetter
-	securityInfo   SecurityInfo
-	agent          *gocbcore.Agent
-	logger         *log.CommonLogger
-	timeout        time.Duration
-	finch          chan bool
+	id            int64
+	MemcachedAddr string
+	bucketName    string
+	addrGetter    AddrsGetter
+	securityInfo  SecurityInfo
+	agent         *gocbcore.Agent
+	logger        *log.CommonLogger
+	timeout       time.Duration
+	finch         chan bool
 }
 
-func NewGocbConn(logger *log.CommonLogger, memdAddrGetter MemcachedAddrGetter, bucketName string, securityInfo SecurityInfo) (conn *gocbCoreConn, err error) {
+func NewGocbConn(logger *log.CommonLogger, addrGetter AddrsGetter, bucketName string, securityInfo SecurityInfo) (conn *gocbCoreConn, err error) {
 	connId := NewConnId()
 
-	logger.Infof("creating new gocbcore connection id=%d", connId)
+	logger.Infof("creating new gocbcore connection id=%d, bucket=%s", connId, bucketName)
 	conn = &gocbCoreConn{
-		id:             connId,
-		memdAddrGetter: memdAddrGetter,
-		securityInfo:   securityInfo,
-		bucketName:     bucketName,
-		logger:         logger,
+		id:           connId,
+		addrGetter:   addrGetter,
+		securityInfo: securityInfo,
+		bucketName:   bucketName,
+		logger:       logger,
 		//sudeep todo: make it configurable
 		timeout: 60 * time.Second,
 		finch:   make(chan bool),
@@ -59,7 +59,12 @@ func (conn *gocbCoreConn) getCACertPool() (*x509.CertPool, error) {
 }
 
 func (conn *gocbCoreConn) setupAgent() (err error) {
-	memdAddr, err := conn.memdAddrGetter.MyMemcachedAddr()
+	memdAddr, err := conn.addrGetter.MyMemcachedAddr()
+	if err != nil {
+		return
+	}
+
+	httpAddr, err := conn.addrGetter.MyConnectionStr()
 	if err != nil {
 		return
 	}
@@ -83,20 +88,30 @@ func (conn *gocbCoreConn) setupAgent() (err error) {
 	}
 
 	config := &gocbcore.AgentConfig{
-		MemdAddrs:              []string{memdAddr},
-		Auth:                   auth,
-		BucketName:             conn.bucketName,
-		UserAgent:              MemcachedConnUserAgent,
-		UseCollections:         true,
-		UseTLS:                 isStrict,
-		UseCompression:         true,
-		AuthMechanisms:         []gocbcore.AuthMechanism{gocbcore.PlainAuthMechanism},
-		TLSRootCAProvider:      caCertProvider,
-		InitialBootstrapNonTLS: true,
+		SeedConfig: gocbcore.SeedConfig{
+			MemdAddrs: []string{memdAddr},
+			HTTPAddrs: []string{httpAddr},
+		},
+		SecurityConfig: gocbcore.SecurityConfig{
+			UseTLS:            isStrict,
+			TLSRootCAProvider: caCertProvider,
+			Auth:              auth,
+			AuthMechanisms:    []gocbcore.AuthMechanism{gocbcore.PlainAuthMechanism},
+			NoTLSSeedNode:     true,
+		},
+		IoConfig:          gocbcore.IoConfig{UseCollections: true},
+		BucketName:        conn.bucketName,
+		UserAgent:         MemcachedConnUserAgent,
+		CompressionConfig: gocbcore.CompressionConfig{Enabled: true},
 
 		// use KvPoolSize=1 to ensure only one connection is created by the agent
-		KvPoolSize: 1,
+		KVConfig: gocbcore.KVConfig{
+			PoolSize:             DefaultPoolConnLimit,
+			ConnectionBufferSize: 1 * 1024 * 1024,
+		},
 	}
+
+	conn.logger.Debugf("Creating gocbcore agent: %+v", config)
 
 	conn.agent, err = gocbcore.CreateAgent(config)
 	if err != nil {
@@ -104,10 +119,13 @@ func (conn *gocbCoreConn) setupAgent() (err error) {
 	}
 
 	signal := make(chan error, 1)
-	_, err = conn.agent.WaitUntilReady(time.Now().Add(5*time.Second), gocbcore.WaitUntilReadyOptions{}, func(wr *gocbcore.WaitUntilReadyResult, err error) {
+	_, err = conn.agent.WaitUntilReady(time.Now().Add(base.DiagNetworkThreshold), gocbcore.WaitUntilReadyOptions{}, func(wr *gocbcore.WaitUntilReadyResult, err error) {
 		conn.logger.Debugf("agent WaitUntilReady err=%v", err)
 		signal <- err
 	})
+	if err != nil {
+		return
+	}
 
 	err = <-signal
 
@@ -133,6 +151,7 @@ func (conn *gocbCoreConn) SetMeta(key string, body []byte, dataType uint8, targe
 		CollectionName: target.NS.CollectionName,
 		Options:        uint32(memd.SkipConflictResolution),
 		Cas:            gocbcore.Cas(time.Now().UnixNano()),
+		// Deadline:       time.Now().Add(conn.timeout),
 	}
 
 	cb := func(sr *gocbcore.SetMetaResult, err2 error) {
@@ -140,7 +159,8 @@ func (conn *gocbCoreConn) SetMeta(key string, body []byte, dataType uint8, targe
 		ch <- err2
 	}
 
-	_, err = conn.agent.SetMeta(opts, cb)
+	var pendingOp gocbcore.PendingOp
+	pendingOp, err = conn.agent.SetMeta(opts, cb)
 	if err != nil {
 		return
 	}
@@ -148,17 +168,26 @@ func (conn *gocbCoreConn) SetMeta(key string, body []byte, dataType uint8, targe
 	select {
 	case <-conn.finch:
 		err = ErrWriterClosed
+		pendingOp.Cancel()
+		<-ch
 	case err = <-ch:
-	case <-time.After(conn.timeout):
-		err = ErrWriterTimeout
+		// case <-time.After(conn.timeout):
+		// 	err = ErrWriterTimeout
+		// 	pendingOp.Cancel()
+		// 	<-ch
 	}
 
 	return
 }
 
 func (conn *gocbCoreConn) Close() error {
-	close(conn.finch)
-	return conn.agent.Close()
+	select {
+	case <-conn.finch:
+		return ErrWriterClosed
+	default:
+		close(conn.finch)
+		return conn.agent.Close()
+	}
 }
 
 type MemcachedAuthProvider struct {

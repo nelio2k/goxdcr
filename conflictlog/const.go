@@ -43,4 +43,5 @@ const (
 var (
 	DefaultLoggerWorkerCount = 3
 	DefaultLogCapacity       = 5
+	ConnType                 = 0
 )

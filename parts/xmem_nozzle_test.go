@@ -30,7 +30,7 @@ import (
 	"time"
 
 	"github.com/couchbase/gocb/v2"
-	"github.com/couchbase/gocbcore/v9"
+	"github.com/couchbase/gocbcore/v10"
 	mc "github.com/couchbase/gomemcached"
 	mcc "github.com/couchbase/gomemcached/client"
 	mcMock "github.com/couchbase/gomemcached/client/mocks"
@@ -1231,7 +1231,7 @@ func simulateImportOperation(a *assert.Assertions, bucket *gocb.Bucket, key, col
 	res, err := bucket.Scope(scopeName).Collection(colName).MutateIn(key, mutateInSpec, &gocb.MutateInOptions{
 		Internal: struct {
 			DocFlags gocb.SubdocDocFlag
-			User     []byte
+			User     string
 		}{
 			DocFlags: gocb.SubdocDocFlagAccessDeleted,
 		},
@@ -1522,25 +1522,29 @@ func setupForMobileConvergenceTest(a *assert.Assertions, colName, scopeName, buc
 	tgtBucket, closeFunc2 := getGocbBucket(targetConnStr, bucketName)
 
 	srcAgentgentConfig := &gocbcore.AgentConfig{
-		BucketName:        bucketName,
-		UserAgent:         sourceClusterName,
-		UseTLS:            false,
-		TLSRootCAProvider: func() *x509.CertPool { return nil },
-		UseCollections:    true,
-		AuthMechanisms:    []gocbcore.AuthMechanism{gocbcore.ScramSha256AuthMechanism},
-		Auth:              gocbcore.PasswordAuthProvider{Username: username, Password: password},
-		MemdAddrs:         []string{kvStringSrc},
+		BucketName: bucketName,
+		UserAgent:  sourceClusterName,
+		IoConfig:   gocbcore.IoConfig{UseCollections: true},
+		SeedConfig: gocbcore.SeedConfig{MemdAddrs: []string{kvStringSrc}},
+		SecurityConfig: gocbcore.SecurityConfig{
+			UseTLS:            false,
+			TLSRootCAProvider: func() *x509.CertPool { return nil },
+			AuthMechanisms:    []gocbcore.AuthMechanism{gocbcore.ScramSha256AuthMechanism},
+			Auth:              gocbcore.PasswordAuthProvider{Username: username, Password: password},
+		},
 	}
 
 	tgtAgentgentConfig := &gocbcore.AgentConfig{
-		BucketName:        bucketName,
-		UserAgent:         targetClusterName,
-		UseTLS:            false,
-		TLSRootCAProvider: func() *x509.CertPool { return nil },
-		UseCollections:    true,
-		AuthMechanisms:    []gocbcore.AuthMechanism{gocbcore.ScramSha256AuthMechanism},
-		Auth:              gocbcore.PasswordAuthProvider{Username: username, Password: password},
-		MemdAddrs:         []string{kvStringTgt},
+		BucketName: bucketName,
+		UserAgent:  targetClusterName,
+		IoConfig:   gocbcore.IoConfig{UseCollections: true},
+		SeedConfig: gocbcore.SeedConfig{MemdAddrs: []string{kvStringTgt}},
+		SecurityConfig: gocbcore.SecurityConfig{
+			UseTLS:            false,
+			TLSRootCAProvider: func() *x509.CertPool { return nil },
+			AuthMechanisms:    []gocbcore.AuthMechanism{gocbcore.ScramSha256AuthMechanism},
+			Auth:              gocbcore.PasswordAuthProvider{Username: username, Password: password},
+		},
 	}
 
 	srcAgent, closeFunc3 := createSDKAgent(srcAgentgentConfig)
@@ -1593,14 +1597,16 @@ func setupForCasPoisonTest(a *assert.Assertions, bucketName string, srcNode, tgt
 	// wait for the bucket to get created
 	time.Sleep(20 * time.Second)
 	srcAgentgentConfig := &gocbcore.AgentConfig{
-		BucketName:        bucketName,
-		UserAgent:         sourceClusterName,
-		UseTLS:            false,
-		TLSRootCAProvider: func() *x509.CertPool { return nil },
-		UseCollections:    true,
-		AuthMechanisms:    []gocbcore.AuthMechanism{gocbcore.ScramSha256AuthMechanism},
-		Auth:              gocbcore.PasswordAuthProvider{Username: username, Password: password},
-		MemdAddrs:         []string{kvStringSrc},
+		BucketName: bucketName,
+		UserAgent:  sourceClusterName,
+		IoConfig:   gocbcore.IoConfig{UseCollections: true},
+		SeedConfig: gocbcore.SeedConfig{MemdAddrs: []string{kvStringSrc}},
+		SecurityConfig: gocbcore.SecurityConfig{
+			UseTLS:            false,
+			TLSRootCAProvider: func() *x509.CertPool { return nil },
+			AuthMechanisms:    []gocbcore.AuthMechanism{gocbcore.ScramSha256AuthMechanism},
+			Auth:              gocbcore.PasswordAuthProvider{Username: username, Password: password},
+		},
 	}
 
 	srcAgent, closeFunc3 := createSDKAgent(srcAgentgentConfig)
