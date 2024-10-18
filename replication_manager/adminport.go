@@ -1484,6 +1484,7 @@ func (adminport *Adminport) doChangeConflictLogSetting(request *http.Request) (*
 
 			logger_ap.Infof("changing connLimit = %s => %v", connLimit, i)
 			m.SetConnLimit(i)
+			conflictlog.DefaultPoolConnLimit = i
 		default:
 			continue
 		}

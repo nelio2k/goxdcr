@@ -11,7 +11,6 @@ const (
 	ConflictManagerLoggerName        = "conflictMgr"
 	ConflictLoggerName        string = "conflictLogger"
 	MemcachedConnUserAgent           = "conflictLog"
-	DefaultPoolConnLimit             = 10
 
 	// Logger consts
 	DefaultSetMetaTimeout       = 5 * time.Second
@@ -43,5 +42,6 @@ const (
 var (
 	DefaultLoggerWorkerCount = 3
 	DefaultLogCapacity       = 5
+	DefaultPoolConnLimit     = 10
 	ConnType                 = 0
 )
