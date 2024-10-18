@@ -67,10 +67,6 @@ type logRequest struct {
 // newLoggerImpl creates a new logger impl instance.
 // throttlerSvc is allowed to be nil, which means no throttling
 func newLoggerImpl(logger *log.CommonLogger, replId string, utils utils.UtilsIface, throttlerSvc throttlerSvc.ThroughputThrottlerSvc, connPool iopool.ConnPool, opts ...LoggerOpt) (l *loggerImpl, err error) {
-	m, err := GetManager()
-	if err != nil {
-		return nil, err
-	}
 
 	// set the defaults
 	options := LoggerOptions{
@@ -89,9 +85,16 @@ func newLoggerImpl(logger *log.CommonLogger, replId string, utils utils.UtilsIfa
 		opt(&options)
 	}
 
-	conn, err := m.GetConn(options.rules.Target.Bucket)
-	if err != nil {
-		return nil, err
+	var conn *gocbCoreConn
+	if ConnType == 0 {
+		m, err := GetManager()
+		if err != nil {
+			return nil, err
+		}
+		conn, err = m.GetConn(options.rules.Target.Bucket)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	loggerId := newLoggerId()
