@@ -200,6 +200,10 @@ func (l *loggerImpl) Close() (err error) {
 
 	defer l.mu.Unlock()
 
+	if ConnType == 0 && l.conn.agent != nil {
+		l.conn.agent.Close()
+	}
+
 	l.wg.Wait()
 	l.logger.Infof("closing of conflict logger done id=%d replId=%s", l.id, l.replId)
 
