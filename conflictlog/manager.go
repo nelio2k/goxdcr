@@ -23,6 +23,7 @@ type Manager interface {
 	SetConnLimit(limit int)
 	SetIOPSLimit(limit int64)
 	SetSkipTlsVerify(bool)
+	GetConn(string) (*gocbCoreConn, error)
 }
 
 type SecurityInfo interface {
@@ -152,6 +153,10 @@ func (m *managerImpl) ConnPool() iopool.ConnPool {
 func (m *managerImpl) newGocbCoreConn(bucketName string) (conn io.Closer, err error) {
 	m.logger.Infof("creating new conflict gocbcore bucket=%s encStrict=%v", bucketName, m.securityInfo.IsClusterEncryptionLevelStrict())
 
+	return NewGocbConn(m.logger, m.AddrsGetter, bucketName, m.securityInfo)
+}
+
+func (m *managerImpl) GetConn(bucketName string) (*gocbCoreConn, error) {
 	return NewGocbConn(m.logger, m.AddrsGetter, bucketName, m.securityInfo)
 }
 

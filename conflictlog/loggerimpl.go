@@ -54,6 +54,8 @@ type loggerImpl struct {
 
 	// wg is used to wait for outstanding log requests to be finished
 	wg sync.WaitGroup
+
+	conn *gocbCoreConn
 }
 
 type logRequest struct {
@@ -65,6 +67,11 @@ type logRequest struct {
 // newLoggerImpl creates a new logger impl instance.
 // throttlerSvc is allowed to be nil, which means no throttling
 func newLoggerImpl(logger *log.CommonLogger, replId string, utils utils.UtilsIface, throttlerSvc throttlerSvc.ThroughputThrottlerSvc, connPool iopool.ConnPool, opts ...LoggerOpt) (l *loggerImpl, err error) {
+	m, err := GetManager()
+	if err != nil {
+		return nil, err
+	}
+
 	// set the defaults
 	options := LoggerOptions{
 		rules:                nil,
@@ -80,6 +87,11 @@ func newLoggerImpl(logger *log.CommonLogger, replId string, utils utils.UtilsIfa
 	// override the defaults
 	for _, opt := range opts {
 		opt(&options)
+	}
+
+	conn, err := m.GetConn(options.rules.Target.Bucket)
+	if err != nil {
+		return nil, err
 	}
 
 	loggerId := newLoggerId()
@@ -99,6 +111,7 @@ func newLoggerImpl(logger *log.CommonLogger, replId string, utils utils.UtilsIfa
 		finch:            make(chan bool, 1),
 		shutdownWorkerCh: make(chan bool, LoggerShutdownChCap),
 		wg:               sync.WaitGroup{},
+		conn:             conn,
 	}
 
 	logger.Infof("spawning conflict logger workers replId=%s count=%d", l.replId, l.opts.workerCount)
@@ -364,7 +377,8 @@ func (l *loggerImpl) writeDocRetry(bucketName string, fn func(conn Connection) e
 	var conn Connection
 
 	for i := 0; i < l.opts.networkRetryCount; i++ {
-		conn, err = l.getFromPool(bucketName)
+		// conn, err = l.getFromPool(bucketName)
+		conn = l.conn
 		if err != nil {
 			// This is to account for nw errors while connecting
 			if !l.utils.IsSeriousNetError(err) {
@@ -392,7 +406,7 @@ func (l *loggerImpl) writeDocRetry(bucketName string, fn func(conn Connection) e
 		l.logger.Errorf("error in writing doc to conflict bucket err=%v, cid=%d lid=%d rid=%s", err, conn.Id(), l.id, l.replId)
 		nwError := l.utils.IsSeriousNetError(err)
 		l.logger.Debugf("releasing connection to pool after failure, cid=%d damaged=%v lid=%d rid=%s", conn.Id(), nwError, l.id, l.replId)
-		l.connPool.Put(bucketName, conn, nwError)
+		// l.connPool.Put(bucketName, conn, nwError)
 		if !nwError {
 			break
 		}

@@ -106,7 +106,7 @@ func (conn *gocbCoreConn) setupAgent() (err error) {
 
 		// use KvPoolSize=1 to ensure only one connection is created by the agent
 		KVConfig: gocbcore.KVConfig{
-			PoolSize:             1,
+			PoolSize:             DefaultPoolConnLimit,
 			ConnectionBufferSize: 1 * 1024 * 1024,
 		},
 	}
