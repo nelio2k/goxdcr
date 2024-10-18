@@ -151,7 +151,7 @@ func (conn *gocbCoreConn) SetMeta(key string, body []byte, dataType uint8, targe
 		CollectionName: target.NS.CollectionName,
 		Options:        uint32(memd.SkipConflictResolution),
 		Cas:            gocbcore.Cas(time.Now().UnixNano()),
-		Deadline:       time.Now().Add(conn.timeout),
+		// Deadline:       time.Now().Add(conn.timeout),
 	}
 
 	cb := func(sr *gocbcore.SetMetaResult, err2 error) {
