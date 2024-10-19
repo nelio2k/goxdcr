@@ -111,7 +111,7 @@ func (conn *gocbCoreConn) setupAgent() (err error) {
 		},
 	}
 
-	conn.logger.Debugf("Creating gocbcore agent: %+v", config)
+	conn.logger.Infof("Creating gocbcore agent: %+v", config)
 
 	conn.agent, err = gocbcore.CreateAgent(config)
 	if err != nil {
