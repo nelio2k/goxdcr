@@ -59,7 +59,7 @@ func (conn *gocbCoreConn) getCACertPool() (*x509.CertPool, error) {
 }
 
 func (conn *gocbCoreConn) setupAgent() (err error) {
-	memdAddr, err := conn.addrGetter.MyMemcachedAddr()
+	_, err = conn.addrGetter.MyMemcachedAddr()
 	if err != nil {
 		return
 	}
@@ -89,7 +89,7 @@ func (conn *gocbCoreConn) setupAgent() (err error) {
 
 	config := &gocbcore.AgentConfig{
 		SeedConfig: gocbcore.SeedConfig{
-			MemdAddrs: []string{memdAddr},
+			// MemdAddrs: []string{memdAddr},
 			HTTPAddrs: []string{httpAddr},
 		},
 		SecurityConfig: gocbcore.SecurityConfig{
