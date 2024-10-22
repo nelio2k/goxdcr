@@ -283,7 +283,7 @@ func (xdcrf *XDCRFactory) newPipelineCommon(topic string, pipelineType common.Pi
 
 	xdcrf.logger.Infof("%v kv_vb_map=%v\n", partTopic, kv_vb_map)
 
-	sourceClusterUUID, err := xdcrf.xdcr_topology_svc.MyClusterUuid()
+	sourceClusterUUID, err := xdcrf.xdcr_topology_svc.MyClusterUUID()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -903,10 +903,6 @@ func (xdcrf *XDCRFactory) constructUpdateSettingsForXmemNozzle(pipeline common.P
 	if ok {
 		xmemSettings[parts.XMEM_DEV_BACKFILL_SLEEP_DELAY] = backfillSleepDelay
 	}
-	mobile, ok := settings[metadata.MobileCompatibleKey]
-	if ok {
-		xmemSettings[parts.MobileCompatible] = mobile
-	}
 	conflictLoggingMap, ok := settings[metadata.ConflictLoggingKey]
 	if ok {
 		xmemSettings[parts.ConflictLogging] = conflictLoggingMap
@@ -1371,11 +1367,6 @@ func (xdcrf *XDCRFactory) constructSettingsForRouter(pipeline common.Pipeline, s
 		routerSettings[parts.FilterExpDelKey] = filterExpDelMode
 	}
 
-	mobileCompatible, ok := settings[parts.MobileCompatible]
-	if ok {
-		routerSettings[parts.MobileCompatible] = mobileCompatible
-	}
-
 	xdcrf.disableCollectionIfNeeded(settings, routerSettings, pipeline.Specification().GetReplicationSpec())
 
 	// Router keeps a copy of the current highest target manifest ID
@@ -1397,11 +1388,6 @@ func (xdcrf *XDCRFactory) constructSettingsForRouter(pipeline common.Pipeline, s
 	explicitMappingRules, ok := settings[metadata.CollectionsMappingRulesKey]
 	if ok {
 		routerSettings[metadata.CollectionsMappingRulesKey] = explicitMappingRules
-	}
-
-	crossCluster, ok := settings[base.EnableCrossClusterVersioningKey]
-	if ok {
-		routerSettings[base.EnableCrossClusterVersioningKey] = crossCluster
 	}
 
 	casDriftThreshold, ok := settings[metadata.CASDriftThresholdSecsKey]

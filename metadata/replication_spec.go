@@ -291,3 +291,51 @@ func ParseDelBackfillIntoSettingMap(replId string) map[string]interface{} {
 	settingsMap[CollectionsDelAllBackfillKey] = true
 	return settingsMap
 }
+
+type ReplSpecList []*ReplicationSpecification
+
+func (r ReplSpecList) Clone() ReplSpecList {
+	newList := make([]*ReplicationSpecification, len(r))
+	for i, spec := range r {
+		newList[i] = spec.Clone()
+	}
+	return newList
+}
+
+func (r ReplSpecList) SameAs(other ReplSpecList) bool {
+	if len(r) != len(other) {
+		return false
+	}
+
+	otherMap := make(map[string]*ReplicationSpecification, len(other))
+	for _, spec := range other {
+		otherMap[spec.Id] = spec
+	}
+
+	for _, rSpec := range r {
+		otherSpec, exists := otherMap[rSpec.Id]
+		if !exists || !rSpec.SameSpec(otherSpec) {
+			return false
+		}
+	}
+	return true
+}
+
+func (r ReplSpecList) String() any {
+	var strBuilder strings.Builder
+	for _, spec := range r {
+		strBuilder.WriteString(fmt.Sprintf("Id: %s Settings: %s ", spec.Id, spec.Settings.ToMap(false)))
+	}
+	return strBuilder.String()
+}
+
+func (r ReplSpecList) Redact() ReplSpecList {
+	if r == nil {
+		return nil
+	}
+
+	for i, spec := range r {
+		r[i] = spec.Redact()
+	}
+	return r
+}

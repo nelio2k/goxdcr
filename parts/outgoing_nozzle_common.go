@@ -227,9 +227,13 @@ type dataBatch struct {
 	// At the beginning of each batch we will check the config to decide the getMeta/getSubdoc, setMeta and conflict logging behavior.
 	// Note that these are only needed for CCR and mobile currently. The specs will be nil otherwise. If nil, getMeta will be used.
 	// These are "templated" and references in each wrapped MCRequest will be created to refer to them
-	getMetaSpecWithoutHlv []base.SubdocLookupPathSpec
-	getMetaSpecWithHlv    []base.SubdocLookupPathSpec
-	getBodySpec           []base.SubdocLookupPathSpec // This one will get document body in addition to document metadata. Used for CCR only
+	getMetaSpecWithoutHlv  []base.SubdocLookupPathSpec
+	getMetaSpecWithHlv     []base.SubdocLookupPathSpec
+	getBodySpec            []base.SubdocLookupPathSpec // This one will get document body in addition to document metadata. Used for CCR only
+	isCCR                  bool
+	isMobile               bool
+	crossClusterVer        bool
+	conflictLoggingEnabled bool
 
 	curCount          uint32
 	curSize           uint32
@@ -239,8 +243,6 @@ type dataBatch struct {
 	logger            *log.CommonLogger
 	batch_nonempty_ch chan bool
 	nonempty_set      bool
-
-	conflictLoggingEnabled bool
 }
 
 type responseLookup struct {
@@ -346,8 +348,7 @@ func (b *dataBatch) accumuBatch(req *base.WrappedMCRequest, classifyFunc func(re
 		req.GetMetaSpecWithoutHlv = b.getMetaSpecWithoutHlv
 		req.GetMetaSpecWithHlv = b.getMetaSpecWithHlv
 		req.GetBodySpec = b.getBodySpec
-
-		req.HLVModeOptions.ConflictLoggingEnabled = b.conflictLoggingEnabled
+		req.SetHLVModeOptions(b.isMobile, b.isCCR, b.crossClusterVer, b.conflictLoggingEnabled)
 
 		size := req.Req.Size()
 

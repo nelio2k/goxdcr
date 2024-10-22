@@ -99,7 +99,7 @@ func (_c *Filter_FilterUprEvent_Call) RunAndReturn(run func(*base.WrappedUprEven
 }
 
 // SetMobileCompatibility provides a mock function with given fields: val
-func (_m *Filter) SetMobileCompatibility(val uint32) {
+func (_m *Filter) SetMobileCompatibility(val int) {
 	_m.Called(val)
 }
 
@@ -109,14 +109,14 @@ type Filter_SetMobileCompatibility_Call struct {
 }
 
 // SetMobileCompatibility is a helper method to define mock.On call
-//   - val uint32
+//   - val int
 func (_e *Filter_Expecter) SetMobileCompatibility(val interface{}) *Filter_SetMobileCompatibility_Call {
 	return &Filter_SetMobileCompatibility_Call{Call: _e.mock.On("SetMobileCompatibility", val)}
 }
 
-func (_c *Filter_SetMobileCompatibility_Call) Run(run func(val uint32)) *Filter_SetMobileCompatibility_Call {
+func (_c *Filter_SetMobileCompatibility_Call) Run(run func(val int)) *Filter_SetMobileCompatibility_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(uint32))
+		run(args[0].(int))
 	})
 	return _c
 }
@@ -126,7 +126,7 @@ func (_c *Filter_SetMobileCompatibility_Call) Return() *Filter_SetMobileCompatib
 	return _c
 }
 
-func (_c *Filter_SetMobileCompatibility_Call) RunAndReturn(run func(uint32)) *Filter_SetMobileCompatibility_Call {
+func (_c *Filter_SetMobileCompatibility_Call) RunAndReturn(run func(int)) *Filter_SetMobileCompatibility_Call {
 	_c.Call.Return(run)
 	return _c
 }

@@ -1356,7 +1356,7 @@ func (xmem *XmemNozzle) batchSetMetaWithRetry(batch *dataBatch, numOfRetry int) 
 			switch needSendStatus {
 			case Send:
 				lookupResp, err := batch.sendLookupMap.deregisterLookup(item.UniqueKey)
-				if xmem.nonOptimisticCROnly() && err != nil {
+				if xmem.nonOptimisticCROnly(item) && err != nil {
 					// only relevent when only source CR is to be done i.e. mobile and CCR mode
 					xmem.Logger().Warnf("For unique-key %v%s%v, error deregistering lookupResp for Send, err=%v", base.UdTagBegin, item.UniqueKey, base.UdTagEnd, err)
 				}
@@ -2294,7 +2294,7 @@ func (xmem *XmemNozzle) batchGet(get_map base.McRequestMap) (noRep_map map[strin
 				switch CRResult {
 				case crMeta.CRSendToTarget:
 					// Import mutations sent will be counted when we send since we will get a more accurate count then.
-					// If target document does not exist, we only parse for importCas at send time.
+					// If target document does not exist, we only parse for importCas (_mou.cas) at send time.
 					err := sendLookupMap.registerLookup(uniqueKey, resp)
 					if err != nil {
 						xmem.Logger().Warnf("For unique-key %v%s%v, error registering lookup for SendToTarget response, err=%v", base.UdTagBegin, uniqueKey, base.UdTagEnd, err)
@@ -2447,7 +2447,7 @@ func (xmem *XmemNozzle) opcodeAndSpecsForGetOp(wrappedReq *base.WrappedMCRequest
 		getSpecs = getBodySpec
 	} else if xmem.getCrossClusterVers() && wrappedReq.HLVModeOptions.ActualCas >= xmem.config.vbHlvMaxCas[incomingReq.VBucket] {
 		// Note that there is no mixed mode support for import mutations. If enableCrossClusterVersioning is false,
-		// and current source mutation already has HLV, we still don't get target importCas/HLV. The reason is to
+		// and current source mutation already has HLV, we still don't get target importCas (_mou.cas) / HLV. The reason is to
 		// figure out that current source mutation already has HLV will require us to parse the body. It has a
 		// performance impact. Mobile does not expect to support import on target in mixed mode. This is because for
 		// cas < max_cas or in mixed mode only active-passive XDCR-SGW setup is originally supported. Doing import
@@ -2547,7 +2547,11 @@ func (xmem *XmemNozzle) uncompressBody(req *base.WrappedMCRequest) error {
 // Preserve all Xattributes except source _sync and old HLV if it has been updated
 // Returns the error if any and a boolean which indicates if we are replicating the source _mou.
 // The caller may have to manually delete the target _mou if the return value is false.
-func (xmem *XmemNozzle) preserveSourceXattrs(wrappedReq *base.WrappedMCRequest, sourceDocMeta *crMeta.CRMetadata, updatedHLV bool, updater func(key []byte, val []byte) error) (bool, error) {
+// If a non-nil "lookupMap" is passed by the caller, it will be populated with the source xattrs
+// written by "updater" (except _vv, _mou and _sync as they are well recognised by XDCR)
+func (xmem *XmemNozzle) preserveSourceXattrs(wrappedReq *base.WrappedMCRequest, sourceDocMeta *crMeta.CRMetadata,
+	updatedHLV bool, updater func(key []byte, val []byte) error, lookupMap map[string]bool) (bool, error) {
+
 	mouIsReplicated := false
 	if !base.HasXattr(wrappedReq.Req.DataType) {
 		// no xattrs to process
@@ -2566,7 +2570,9 @@ func (xmem *XmemNozzle) preserveSourceXattrs(wrappedReq *base.WrappedMCRequest, 
 		if err != nil {
 			return mouIsReplicated, err
 		}
-		switch string(key) {
+
+		xattrKey := string(key)
+		switch xattrKey {
 		case base.XATTR_HLV:
 			if updatedHLV {
 				// We have updated the hlv so skip the old HLV
@@ -2582,15 +2588,19 @@ func (xmem *XmemNozzle) preserveSourceXattrs(wrappedReq *base.WrappedMCRequest, 
 		case base.XATTR_MOU:
 			mouIsReplicated = true
 			if sourceDocMeta != nil && !sourceDocMeta.IsImportMutation() {
-				// Remove importCAS from _mou if it is no longer an import mutation.
+				// Remove cas (importCAS) from _mou if it is no longer an import mutation.
 				// This happens when there are non-imported updates on top of an import mutation
 
 				if wrappedReq.MouAfterProcessing == nil {
-					// _mou had only importCAS and pRev, no need to write
+					// _mou had only cas (importCAS) and pRev, no need to write
 					mouIsReplicated = false
 					continue
 				}
 				value = wrappedReq.MouAfterProcessing
+			}
+		default:
+			if lookupMap != nil {
+				lookupMap[xattrKey] = true
 			}
 		}
 
@@ -2642,14 +2652,17 @@ func (xmem *XmemNozzle) updateSystemXattrForTarget(wrappedReq *base.WrappedMCReq
 	updateHLV := crMeta.NeedToUpdateHlv(sourceDocMeta, vbHlvMaxCas, time.Duration(atomic.LoadUint32(&xmem.config.hlvPruningWindowSec))*time.Second)
 
 	if wrappedReq.IsSubdocOp() {
-		return xmem.updateSystemXattrForSubdocOp(wrappedReq, lookup, sourceDocMeta, updateHLV)
+		// for a subdoc op, we should always update HLV,
+		// given that we need to perform a cas macro expansion.
+		// Otherwise the target cas will rollback.
+		return xmem.updateSystemXattrForSubdocOp(wrappedReq, lookup, sourceDocMeta, true)
 	} else {
 		return xmem.updateSystemXattrForMetaOp(wrappedReq, lookup, sourceDocMeta, updateHLV)
 	}
 }
 
 // will update the system xattr to replicate when using the *_WITH_META commands.
-func (xmem *XmemNozzle) updateSystemXattrForMetaOp(wrappedReq *base.WrappedMCRequest, lookup *base.SubdocLookupResponse, sourceMeta *crMeta.CRMetadata, updateHLV bool) (err error) {
+func (xmem *XmemNozzle) updateSystemXattrForMetaOp(wrappedReq *base.WrappedMCRequest, lookup *base.SubdocLookupResponse, sourceDocMeta *crMeta.CRMetadata, updateHLV bool) (err error) {
 	// Now we need to update HLV xattr either because of new changes or because we have to prune
 	// The max increase in body length is adding 2 uint32 and _vv\x00{"cvCas":"0x...","src":"<clusterId>","ver":"0x..."}\x00
 
@@ -2708,13 +2721,13 @@ func (xmem *XmemNozzle) updateSystemXattrForMetaOp(wrappedReq *base.WrappedMCReq
 	xattrComposer := base.NewXattrComposer(newbody)
 
 	if updateHLV {
-		_, pruned, err := crMeta.ConstructXattrFromHlvForSetMeta(sourceMeta, time.Duration(atomic.LoadUint32(&xmem.config.hlvPruningWindowSec))*time.Second, xattrComposer)
+		_, pruned, err := crMeta.ConstructXattrFromHlvForSetMeta(sourceDocMeta, time.Duration(atomic.LoadUint32(&xmem.config.hlvPruningWindowSec))*time.Second, xattrComposer)
 		if err != nil {
 			err = fmt.Errorf("error decoding source mutation for key=%v%s%v, req=%v%v%v, reqBody=%v%v%v, sourceMeta=%s in updateSystemXattrForTarget, err=%v",
 				base.UdTagBegin, req.Key, base.UdTagEnd,
 				base.UdTagBegin, req, base.UdTagEnd,
 				base.UdTagBegin, req.Body, base.UdTagEnd,
-				sourceMeta, err)
+				sourceDocMeta, err)
 			return err
 		}
 
@@ -2733,7 +2746,7 @@ func (xmem *XmemNozzle) updateSystemXattrForMetaOp(wrappedReq *base.WrappedMCReq
 	}
 
 	// decide to preserve or not preserve source xattrs before replicating to target
-	_, err = xmem.preserveSourceXattrs(wrappedReq, sourceMeta, updateHLV, xattrComposer.WriteKV)
+	_, err = xmem.preserveSourceXattrs(wrappedReq, sourceDocMeta, updateHLV, xattrComposer.WriteKV, nil)
 	if err != nil {
 		return err
 	}
@@ -2758,37 +2771,50 @@ func (xmem *XmemNozzle) updateSystemXattrForSubdocOp(wrappedReq *base.WrappedMCR
 
 	req := wrappedReq.Req
 	var spec base.SubdocMutationPathSpec
-	var pruned bool
 	specs := base.NewSubdocMutationPathSpecs()
+	// lookup for all the source document xattrs,
+	// expect for _vv, _mou and _sync, as they are well recognised by XDCR.
+	sourceXattrsMap := make(map[string]bool)
 
 	if updateHLV {
-		var pvSlice, mvSlice []byte
+		maxHlvLen := 2 /* {...} */ +
+			len(crMeta.HLV_CVCAS_FIELD) + 3 /* "cvCas": */ + 21 /* "0x<16bytes>", */ +
+			len(crMeta.HLV_SRC_FIELD) + 3 /* "src": */ + len(xmem.sourceActorId) + 3 /* "<bucketId>", */ +
+			len(crMeta.HLV_VER_FIELD) + 3 /* "ver": */ + 21 /* "0x<16byte>", */
+
 		pv := sourceDocMeta.GetHLV().GetPV()
-		mv := sourceDocMeta.GetHLV().GetMV()
 		if len(pv) > 0 {
-			pvlen := hlv.BytesRequired(pv)
-			pvSlice, err = xmem.dataPool.GetByteSlice(uint64(pvlen))
-			if err != nil {
-				pvSlice = make([]byte, pvlen)
-				xmem.RaiseEvent(common.NewEvent(common.DataPoolGetFail, 1, xmem, nil, nil))
-			} else {
-				wrappedReq.AddByteSliceForXmemToRecycle(pvSlice)
-			}
+			maxHlvLen += len(crMeta.HLV_PV_FIELD) + 3 /* "pv": */ + hlv.BytesRequired(pv) + 1 /* , */
 		}
+
+		mv := sourceDocMeta.GetHLV().GetMV()
 		if len(mv) > 0 {
-			mvlen := hlv.BytesRequired(mv)
-			mvSlice, err = xmem.dataPool.GetByteSlice(uint64(mvlen))
-			if err != nil {
-				mvSlice = make([]byte, mvlen)
-				xmem.RaiseEvent(common.NewEvent(common.DataPoolGetFail, 1, xmem, nil, nil))
-			} else {
-				wrappedReq.AddByteSliceForXmemToRecycle(mvSlice)
-			}
+			maxHlvLen += len(crMeta.HLV_MV_FIELD) + 3 /* "mv": */ + hlv.BytesRequired(mv)
 		}
-		pruned, err = crMeta.ConstructSpecsFromHlvForSubdocOp(sourceDocMeta, time.Duration(atomic.LoadUint32(&xmem.config.hlvPruningWindowSec))*time.Second, &specs, wrappedReq.SubdocCmdOptions.TargetHasPv, wrappedReq.SubdocCmdOptions.TargetHasMv, pvSlice, mvSlice)
+
+		newHlv, err := xmem.dataPool.GetByteSlice(uint64(maxHlvLen))
 		if err != nil {
+			newHlv = make([]byte, maxHlvLen)
+			xmem.RaiseEvent(common.NewEvent(common.DataPoolGetFail, 1, xmem, nil, nil))
+		} else {
+			wrappedReq.AddByteSliceForXmemToRecycle(newHlv)
+		}
+
+		pos, pruned, err := crMeta.ConstructHlv(newHlv, 0, sourceDocMeta, time.Duration(atomic.LoadUint32(&xmem.config.hlvPruningWindowSec))*time.Second)
+		if err != nil {
+			err = fmt.Errorf("error decoding source mutation for key=%v%s%v, req=%v%v%v, reqBody=%v%v%v in updateSystemXattrForSubdocOp, err=%v", base.UdTagBegin, req.Key, base.UdTagEnd, base.UdTagBegin, req, base.UdTagEnd, base.UdTagBegin, req.Body, base.UdTagEnd, err)
 			return err
 		}
+
+		// spec to update HLV or _vv xattr
+		spec = base.NewSubdocMutationPathSpec(uint8(base.SUBDOC_DICT_UPSERT), uint8(base.SUBDOC_FLAG_MKDIR_P|base.SUBDOC_FLAG_XATTR), []byte(base.XATTR_HLV), newHlv[:pos])
+		specs = append(specs, spec)
+
+		// set cvCas as regenerated Cas from mc.SET/DELETE using macro expansion.
+		// MKDIR_P is not set, because we know for sure there exists cvCas on target since we used it for conflict resolution,
+		// otherwise there is something wrong
+		spec = base.NewSubdocMutationPathSpec(uint8(base.SUBDOC_DICT_UPSERT), uint8(base.SUBDOC_FLAG_XATTR|base.SUBDOC_FLAG_EXPAND_MACROS), []byte(crMeta.XATTR_CVCAS_PATH), []byte(base.CAS_MACRO_EXPANSION))
+		specs = append(specs, spec)
 
 		xmem.RaiseEvent(common.NewEvent(common.HlvUpdated, nil, xmem, nil, nil))
 		if pruned {
@@ -2797,7 +2823,7 @@ func (xmem *XmemNozzle) updateSystemXattrForSubdocOp(wrappedReq *base.WrappedMCR
 	}
 
 	// decide to preserve or not preserve source xattrs before replicating to target
-	mouReplicated, err := xmem.preserveSourceXattrs(wrappedReq, sourceDocMeta, updateHLV, specs.WriteKV)
+	mouReplicated, err := xmem.preserveSourceXattrs(wrappedReq, sourceDocMeta, updateHLV, specs.WriteKV, sourceXattrsMap)
 	if err != nil {
 		return err
 	}
@@ -2807,6 +2833,42 @@ func (xmem *XmemNozzle) updateSystemXattrForSubdocOp(wrappedReq *base.WrappedMCR
 	if !mouReplicated && wrappedReq.SubdocCmdOptions.TargetHasMou {
 		spec = base.NewSubdocMutationPathSpec(uint8(base.SUBDOC_DELETE), uint8(base.SUBDOC_FLAG_XATTR), []byte(base.XATTR_MOU), nil)
 		specs = append(specs, spec)
+	}
+
+	// delete all the other xattrs - user xattrs and system xattrs that XDCR doesn't recognise
+	// (other than _vv, _sync and _mou), that are present on target document, but not on the source document.
+	xtoc, err := lookup.ResponseForAPath(base.XattributeToc)
+	if err != nil {
+		return fmt.Errorf("%v: XTOC was not fetched, err=%v, eccv=%v, mobile=%v",
+			xmem.Id(), err, xmem.getCrossClusterVers(), xmem.getMobileCompatible())
+	}
+
+	targetXattrs, err := base.NewXTOCIterator(xtoc)
+	if err != nil {
+		return err
+	}
+
+	for targetXattrs.HasNext() {
+		targetXattr, err := targetXattrs.Next()
+		if err != nil {
+			return err
+		}
+
+		if len(targetXattr) == 0 ||
+			base.Equals(targetXattr, base.XATTR_HLV) ||
+			base.Equals(targetXattr, base.XATTR_MOBILE) ||
+			base.Equals(targetXattr, base.XATTR_MOU) {
+			// XDCR can recognise these system xattrs
+			// and should be updated above. These should
+			// not be deleted.
+			continue
+		}
+
+		_, existsOnSourceDoc := sourceXattrsMap[string(targetXattr)]
+		if !existsOnSourceDoc {
+			spec = base.NewSubdocMutationPathSpec(uint8(base.SUBDOC_DELETE), uint8(base.SUBDOC_FLAG_XATTR), targetXattr, nil)
+			specs = append(specs, spec)
+		}
 	}
 
 	var accessDeleted bool
@@ -3048,12 +3110,16 @@ func (xmem *XmemNozzle) initNewBatch() {
 
 	// continue with the same behaviour during the entire lifecycle
 	// for all the requests of this batch.
+	xmem.batch.isCCR = isCCR
+	xmem.batch.isMobile = isMobile
+	xmem.batch.crossClusterVer = crossClusterVers
 	xmem.batch.conflictLoggingEnabled = conflictLoggingEnabled
 
 	subdocSpecOpt := base.SubdocSpecOption{}
 	if isMobile {
 		subdocSpecOpt.IncludeMobileSync = true
 		subdocSpecOpt.IncludeVXattr = true
+		subdocSpecOpt.IncludeXTOC = true
 		// For mixed mode, we never need to get target HLV
 		xmem.batch.getMetaSpecWithoutHlv = base.ComposeSpecForSubdocGet(subdocSpecOpt)
 	}
@@ -3193,9 +3259,11 @@ func (xmem *XmemNozzle) setClient(client *base.XmemClient, isSetMeta bool) {
 
 func shouldUpdateNonTempErrResponse(seenBefore, nonTempErrSeen bool, nonTempErrSeenBefore, nonTempErrSeenNow mc.Status) bool {
 	return nonTempErrSeen &&
-		((seenBefore && nonTempErrSeenBefore != nonTempErrSeenNow) || !seenBefore)
+		(!seenBefore || (seenBefore && nonTempErrSeenBefore != nonTempErrSeenNow))
 }
 
+// Used to create a UI alert when non-temporary errors are received from xmem.client_for_setMeta,
+// and then subsequently dismiss them when some other type of response is received for the same buffer "pos".
 func (xmem *XmemNozzle) markNonTempErrorResponse(response *mc.MCResponse, nonTempErrSeen bool) {
 	if response == nil {
 		return
@@ -3227,12 +3295,17 @@ func (xmem *XmemNozzle) markNonTempErrorResponse(response *mc.MCResponse, nonTem
 // Note that this function should not be used to
 // identify if a given request performs optimistic cas locking or not.
 // Use IsCasLockingRequest for that.
-func (xmem *XmemNozzle) nonOptimisticCROnly() bool {
-	return xmem.getCrossClusterVers() || xmem.getMobileCompatible() != base.MobileCompatibilityOff || xmem.isCCR()
+func (xmem *XmemNozzle) nonOptimisticCROnly(req *base.WrappedMCRequest) bool {
+	if xmem.config.vbHlvMaxCas == nil || req == nil {
+		return false
+	}
+
+	return xmem.getMobileCompatible() != base.MobileCompatibilityOff ||
+		(xmem.getCrossClusterVers() && req.HLVModeOptions.ActualCas >= xmem.config.vbHlvMaxCas[req.Req.VBucket]) ||
+		xmem.isCCR()
 }
 
 func (xmem *XmemNozzle) isCCR() bool {
-	// It is a bucket setting, no need of locks.
 	return xmem.source_cr_mode == base.CRMode_Custom
 }
 
@@ -3363,6 +3436,7 @@ func (xmem *XmemNozzle) receiveResponse(finch chan bool, waitGrp *sync.WaitGroup
 					// Don't spam the log. Keep a counter instead
 					atomic.AddUint64(&xmem.counter_eaccess, 1)
 					xmem.RaiseEvent(common.NewEvent(common.DataSentFailed, response.Status, xmem, nil, nil))
+					nonTempErrReceived = true
 					_, err = xmem.buf.modSlot(pos, xmem.resendWithReset)
 					if err != nil {
 						xmem.Logger().Errorf("%v received error for resendWithReset during EAccess error, err=%v", xmem.Id(), err)
@@ -3445,10 +3519,8 @@ func (xmem *XmemNozzle) receiveResponse(finch chan bool, waitGrp *sync.WaitGroup
 							}
 						}
 						// for other non-temporary errors, repair connections
-						xmem.Logger().Errorf("%v received error response from setMeta client. Repairing connection. %v, opcode=%v, seqno=%v, req.Key=%v%s%v, req.Body=%v%v%v, req.Datatype=%v, req.Cas=%v, req.Extras=%v\n", xmem.Id(), xmem.PrintResponseStatusError(response.Status), response.Opcode, seqno, base.UdTagBegin, string(req.Key), base.UdTagEnd, base.UdTagBegin, req.Body, base.UdTagEnd, req.DataType, req.Cas, req.Extras)
-						if response.Status == mc.EINVAL {
-							xmem.Logger().Errorf("%v Reason for EINVAL response from memcached for %v%s%v is %v%s%v", xmem.Id(), base.UdTagBegin, string(req.Key), base.UdTagEnd, base.UdTagBegin, response.Body, base.UdTagEnd)
-						}
+						xmem.Logger().Errorf("%v received error response from setMeta client. Repairing connection. %v, opcode=%v, seqno=%v, req.Key=%v%s%v, req.Body=%v%v%v, req.Datatype=%v, req.Cas=%v, req.Extras=%v, response=%v%v%v",
+							xmem.Id(), xmem.PrintResponseStatusError(response.Status), response.Opcode, seqno, base.UdTagBegin, string(req.Key), base.UdTagEnd, base.UdTagBegin, req.Body, base.UdTagEnd, req.DataType, req.Cas, req.Extras, base.UdTagBegin, response.Body, base.UdTagEnd)
 						xmem.client_for_setMeta.ReportUnknownResponseReceived(response.Status)
 
 						nonTempErrReceived = true
@@ -3743,7 +3815,7 @@ func (xmem *XmemNozzle) selfMonitor(finch chan bool, waitGrp *sync.WaitGroup) {
 				}
 			}
 
-			// non-temp error response to number of items in the current state of the buffer with the given reponse mapping
+			// non-temp error response to number of items in the current state of the buffer with the given response mapping
 			var totalNonTempErrCodes map[mc.Status]uint16
 			xmem.nonTempErrsSeenMtx.RLock()
 			if len(xmem.nonTempErrsSeen) > 0 {
@@ -3769,10 +3841,11 @@ func (xmem *XmemNozzle) selfMonitor(finch chan bool, waitGrp *sync.WaitGroup) {
 				continue
 			}
 
-			eventMsgStr := "Following number of mutations are rejected by target due to non-temporary error responses: "
+			var eventMsgStrBuilder strings.Builder
+			eventMsgStrBuilder.WriteString("Following number of mutations are rejected by target due to non-temporary error responses: ")
 			changed := false
 			for status, count := range totalNonTempErrCodes {
-				eventMsgStr = eventMsgStr + fmt.Sprintf("{%v : count=%v} | ", xmem.PrintResponseStatusError(status), count)
+				eventMsgStrBuilder.WriteString(fmt.Sprintf("{%v : count=%v} | ", xmem.PrintResponseStatusError(status), count))
 				if !changed && count != lastTotalNonTempErrMap[status] {
 					changed = true
 				}
@@ -3783,21 +3856,19 @@ func (xmem *XmemNozzle) selfMonitor(finch chan bool, waitGrp *sync.WaitGroup) {
 				continue
 			}
 
-			if nonTempErrMsgId == -1 {
-				// new message
-				eventId := xmem.eventsProducer.AddEvent(base.LowPriorityMsg,
-					fmt.Sprintf("%sPipeline: %s", eventMsgStr, xmem.topic), base.EventsMap{}, nil)
-				nonTempErrMsgId = eventId
-			} else if nonTempErrMsgId >= 0 {
+			eventMsgStrBuilder.WriteString("XMEM ID: " + xmem.Id())
+			if nonTempErrMsgId >= 0 {
 				// update the message
-				err := xmem.eventsProducer.UpdateEvent(nonTempErrMsgId,
-					fmt.Sprintf("%sPipeline: %s", eventMsgStr, xmem.topic), nil)
+				err := xmem.eventsProducer.UpdateEvent(nonTempErrMsgId, eventMsgStrBuilder.String(), nil)
 				if err != nil {
 					xmem.Logger().Warnf("Unable to update event %v: %v", nonTempErrMsgId, err)
 				}
+			} else {
+				// new message
+				nonTempErrMsgId = xmem.eventsProducer.AddEvent(base.LowPriorityMsg, eventMsgStrBuilder.String(), base.EventsMap{}, nil)
 			}
-
 			lastTotalNonTempErrMap = totalNonTempErrCodes
+
 		case <-statsTicker.C:
 			xmem.RaiseEvent(common.NewEvent(common.StatsUpdate, nil, xmem, nil, []int{len(xmem.dataChan), xmem.bytesInDataChan()}))
 		}
@@ -4520,18 +4591,6 @@ func (xmem *XmemNozzle) UpdateSettings(settings metadata.ReplicationSettingsMap)
 		atomic.StoreUint32(&xmem.config.hlvPruningWindowSec, uint32(hlvPruningWindowInt))
 		if oldvPruningWindowInt != hlvPruningWindowInt {
 			xmem.Logger().Infof("%v updated %v to %v\n", xmem.Id(), HLV_PRUNING_WINDOW, hlvPruningWindowInt)
-		}
-	}
-	mobileCompatible, ok := settings[MOBILE_COMPATBILE]
-	if ok {
-		mobileCompatibleInt := mobileCompatible.(int)
-		oldMobileCompatible := int(atomic.LoadUint32(&xmem.config.mobileCompatible))
-		atomic.StoreUint32(&xmem.config.mobileCompatible, uint32(mobileCompatibleInt))
-		if oldMobileCompatible != mobileCompatible {
-			xmem.Logger().Infof("%v updated %v to %v\n", xmem.Id(), MOBILE_COMPATBILE, mobileCompatible)
-		}
-		if mobileCompatible != base.MobileCompatibilityOff && atomic.CompareAndSwapUint32(&xmem.importMutationEventRaised, 1, 0) {
-			xmem.eventsProducer.DismissEvent(int(xmem.importMutationEventId))
 		}
 	}
 

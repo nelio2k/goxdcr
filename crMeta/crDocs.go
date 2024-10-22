@@ -42,7 +42,7 @@ func (doc *SourceDocument) GetMetadata(uncompressFunc base.UncompressFunc) (*CRM
 	meta := CRMetadata{
 		docMeta:   &docMeta,
 		actualCas: docMeta.Cas,
-		hadMou:    importCas > 0, // we will use the presence of importCAS to determine if we have _mou
+		hadMou:    importCas > 0, // we will use the presence of importCAS (_mou.cas) to determine if we have _mou
 	}
 
 	err = meta.UpdateHLVIfNeeded(doc.source, cas, cvCas, cvSrc, cvVer, pvMap, mvMap, importCas, pRev)
@@ -113,7 +113,7 @@ func (doc *TargetDocument) GetMetadata() (*CRMetadata, error) {
 				return nil, err
 			}
 
-			// We will use the presence of importCAS to determine if we have _mou
+			// We will use the presence of importCAS (_mou.cas) to determine if we have _mou
 			meta.hadMou = importCas > 0
 
 			err = meta.UpdateHLVIfNeeded(doc.source, cas, cvCas, cvSrc, cvVer, pvMap, mvMap, importCas, pRev)

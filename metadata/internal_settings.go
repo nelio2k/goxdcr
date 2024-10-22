@@ -287,6 +287,10 @@ const (
 	NWLatencyToleranceMilliSecKey = "NWLatencyToleranceMilliSec"
 
 	CasPoisoningPreCheckEnabledKey = "CasPoisoningPreCheckEnabled"
+
+	SrcHeartbeatEnabledKey              = "SrcHeartbeatEnabled"
+	SrcHeartbeatExpirationTimeoutMinKey = "SrcHeartbeatExprationTimeoutMin"
+	SrcHeartbeatCooldownPeriodSecsKey   = "SrcHeartbeatCooldownPeriodSec"
 )
 
 var TopologyChangeCheckIntervalConfig = &SettingsConfig{10, &Range{1, 100}}
@@ -415,7 +419,10 @@ var PeerManifestsGetterMaxRetryConfig = &SettingsConfig{base.ManifestsGetterMaxR
 var DatapoolLogFrequencyConfig = &SettingsConfig{base.DatapoolLogFrequency, &Range{0, 10000}}
 var CapellaHostnameSuffixConfig = &SettingsConfig{base.CapellaHostnameSuffix, nil}
 var NWLatencyToleranceMilliSecConfig = &SettingsConfig{int(base.NWLatencyToleranceMilliSec / time.Millisecond), &Range{0, 60000}}
-var CasPoisoningPreCheckEnabledConfig = &SettingsConfig{base.CasPoisoningPreCheckEnabled, &Range{0, 1} /* 0 is disbaled, 1 is enabled */}
+var CasPoisoningPreCheckEnabledConfig = &SettingsConfig{base.CasPoisoningPreCheckEnabled, &Range{0, 1} /* 0 is disabled, 1 is enabled */}
+var SrcHeartbeatEnabledConfig = &SettingsConfig{base.SrcHeartbeatEnabled, nil}
+var SrcHeartbeatExpirationTimeoutConfig = &SettingsConfig{int(base.SrcHeartbeatExpirationTimeout / time.Minute), &Range{1, 2440}}
+var SrcHeartbeatCooldownPeriodConfig = &SettingsConfig{int(base.SrcHeartbeatCooldownPeriod / time.Second), &Range{15, 600}}
 
 var XDCRInternalSettingsConfigMap = map[string]*SettingsConfig{
 	TopologyChangeCheckIntervalKey:                TopologyChangeCheckIntervalConfig,
@@ -545,6 +552,9 @@ var XDCRInternalSettingsConfigMap = map[string]*SettingsConfig{
 	CapellaHostNameSuffixKey:                      CapellaHostnameSuffixConfig,
 	NWLatencyToleranceMilliSecKey:                 NWLatencyToleranceMilliSecConfig,
 	CasPoisoningPreCheckEnabledKey:                CasPoisoningPreCheckEnabledConfig,
+	SrcHeartbeatEnabledKey:                        SrcHeartbeatEnabledConfig,
+	SrcHeartbeatExpirationTimeoutMinKey:           SrcHeartbeatExpirationTimeoutConfig,
+	SrcHeartbeatCooldownPeriodSecsKey:             SrcHeartbeatCooldownPeriodConfig,
 }
 
 func InitConstants(xmemMaxIdleCountLowerBound int, xmemMaxIdleCountUpperBound int) {

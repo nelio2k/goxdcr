@@ -28,11 +28,11 @@ import (
 // 1. Update its HLV, with cvCAS set to the pre-import document CAS.
 // 2. Update mobile metadata (_sync XATTR)
 // 3. Write back the document.
-// This results in a new mutation with new CAS. Mobile will set an XATTR _importCAS to the same value as the new CAS
+// This results in a new mutation with new CAS. Mobile will set an XATTR importCAS (_mou.cas) to the same value as the new CAS
 // using macro-expansion.
 //
 // The resulting import mutation has the following properties:
-// 1. importCAS == document.CAS
+// 1. importCAS (_mou.cas) == document.CAS
 // 2. cvCAS == pre-import document CAS
 // We don't want import mutation to win over its pre-import predecessor. To achieve that,
 // we will use pre-import CAS value for conflict resolution so docMeta.Cas will be set to this value.
@@ -40,7 +40,7 @@ import (
 // revId CR cannot be supported either (unless mobile savs pre-import revId)
 //
 // If there is a new mutation after the import, the new mutation will have:
-// - document.CAS > importCAS
+// - document.CAS > importCAS (_mou.cas)
 // This document is no longer considered import mutation. It is a local mutation. When it is replicated to a
 // target, the importCAS XATTR will be removed.
 type CRMetadata struct {
@@ -56,9 +56,9 @@ type CRMetadata struct {
 	hadHlv bool
 	// If the document has _mou, we need the following to decide whether to delete _mou in the subdoc command.
 	hadMou bool
-	// It is import mutation if importCas == document.CAS. In that case, docMeta.Cas is the pre-import CAS value.
+	// It is import mutation if importCas (_mou.cas) == document.CAS. In that case, docMeta.Cas is the pre-import CAS value.
 	isImport bool
-	// This is the value parsed from the XATTR _importCAS.
+	// This is the value parsed from the XATTR importCAS (_mou.cas).
 	importCas uint64
 	// if isImport is true, we will use this to store the actual Cas,
 	// since we replace doc.Cas with pre-import Cas i.e. cvCas for conflict resolution
