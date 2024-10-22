@@ -17,7 +17,7 @@ cluster3BucketsArr=("B3" "B6")
 CLUSTER_NAME_BUCKET_MAP=(["C1"]=${cluster1BucketsArr[@]} ["C2"]=${cluster2BucketsArr[@]} ["C3"]=${cluster3BucketsArr[@]})
 
 # Bucket properties
-declare -A BucketProperty=(["ramQuotaMB"]=100 ["CompressionMode"]="Active")
+declare -A BucketProperty=(["ramQuotaMB"]=1024 ["CompressionMode"]="Active" ["numVBuckets"]=1024)
 insertPropertyIntoBucketNamePropertyMap "B1" BucketProperty
 insertPropertyIntoBucketNamePropertyMap "B4" BucketProperty # conflict bucket for C1.B1
 insertPropertyIntoBucketNamePropertyMap "B2" BucketProperty
