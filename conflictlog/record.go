@@ -125,9 +125,8 @@ func (r *ConflictRecord) PopulateData(replicationId string) error {
 
 	r.ReplicationId = replicationId
 
-	r.PopulateSourceDocId(now)
-	r.PopulateTargetDocId(now)
-	r.PopulateCRDocId(now)
+	uniqKey := r.GenerateUniqKey(now)
+	r.PopulateDocIds(uniqKey)
 
 	body, err := json.Marshal(r)
 	if err != nil {
@@ -155,9 +154,10 @@ func (r *ConflictRecord) PopulateData(replicationId string) error {
 // crd_<timestamp>_<SHA> - the CRD document.
 // src_<timestamp>_<SHA> - the source document that caused the conflict.
 // tgt_<timestamp>_<SHA> - the target document that caused the conflict.
-func (r *ConflictRecord) GenerateUniqHash() string {
+// The following function generates <SHA> part of the above doc keys.
+func (r *ConflictRecord) GenerateUniqKey(now int64) string {
 	uniqKey := []byte(
-		fmt.Sprintf("%s_%v_%v_%v_%s_%v_%v_%v",
+		fmt.Sprintf("%v_%s_%v_%v_%v_%s_%v_%v_%v", now,
 			r.Source.BucketUUID, r.Source.VBNo, r.Source.Seqno, r.Source.VBUUID,
 			r.Target.BucketUUID, r.Target.VBNo, r.Target.Seqno, r.Target.VBUUID,
 		))
@@ -167,17 +167,9 @@ func (r *ConflictRecord) GenerateUniqHash() string {
 	return sha256HashHex
 }
 
-func (r *ConflictRecord) PopulateSourceDocId(now int64) {
-	uniqKey := r.GenerateUniqHash()
-	r.Source.Id = fmt.Sprintf("%s_%v_%s", SourcePrefix, now, uniqKey)
-}
-
-func (r *ConflictRecord) PopulateTargetDocId(now int64) {
-	uniqKey := r.GenerateUniqHash()
-	r.Target.Id = fmt.Sprintf("%s_%v_%s", TargetPrefix, now, uniqKey)
-}
-
-func (r *ConflictRecord) PopulateCRDocId(now int64) {
-	uniqKey := r.GenerateUniqHash()
-	r.Id = fmt.Sprintf("%s_%v_%s", CRDPrefix, now, uniqKey)
+// uniqKey is the output of GenerateUniqKey
+func (r *ConflictRecord) PopulateDocIds(uniqKey string) {
+	r.Source.Id = fmt.Sprintf("%s_%s", SourcePrefix, uniqKey)
+	r.Target.Id = fmt.Sprintf("%s_%s", TargetPrefix, uniqKey)
+	r.Id = fmt.Sprintf("%s_%s", CRDPrefix, uniqKey)
 }
