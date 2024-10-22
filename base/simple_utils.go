@@ -1978,12 +1978,13 @@ func (ss *SubdocLookupPathSpecs) String() string {
 	if ss == nil {
 		return ""
 	}
-	s := ""
+	var s strings.Builder
 	for _, oneSpec := range *ss {
-		s += oneSpec.String() + " |"
+		s.WriteString(oneSpec.String())
+		s.WriteString(" |")
 	}
 
-	return s
+	return s.String()
 }
 
 func (ss *SubdocLookupPathSpecs) Size() int {
@@ -2009,6 +2010,9 @@ func (spec *SubdocLookupPathSpec) Size() int {
 }
 
 func (spec *SubdocLookupPathSpec) String() string {
+	if spec == nil {
+		return "<nil>"
+	}
 	return fmt.Sprintf("Opcode:%v,flags:%v,path:%s", spec.Opcode, spec.Flags, spec.Path)
 }
 
@@ -2451,98 +2455,4 @@ func SeparateScopeCollection(scopeCol string) (scope string, collection string) 
 		collection = scopeColArr[1]
 	}
 	return
-}
-
-// iterator for byte encoded lists of strings for xtoc (xattrs table of content).
-// Eg: ["foo","bar"]
-type xtocIterator struct {
-	body []byte
-	pos  int
-}
-
-func NewXtocIterator(body []byte) *xtocIterator {
-	xi := xtocIterator{}
-	firstQuote := -1
-	lastQuote := -1
-
-	if body == nil {
-		xi.pos = len(body)
-		return &xi
-	}
-
-	for i := 0; i < len(body); i++ {
-		if body[i] == '"' {
-			firstQuote = i
-			break
-		}
-	}
-
-	for i := len(body) - 1; i > firstQuote; i-- {
-		if body[i] == '"' {
-			lastQuote = i
-			break
-		}
-	}
-
-	if lastQuote-firstQuote+1 > 2 {
-		xi.body = body[firstQuote : lastQuote+1]
-		xi.pos = 0
-	} else {
-		xi.pos = len(body)
-	}
-
-	return &xi
-}
-
-func (xi *xtocIterator) HasNext() bool {
-	return xi.pos < len(xi.body)
-}
-
-func (xi *xtocIterator) Next() ([]byte, error) {
-	if xi.pos >= len(xi.body) {
-		return nil, fmt.Errorf("no next item")
-	}
-
-	first, second := -1, -1
-	for i := xi.pos; i < len(xi.body) && (first == -1 || second == -1); i++ {
-		if xi.body[i] == '"' {
-			if first == -1 {
-				first = i
-			} else {
-				second = i
-			}
-		}
-	}
-
-	if first == -1 || second == -1 {
-		return nil, fmt.Errorf("invalid list, pos=%v, xi=%v", xi.pos, xi.body)
-	}
-
-	if second-first+1 <= 2 {
-		return nil, fmt.Errorf("invalid list items, pos=%v, xi=%v", xi.pos, xi.body)
-	}
-
-	xi.pos = second + 1
-
-	return xi.body[first+1 : second], nil
-}
-
-func (xi *xtocIterator) Len() (int, error) {
-	var len int
-	pos := xi.pos
-	defer func() {
-		xi.pos = pos
-	}()
-
-	l := NewXtocIterator(xi.body)
-
-	for l.HasNext() {
-		_, err := l.Next()
-		if err != nil {
-			return len, err
-		}
-		len++
-	}
-
-	return len, nil
 }

@@ -1932,10 +1932,14 @@ func getBodyAndXattrSpecs(xtoc []byte) (base.SubdocLookupPathSpecs, error) {
 	var specs base.SubdocLookupPathSpecs
 	var len int
 
-	xi := base.NewXtocIterator(xtoc)
-	len, err := xi.Len()
+	xi, err := base.NewXTOCIterator(xtoc)
 	if err != nil {
-		return nil, fmt.Errorf("error getting xtoc len, err=%v", err)
+		return nil, fmt.Errorf("error initialising new xtoc iterator, xtoc=%v, err=%v", xtoc, err)
+	}
+
+	len, err = xi.Len()
+	if err != nil {
+		return nil, fmt.Errorf("error getting xtoc len, xtoc=%v, err=%v", xtoc, err)
 	}
 
 	specs = make(base.SubdocLookupPathSpecs, 0, len+1)
@@ -1943,7 +1947,7 @@ func getBodyAndXattrSpecs(xtoc []byte) (base.SubdocLookupPathSpecs, error) {
 	for xi.HasNext() {
 		xattrKey, err := xi.Next()
 		if err != nil {
-			return nil, fmt.Errorf("error getting xtoc next, err=%v", err)
+			return nil, fmt.Errorf("error getting xtoc next, xtoc=%v, err=%v", xtoc, err)
 		}
 
 		spec := base.SubdocLookupPathSpec{

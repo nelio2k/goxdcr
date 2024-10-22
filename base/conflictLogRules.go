@@ -41,7 +41,7 @@ type ConflictLogTarget struct {
 }
 
 func (t ConflictLogTarget) String() string {
-	return fmt.Sprintf("%v.%v.%v", t.Bucket, t.NS.ScopeName, t.NS.CollectionName)
+	return fmt.Sprintf("%v.%v", t.Bucket, t.NS.ToIndexString())
 }
 
 func NewConflictLogTarget(bucket, scope, collection string) ConflictLogTarget {

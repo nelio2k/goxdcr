@@ -3294,7 +3294,7 @@ func (xti *XTOCIterator) Next() (value []byte, err error) {
 }
 
 func (xi *XTOCIterator) Len() (int, error) {
-	var len int
+	var length int
 	pos := xi.pos
 	defer func() {
 		xi.pos = pos
@@ -3308,12 +3308,12 @@ func (xi *XTOCIterator) Len() (int, error) {
 	for l.HasNext() {
 		_, err := l.Next()
 		if err != nil {
-			return len, err
+			return length, err
 		}
-		len++
+		length++
 	}
 
-	return len, nil
+	return length, nil
 }
 
 // conflict logging json input mapping from user, before converting to "Rules"
