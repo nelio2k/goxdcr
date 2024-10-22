@@ -13,6 +13,9 @@ import (
 	"github.com/couchbase/goxdcr/v8/log"
 )
 
+// Note that this was only used for POC for the conflict logging project,
+// to compare with gomemcached. This implementation is not used anywhere.
+// Refer to gomemcached.go, since gomemcached is used for conflict logging.
 var _ Connection = (*gocbCoreConn)(nil)
 
 type gocbCoreConn struct {
@@ -37,9 +40,8 @@ func NewGocbConn(logger *log.CommonLogger, memdAddrGetter MemcachedAddrGetter, b
 		securityInfo:   securityInfo,
 		bucketName:     bucketName,
 		logger:         logger,
-		//sudeep todo: make it configurable
-		timeout: 60 * time.Second,
-		finch:   make(chan bool),
+		timeout:        base.DiagNetworkThreshold,
+		finch:          make(chan bool),
 	}
 
 	err = conn.setupAgent()
@@ -104,10 +106,13 @@ func (conn *gocbCoreConn) setupAgent() (err error) {
 	}
 
 	signal := make(chan error, 1)
-	_, err = conn.agent.WaitUntilReady(time.Now().Add(5*time.Second), gocbcore.WaitUntilReadyOptions{}, func(wr *gocbcore.WaitUntilReadyResult, err error) {
+	_, err = conn.agent.WaitUntilReady(time.Now().Add(base.DiagInternalThreshold), gocbcore.WaitUntilReadyOptions{}, func(wr *gocbcore.WaitUntilReadyResult, err error) {
 		conn.logger.Debugf("agent WaitUntilReady err=%v", err)
 		signal <- err
 	})
+	if err != nil {
+		return err
+	}
 
 	err = <-signal
 
@@ -140,25 +145,30 @@ func (conn *gocbCoreConn) SetMeta(key string, body []byte, dataType uint8, targe
 		ch <- err2
 	}
 
-	_, err = conn.agent.SetMeta(opts, cb)
+	var pendingOp gocbcore.PendingOp
+	pendingOp, err = conn.agent.SetMeta(opts, cb)
 	if err != nil {
 		return
 	}
 
 	select {
 	case <-conn.finch:
+		pendingOp.Cancel()
 		err = ErrWriterClosed
 	case err = <-ch:
-	case <-time.After(conn.timeout):
-		err = ErrWriterTimeout
 	}
 
 	return
 }
 
 func (conn *gocbCoreConn) Close() error {
-	close(conn.finch)
-	return conn.agent.Close()
+	select {
+	case <-conn.finch:
+		return ErrWriterClosed
+	default:
+		close(conn.finch)
+		return conn.agent.Close()
+	}
 }
 
 type MemcachedAuthProvider struct {

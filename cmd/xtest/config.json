@@ -25,7 +25,6 @@
     },
 
     "conflictLogLoadTest": {
-        "connType": "memcached",
         "connLimit": 10,
         "iopsLimit": 100000,
 

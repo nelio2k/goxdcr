@@ -18,8 +18,6 @@ var _ Manager = (*managerImpl)(nil)
 type Manager interface {
 	NewLogger(logger *log.CommonLogger, replId string, opts ...LoggerOpt) (l Logger, err error)
 	ConnPool() iopool.ConnPool
-	// [TEMP]: SetConnType exists only for perf test
-	SetConnType(connType string) error
 	SetConnLimit(limit int)
 	SetIOPSLimit(limit int64)
 	SetSkipTlsVerify(bool)
@@ -64,13 +62,10 @@ func InitManager(loggerCtx *log.LoggerContext, utils utils.UtilsIface, memdAddrG
 		utils:          utils,
 		manifestCache:  newManifestCache(),
 		connLimit:      DefaultPoolConnLimit,
-		connType:       "gocbcore",
 		throttlerSvc:   throttlerSvc,
 	}
 
-	logger.Info("creating conflict manager writer pool")
 	impl.setConnPool()
-
 	manager = impl
 }
 
@@ -86,9 +81,6 @@ type managerImpl struct {
 
 	// connLimit max number of connections
 	connLimit int
-
-	// [TEMP] connType only exists for perf test
-	connType string
 
 	skipTlsVerify bool
 }
@@ -117,38 +109,17 @@ func (m *managerImpl) SetIOPSLimit(limit int64) {
 }
 
 func (m *managerImpl) setConnPool() {
-	m.logger.Infof("creating conflict manager connection pool type=%s", m.connType)
+	m.logger.Infof("creating conflict manager gomemcached connection pool, connLimit=%v", m.connLimit)
 
-	fn := m.newGocbCoreConn
-	if m.connType == "memcached" {
-		fn = m.newMemcachedConn
-	}
-
-	m.connPool = iopool.NewConnPool(m.logger, m.connLimit, fn)
-	return
-}
-
-func (m *managerImpl) SetConnType(connType string) error {
-	if m.connType == connType {
-		return nil
-	}
-
-	m.logger.Infof("closing conflict manager connection pool type=%s", m.connType)
-	err := m.connPool.Close()
-	if err != nil {
-		return err
-	}
-
-	m.connType = connType
-	m.setConnPool()
-
-	return nil
+	m.connPool = iopool.NewConnPool(m.logger, m.connLimit, m.newMemcachedConn)
 }
 
 func (m *managerImpl) ConnPool() iopool.ConnPool {
 	return m.connPool
 }
 
+// Not in use. Was used for a POC.
+// Refer to newMemcachedConn below, which is in use for conflict logging.
 func (m *managerImpl) newGocbCoreConn(bucketName string) (conn io.Closer, err error) {
 	m.logger.Infof("creating new conflict gocbcore bucket=%s encStrict=%v", bucketName, m.securityInfo.IsClusterEncryptionLevelStrict())
 

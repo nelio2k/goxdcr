@@ -1489,24 +1489,10 @@ func (adminport *Adminport) doChangeConflictLogSetting(request *http.Request) (*
 
 			m, err := conflictlog.GetManager()
 			if err != nil {
-				errorsMap["error_connType"] = err
+				errorsMap["error_skipTlsVerify"] = err
 				return EncodeObjectIntoResponse(errorsMap)
 			}
 			m.SetSkipTlsVerify(tlsVerify)
-		case "connType":
-			connType := valArr[0]
-			logger_ap.Infof("changing conflict connection type = %s", connType)
-			m, err := conflictlog.GetManager()
-			if err != nil {
-				errorsMap["error_connType"] = err
-				return EncodeObjectIntoResponse(errorsMap)
-			}
-
-			err = m.SetConnType(connType)
-			if err != nil {
-				errorsMap["error_setConnType"] = err
-				return EncodeObjectIntoResponse(errorsMap)
-			}
 		case "workerCount":
 			workerCnt := valArr[0]
 			i, err := strconv.Atoi(workerCnt)
