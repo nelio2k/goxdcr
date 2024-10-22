@@ -327,3 +327,223 @@ func TestRuleNameTooLong(t *testing.T) {
 	ns2 := fmt.Sprintf("%v%v%v", longStr, ScopeCollectionDelimiter, longStr)
 	assert.NotNil(validator.ValidateKV(ns2, ns2))
 }
+
+func TestArrayXattrFieldIterator(t *testing.T) {
+	type fields struct {
+		name    string
+		xattr   string
+		entries []string
+		err     bool
+	}
+	tests := []fields{
+		{
+			name:    "empty array",
+			xattr:   "[]",
+			entries: []string{},
+		},
+		{
+			name:    "one string entry",
+			xattr:   `["foo"]`,
+			entries: []string{`"foo"`},
+		},
+		{
+			name:    "one JSON obj entry",
+			xattr:   `[{"foo":"bar"}]`,
+			entries: []string{`{"foo":"bar"}`},
+		},
+		{
+			name:    "multiple string entries",
+			xattr:   `["foo","bar","lorem","epsum"]`,
+			entries: []string{`"foo"`, `"bar"`, `"lorem"`, `"epsum"`},
+		},
+		{
+			name:    "multiple json obj entries",
+			xattr:   `[{"foo":"foo1"},{"bar":"bar1"},{"lorem":"lorem1"},{"epsum":"epsum1"}]`,
+			entries: []string{`{"foo":"foo1"}`, `{"bar":"bar1"}`, `{"lorem":"lorem1"}`, `{"epsum":"epsum1"}`},
+		},
+		{
+			name:    "multiple string and json obj entries - I",
+			xattr:   `["foo",{"bar":"bar1"},"lorem",{"epsum":"epsum1"}]`,
+			entries: []string{`"foo"`, `{"bar":"bar1"}`, `"lorem"`, `{"epsum":"epsum1"}`},
+		},
+		{
+			name:    "multiple string and json obj entries - II",
+			xattr:   `[{"bar":"bar1"},"foo",{"epsum":"epsum1"},"lorem"]`,
+			entries: []string{`{"bar":"bar1"}`, `"foo"`, `{"epsum":"epsum1"}`, `"lorem"`},
+		},
+		{
+			name:    "one VV deltas entry",
+			xattr:   `["NqiIe0LekFPLeX4JvTO6Iw@0x00008cd6ac059a16"]`,
+			entries: []string{`"NqiIe0LekFPLeX4JvTO6Iw@0x00008cd6ac059a16"`},
+		},
+		{
+			name:    "multiple VV deltas entry",
+			xattr:   `["NqiIe0LekFPLeX4JvTO6Iw@0x00008cd6ac059a16","LhRPsa7CpjEvP5zeXTXEBA@0x0a","LhRPsa7CpjEvP5zsdsxEBA@0xffff"]`,
+			entries: []string{`"NqiIe0LekFPLeX4JvTO6Iw@0x00008cd6ac059a16"`, `"LhRPsa7CpjEvP5zeXTXEBA@0x0a"`, `"LhRPsa7CpjEvP5zsdsxEBA@0xffff"`},
+		},
+		{
+			name:    "invalid array with whitespaces",
+			xattr:   `["foo", "bar", "lorem", "epsum"]`,
+			entries: []string{`"foo"`, `"bar"`, `"lorem"`, `"epsum"`},
+			err:     true,
+		},
+		{
+			name:    "invalid entries",
+			xattr:   `["foo",1,"lorem","epsum"]`,
+			entries: []string{`"foo"`, `1`, `"lorem"`, `"epsum"`},
+			err:     true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			it, err := NewArrayXattrFieldIterator([]byte(tt.xattr))
+			assert.Nil(t, err, nil)
+
+			i := 0
+			for it.HasNext() {
+				val, err := it.Next()
+				if err != nil {
+					assert.True(t, tt.err)
+					break
+				} else {
+					assert.Nil(t, err, nil)
+					assert.Equal(t, tt.entries[i], string(val))
+				}
+				i++
+			}
+		})
+	}
+}
+
+func Test_xtocIterator(t *testing.T) {
+
+	tests := []struct {
+		name string
+		body []byte
+		len  int
+		list []string
+	}{
+		{
+			name: "nil",
+			body: nil,
+			list: []string{},
+		},
+		{
+			name: "empty",
+			body: []byte{},
+			len:  0,
+			list: []string{},
+		},
+		{
+			name: "empty list",
+			body: []byte(`[]`),
+			len:  0,
+			list: []string{},
+		},
+		{
+			name: "empty list with whitespace",
+			body: []byte(`   [   ] `),
+			len:  0,
+			list: []string{},
+		},
+		{
+			name: "one entry",
+			list: []string{"foo"},
+			len:  1,
+			body: []byte(fmt.Sprintf(`["%s"]`, "foo")),
+		},
+		{
+			name: "one entry with whitespaces",
+			list: []string{"foo"},
+			len:  1,
+			body: []byte(fmt.Sprintf(` [  "%s"   ]   `, "foo")),
+		},
+		{
+			name: "one entry with escape quote",
+			list: []string{`fo\"o\"`},
+			len:  1,
+			body: []byte(fmt.Sprintf(`["%s"]`, `fo\"o\"`)),
+		},
+		{
+			name: "one entry with whitespaces and escape quote",
+			list: []string{`fo\"o\"`},
+			len:  1,
+			body: []byte(fmt.Sprintf(` [  "%s"   ]   `, `fo\"o\"`)),
+		},
+		{
+			name: "multiple entries",
+			list: []string{"foo", "bar", "foo1", "bar1"},
+			len:  4,
+			body: []byte(fmt.Sprintf(`["%s","%s","%s","%s"]`, "foo", "bar", "foo1", "bar1")),
+		},
+		{
+			name: "multiple entries with whitespaces",
+			list: []string{"foo", "bar", "foo1", "bar1"},
+			len:  4,
+			body: []byte(fmt.Sprintf(`  [  "%s","%s",  "%s",  "%s"  ]   `, "foo", "bar", "foo1", "bar1")),
+		},
+
+		{
+			name: "multiple entries 1",
+			list: []string{`fo\"o\"`, "bar", "foo1"},
+			len:  3,
+			body: []byte(fmt.Sprintf(`["%s", "%s","%s"]`, `fo\"o\"`, "bar", "foo1")),
+		},
+		{
+			name: "multiple entries with whitespaces 1",
+			list: []string{`fo\"o\"`, "bar", "foo1"},
+			len:  3,
+			body: []byte(fmt.Sprintf(`  [  "%s", "%s",  "%s"  ]   `, `fo\"o\"`, "bar", "foo1")),
+		},
+
+		{
+			name: "multiple entries 2",
+			list: []string{`foo`, `ba\"r\"`, "foo1"},
+			len:  3,
+			body: []byte(fmt.Sprintf(`["%s","%s","%s"]`, `foo`, `ba\"r\"`, "foo1")),
+		},
+		{
+			name: "multiple entries with whitespaces 2",
+			list: []string{`foo`, `ba\"r\"`, "foo1"},
+			len:  3,
+			body: []byte(fmt.Sprintf(`  [  "%s", "%s",  "%s"  ]   `, `foo`, `ba\"r\"`, "foo1")),
+		},
+
+		{
+			name: "multiple entries 3",
+			list: []string{`foo`, "bar", `foo\"1\"`},
+			len:  3,
+			body: []byte(fmt.Sprintf(`["%s","%s","%s"]`, `foo`, "bar", `foo\"1\"`)),
+		},
+		{
+			name: "multiple entries with whitespaces 3",
+			list: []string{`foo`, "bar", `foo\"1\"`},
+			len:  3,
+			body: []byte(fmt.Sprintf(`  [  "%s","%s",  "%s"  ]   `, `foo`, "bar", `foo\"1\"`)),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			li, err := NewXTOCIterator(tt.body)
+			assert.Nil(t, err)
+
+			length, err := li.Len()
+			assert.Nil(t, err)
+			assert.Equal(t, length, tt.len)
+
+			var res []string
+			for li.HasNext() {
+				s, err := li.Next()
+				assert.Nil(t, err)
+
+				res = append(res, string(s))
+			}
+
+			assert.Equal(t, len(res), len(tt.list))
+
+			for i := 0; i < len(tt.list); i++ {
+				assert.Equal(t, res[i], tt.list[i])
+			}
+		})
+	}
+}

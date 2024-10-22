@@ -38,6 +38,7 @@ import (
 	"github.com/couchbase/goxdcr/v8/pipeline_svc"
 	"github.com/couchbase/goxdcr/v8/resource_manager"
 	"github.com/couchbase/goxdcr/v8/service_def"
+	"github.com/couchbase/goxdcr/v8/service_def/throttlerSvc"
 	"github.com/couchbase/goxdcr/v8/supervisor"
 	utilities "github.com/couchbase/goxdcr/v8/utils"
 )
@@ -150,7 +151,7 @@ func StartReplicationManager(sourceKVHost string,
 	eventlog_svc service_def.EventLogSvc,
 	global_setting_svc service_def.GlobalSettingsSvc,
 	internal_settings_svc service_def.InternalSettingsSvc,
-	throughput_throttler_svc service_def.ThroughputThrottlerSvc,
+	throughput_throttler_svc throttlerSvc.ThroughputThrottlerSvc,
 	resolver_svc service_def.ResolverSvcIface,
 	utilitiesIn utilities.UtilsIface,
 	collectionsManifestSvc service_def.CollectionsManifestSvc,
@@ -359,6 +360,9 @@ func InitConstants(xdcr_topology_svc service_def.XDCRCompTopologySvc, internal_s
 		internal_settings.Values[metadata.CapellaHostNameSuffixKey].(string),
 		time.Duration(internal_settings.Values[metadata.NWLatencyToleranceMilliSecKey].(int))*time.Millisecond,
 		internal_settings.Values[metadata.CasPoisoningPreCheckEnabledKey].(int),
+		internal_settings.Values[metadata.SrcHeartbeatEnabledKey].(bool),
+		time.Duration(internal_settings.Values[metadata.SrcHeartbeatExpirationTimeoutMinKey].(int))*time.Minute,
+		time.Duration(internal_settings.Values[metadata.SrcHeartbeatCooldownPeriodSecsKey].(int))*time.Second,
 	)
 }
 
@@ -483,7 +487,7 @@ func (rm *replicationManager) init(
 	eventlog_svc service_def.EventLogSvc,
 	global_setting_svc service_def.GlobalSettingsSvc,
 	internal_settings_svc service_def.InternalSettingsSvc,
-	throughput_throttler_svc service_def.ThroughputThrottlerSvc,
+	throughput_throttler_svc throttlerSvc.ThroughputThrottlerSvc,
 	resolverSvc service_def.ResolverSvcIface,
 	collectionsManifestSvc service_def.CollectionsManifestSvc,
 	backfillReplSvc service_def.BackfillReplSvc,

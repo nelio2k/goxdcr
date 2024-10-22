@@ -28,8 +28,8 @@ const (
 	// These are the fields in the HLV
 	HLV_SRC_FIELD = "src" // src and ver combined is the cv in the design
 	HLV_VER_FIELD = "ver" //
-	HLV_MV_FIELD  = "mv"  // the MV field in _xdcr
-	HLV_PV_FIELD  = "pv"  // The PV field in _xdcr
+	HLV_MV_FIELD  = "mv"  // the MV field in _vv
+	HLV_PV_FIELD  = "pv"  // The PV field in _vv
 
 	XATTR_CVCAS_PATH = base.XATTR_HLV + base.PERIOD + HLV_CVCAS_FIELD
 	XATTR_SRC_PATH   = base.XATTR_HLV + base.PERIOD + HLV_SRC_FIELD
@@ -39,6 +39,10 @@ const (
 
 	XATTR_IMPORTCAS   = base.XATTR_IMPORTCAS
 	XATTR_PREVIOUSREV = base.XATTR_PREVIOUSREV
+
+	// separator between source and version in version deltas entry
+	// i.e <version>@<source>
+	HLV_SEPARATOR = '@'
 )
 
 type ConflictParams struct {
@@ -83,7 +87,7 @@ func NeedToUpdateHlv(meta *CRMetadata, vbMaxCas uint64, pruningWindow time.Durat
 		return false
 	}
 	hlv := meta.hlv
-	// We need to update if CAS has changed from ver.CAS
+	// We need to update if CAS has changed from cvCas
 	if hlv.Updated {
 		return true
 	}
@@ -125,109 +129,21 @@ func ConstructXattrFromHlvForSetMeta(meta *CRMetadata, pruningWindow time.Durati
 		return -1, false, err
 	}
 
-	pruneFunc := base.GetHLVPruneFunction(meta.GetDocumentMetadata().Cas, pruningWindow)
-	*pos = formatCv(meta, body, *pos)
-	// Format MV
-	mv := meta.GetHLV().GetMV()
-	if len(mv) > 0 {
-		// This is not the first since we have cv before this
-		body, *pos = base.WriteJsonRawMsg(body, []byte(HLV_MV_FIELD), *pos, base.WriteJsonKey, len([]byte(HLV_MV_FIELD)), false)
-		*pos, _ = VersionMapToDeltasBytes(mv, body, *pos, nil)
-	}
-	// Format PV
-	pv := meta.GetHLV().GetPV()
 	var pruned bool
-	if len(pv) > 0 {
-		startPos := *pos
-		body, *pos = base.WriteJsonRawMsg(body, []byte(HLV_PV_FIELD), *pos, base.WriteJsonKey, len([]byte(HLV_PV_FIELD)), false)
-		afterKeyPos := *pos
-		*pos, pruned = VersionMapToDeltasBytes(pv, body, *pos, &pruneFunc)
-		if *pos == afterKeyPos {
-			// Did not add PV, need to back off and remove the PV key
-			*pos = startPos
-		}
+	*pos, pruned, err = ConstructHlv(body, *pos, meta, pruningWindow)
+	if err != nil {
+		return *pos, pruned, err
 	}
-	body[*pos] = '}'
-	*pos++
 
 	*pos, err = xattrComposer.CommitRawKVPair()
 	return *pos, pruned, err
 }
 
-// This routine contructs HLV related operational specs for subdoc operation
-func ConstructSpecsFromHlvForSubdocOp(meta *CRMetadata, pruningWindow time.Duration, specs *base.SubdocMutationPathSpecs, targetHasPV, targetHasMv bool, pvSlice, mvSlice []byte) (bool, error) {
-	if meta == nil {
-		return false, fmt.Errorf("metadata cannot be nil")
-	}
-
-	var spec base.SubdocMutationPathSpec
-	var idx int
-
-	pruneFunc := base.GetHLVPruneFunction(meta.GetDocumentMetadata().Cas, pruningWindow)
-	HLV := meta.GetHLV()
-
-	// set cvCas as regenerated Cas from mc.SET/DELETE using macro expansion.
-	// MKDIR_P is not set, because we know for sure there exists cvCas on target since we used it for conflict resolution, otherwise there is something wrong
-	spec = base.NewSubdocMutationPathSpec(uint8(base.SUBDOC_DICT_UPSERT), uint8(base.SUBDOC_FLAG_XATTR|base.SUBDOC_FLAG_EXPAND_MACROS), []byte(XATTR_CVCAS_PATH), []byte(base.CAS_MACRO_EXPANSION))
-	*specs = append(*specs, spec)
-
-	// format CV
-	// src
-	srcVal := HLV.GetCvSrc()
-	src := []byte("\"" + string(srcVal) + "\"")
-	spec = base.NewSubdocMutationPathSpec(uint8(base.SUBDOC_DICT_UPSERT), uint8(base.SUBDOC_FLAG_MKDIR_P|base.SUBDOC_FLAG_XATTR), []byte(XATTR_SRC_PATH), src)
-	*specs = append(*specs, spec)
-
-	// ver should also be macro expanded cas and should not need MKDIR_P
-	spec = base.NewSubdocMutationPathSpec(uint8(base.SUBDOC_DICT_UPSERT), uint8(base.SUBDOC_FLAG_XATTR|base.SUBDOC_FLAG_EXPAND_MACROS), []byte(XATTR_VER_PATH), []byte(base.CAS_MACRO_EXPANSION))
-	*specs = append(*specs, spec)
-
-	// Format MV
-	mv := HLV.GetMV()
-	if len(mv) > 0 {
-		idx = 0
-		idx, _ = VersionMapToDeltasBytes(mv, mvSlice, idx, nil)
-		spec = base.NewSubdocMutationPathSpec(uint8(base.SUBDOC_DICT_UPSERT), uint8(base.SUBDOC_FLAG_MKDIR_P|base.SUBDOC_FLAG_XATTR), []byte(XATTR_MV_PATH), mvSlice[:idx])
-		*specs = append(*specs, spec)
-	} else if targetHasMv {
-		// no mv left after processing - remove from target if mv already exists
-		spec = base.NewSubdocMutationPathSpec(uint8(base.SUBDOC_DELETE), uint8(base.SUBDOC_FLAG_XATTR), []byte(XATTR_MV_PATH), nil)
-		*specs = append(*specs, spec)
-	}
-
-	// Format PV, after pruning
-	pv := HLV.GetPV()
-	var pruned bool
-	if len(pv) > 0 {
-		idx = 0
-		afterKeyPos := idx
-		idx, pruned = VersionMapToDeltasBytes(pv, pvSlice, idx, &pruneFunc)
-		if idx == afterKeyPos {
-			// PV is all pruned - remove from target
-			if !targetHasPV {
-				// _vv doesn't exist on target or pv doesn't exist already, no need to remove
-				return pruned, nil
-			}
-			// pv exists on target, but the source mutation PV is all pruned, so delete the one on target.
-			spec = base.NewSubdocMutationPathSpec(uint8(base.SUBDOC_DELETE), uint8(base.SUBDOC_FLAG_XATTR), []byte(XATTR_PV_PATH), nil)
-			*specs = append(*specs, spec)
-		} else {
-			spec = base.NewSubdocMutationPathSpec(uint8(base.SUBDOC_DICT_UPSERT), uint8(base.SUBDOC_FLAG_MKDIR_P|base.SUBDOC_FLAG_XATTR), []byte(XATTR_PV_PATH), pvSlice[:idx])
-			*specs = append(*specs, spec)
-		}
-	} else if targetHasPV {
-		// no pv left after processing - remove from target if pv already exists
-		spec = base.NewSubdocMutationPathSpec(uint8(base.SUBDOC_DELETE), uint8(base.SUBDOC_FLAG_XATTR), []byte(XATTR_PV_PATH), nil)
-		*specs = append(*specs, spec)
-	}
-
-	return pruned, nil
-}
-
 // given a version map (PV or MV), this function,
 // 1. applies the pruning function on top of the version entries if they are PVs i.e. if the pruning function is passed in.
 // 2. converts the entries into version deltas, strips the leading zeroes of delta values and composes the PV or MV for the target doc.
-func VersionMapToDeltasBytes(vMap hlv.VersionsMap, body []byte, pos int, pruneFunction *base.PruningFunc) (int, bool) {
+// 3. PVs and MVs will be of the format of JSON arrays with individual string entries of the form "<version>@<source>".
+func VersionMapToDeltasBytes(vMap hlv.VersionsMap, body []byte, pos int, pruneFunction *base.PruningFunc) (int, bool, error) {
 	startPos := pos
 	first := true
 	pruned := false
@@ -246,29 +162,32 @@ func VersionMapToDeltasBytes(vMap hlv.VersionsMap, body []byte, pos int, pruneFu
 
 	// deltas need to be recomputed from the non-pruned versions
 	deltas := vMap.VersionsDeltas()
-	firstEntry := true
 	for _, delta := range deltas {
 		key := delta.GetSource()
 		ver := delta.GetVersion()
 		var value []byte
-		if firstEntry {
+		if first {
 			value = base.Uint64ToHexLittleEndian(ver)
-			firstEntry = false
 		} else {
 			value = base.Uint64ToHexLittleEndianAndStrip0s(ver)
 		}
-		body, pos = base.WriteJsonRawMsg(body, []byte(key), pos, base.WriteJsonKey, len(key), first /*firstKey*/)
-		body, pos = base.WriteJsonRawMsg(body, value, pos, base.WriteJsonValue, len(value), false /*firstKey*/)
+
+		hlvEntry, err := ComposeHLVEntry(key, value)
+		if err != nil {
+			return startPos, pruned, err
+		}
+
+		body, pos = base.WriteJsonRawMsg(body, hlvEntry, pos, base.WriteJsonArrayEntry, len(hlvEntry), first /*firstKey*/)
 		first = false
 	}
 
 	if first {
 		// We haven't added anything
-		return startPos, pruned
+		return startPos, pruned, nil
 	}
-	body[pos] = '}'
+	body[pos] = ']'
 	pos++
-	return pos, pruned
+	return pos, pruned, nil
 }
 
 // {"cvCas":...,"src":...,"ver":...
@@ -303,18 +222,29 @@ func xattrVVtoDeltas(vvBytes []byte) (hlv.VersionsMap, error) {
 		return vv, nil
 	}
 
-	it, err := base.NewCCRXattrFieldIterator(vvBytes)
+	it, err := base.NewArrayXattrFieldIterator(vvBytes)
 	if err != nil {
 		return nil, err
 	}
 	var lastEntryVersion uint64
 	for it.HasNext() {
-		k, v, err := it.Next()
+		v, err := it.Next()
 		if err != nil {
 			return nil, err
 		}
-		src := hlv.DocumentSourceId(k)
-		ver, err := base.HexLittleEndianToUint64(v)
+
+		if len(v) <= 2 {
+			err = fmt.Errorf("invalid vv entry=%v in vvBytes=%v", v, vvBytes)
+			return nil, err
+		}
+
+		source, version, err := ParseOneVersionDeltaEntry(v[1 : len(v)-1])
+		if err != nil {
+			return nil, err
+		}
+
+		src := hlv.DocumentSourceId(source)
+		ver, err := base.HexLittleEndianToUint64WO0x(version)
 		if err != nil {
 			return nil, err
 		}
@@ -401,7 +331,7 @@ func getHlvFromMCResponse(lookupResp *base.SubdocLookupResponse) (cas, cvCas uin
 		}
 	}
 
-	// It is ok to not find _mou.importCAS or _mou.pRev, since we may not be getting it if enableCrossClusterVersioning is not on, or target is not an import mutation.
+	// It is ok to not find _mou.cas (importCas) or _mou.pRev, since we may not be getting it if enableCrossClusterVersioning is not on, or target is not an import mutation.
 	xattr, err1 = lookupResp.ResponseForAPath(XATTR_IMPORTCAS)
 	xattrLen := len(xattr)
 	if err1 == nil && xattrLen == base.MaxHexCASLength {
@@ -454,7 +384,7 @@ func GetImportCasAndPrevFromMou(mou []byte) (newMou []byte, atleastOneLeft bool,
 	return
 }
 
-// This will find the custom CR XATTR from the req body, including HLV and _importCas
+// This will find the custom CR XATTR from the req body, including HLV and importCas (_mou.cas)
 func getHlvFromMCRequest(wrappedReq *base.WrappedMCRequest, uncompressFunc base.UncompressFunc) (cas, cvCas uint64, cvSrc hlv.DocumentSourceId, cvVer uint64, pvMap, mvMap hlv.VersionsMap, importCas uint64, pRev uint64, err error) {
 	req := wrappedReq.Req
 	cas = binary.BigEndian.Uint64(req.Extras[16:24])
@@ -572,7 +502,8 @@ func NewMetadataForTest(key, source []byte, cas, revId uint64, cvCasHex, cvSrc, 
 
 // Decide if we need to use subdoc op instead of meta op
 func setSubdocOpIfNeeded(sourceMeta, targetMeta *CRMetadata, req *base.WrappedMCRequest) {
-	if targetMeta.IsImportMutation() && sourceMeta.actualCas < targetMeta.actualCas {
+	if req.HLVModeOptions.PreserveSync &&
+		targetMeta.IsImportMutation() && sourceMeta.actualCas < targetMeta.actualCas {
 		// This is the case when target CAS will rollback if source wins
 		// So use subdoc command in this case instead of *_WITH_META commands
 		req.SetSubdocOp()
@@ -581,4 +512,94 @@ func setSubdocOpIfNeeded(sourceMeta, targetMeta *CRMetadata, req *base.WrappedMC
 		req.SubdocCmdOptions.TargetHasMou = targetMeta.hadMou
 		req.SubdocCmdOptions.TargetDocIsTombstone = targetMeta.docMeta.Deletion
 	}
+}
+
+// source should be of non zero length
+// version should be atleast of length >= 3
+// returns version@source, after stripping 0x of the version,
+// which will be one entry of a PV or MV.
+func ComposeHLVEntry(source hlv.DocumentSourceId, version []byte) ([]byte, error) {
+	if len(source) == 0 {
+		return nil, fmt.Errorf("invalid source=%v", source)
+	}
+	if len(version) < 3 {
+		return nil, fmt.Errorf("invalid version=%v", version)
+	}
+
+	hlvEntryLen := len(version) + 1 + len(source)
+	hlvEntry := make([]byte, hlvEntryLen)
+	idx := 0
+	// copy the version, without the 0x
+	n := copy(hlvEntry[idx:], version[2:])
+	idx += n
+	// copy the separator
+	hlvEntry[idx] = HLV_SEPARATOR
+	idx++
+	// copy the source
+	for i := 0; i < len(source); i++ {
+		hlvEntry[idx+i] = source[i]
+	}
+	idx += len(source)
+	return hlvEntry[:idx], nil
+}
+
+// input is expected to be of the format <version>@<source>
+// returns <source> and <version>
+func ParseOneVersionDeltaEntry(entry []byte) (source, version []byte, err error) {
+	sep := -1
+	for idx := 0; idx < len(entry); idx++ {
+		if entry[idx] == HLV_SEPARATOR {
+			sep = idx
+			break
+		}
+	}
+
+	if sep == -1 {
+		err = fmt.Errorf("invalid version delta entry=%s", entry)
+		return
+	}
+
+	// sep points to the HLV_SEPARATOR now
+	version = entry[:sep]
+	source = entry[sep+1:]
+	err = nil
+	return
+}
+
+// constructs hlv content and writes it to "body" from "pos" index.
+// Increments pos and returns the last position.
+func ConstructHlv(body []byte, pos int, meta *CRMetadata, pruningWindow time.Duration) (int, bool, error) {
+	var err error
+	pruneFunc := base.GetHLVPruneFunction(meta.GetDocumentMetadata().Cas, pruningWindow)
+	pos = formatCv(meta, body, pos)
+	// Format MV
+	mv := meta.GetHLV().GetMV()
+	if len(mv) > 0 {
+		// This is not the first since we have cv before this
+		body, pos = base.WriteJsonRawMsg(body, []byte(HLV_MV_FIELD), pos, base.WriteJsonKey, len([]byte(HLV_MV_FIELD)), false)
+		pos, _, err = VersionMapToDeltasBytes(mv, body, pos, nil)
+		if err != nil {
+			return pos, false, err
+		}
+	}
+	// Format PV
+	pv := meta.GetHLV().GetPV()
+	var pruned bool
+	if len(pv) > 0 {
+		startPos := pos
+		body, pos = base.WriteJsonRawMsg(body, []byte(HLV_PV_FIELD), pos, base.WriteJsonKey, len([]byte(HLV_PV_FIELD)), false)
+		afterKeyPos := pos
+		pos, pruned, err = VersionMapToDeltasBytes(pv, body, pos, &pruneFunc)
+		if err != nil {
+			return pos, pruned, err
+		}
+		if pos == afterKeyPos {
+			// Did not add PV, need to back off and remove the PV key
+			pos = startPos
+		}
+	}
+	body[pos] = '}'
+	pos++
+
+	return pos, pruned, nil
 }

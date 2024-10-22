@@ -681,7 +681,6 @@ func TestMobilePreserveSync(t *testing.T) {
 	settings[base.EnableCrossClusterVersioningKey] = true
 	settings[MOBILE_COMPATBILE] = base.MobileCompatibilityActive
 	settings[base.VersionPruningWindowHrsKey] = 720
-	router.SetMobileCompatibility(base.MobileCompatibilityActive)
 
 	setupMocksXmem(xmem, utilsNotUsed, throttler, remoteClusterSvc, colManSvc, eventProducer)
 
@@ -698,10 +697,10 @@ func TestMobilePreserveSync(t *testing.T) {
 	assert.Nil(err)
 	assert.NotNil(wrappedMCRequest)
 	xmem.Receive(wrappedMCRequest)
-	if err = checkTarget(bucket, key, "email", []byte("\"kingarthur@couchbase.com\""), false); err != nil {
+	if err = checkTarget(bucket, key, "email", []byte("\"kingarthur@couchbase.com\""), false, false); err != nil {
 		assert.FailNow(err.Error())
 	}
-	if err = checkTarget(bucket, key, "_sync", nil, true); err != nil {
+	if err = checkTarget(bucket, key, "_sync", nil, true, false); err != nil {
 		assert.FailNow(err.Error())
 	}
 
@@ -714,10 +713,10 @@ func TestMobilePreserveSync(t *testing.T) {
 	assert.Nil(err)
 	assert.NotNil(wrappedMCRequest)
 	xmem.Receive(wrappedMCRequest)
-	if err = checkTarget(bucket, key, "email", []byte("\"kingarthur@updated.couchbase.com\""), false); err != nil {
+	if err = checkTarget(bucket, key, "email", []byte("\"kingarthur@updated.couchbase.com\""), false, false); err != nil {
 		assert.FailNow(err.Error())
 	}
-	if err = checkTarget(bucket, key, "_sync", nil, true); err != nil {
+	if err = checkTarget(bucket, key, "_sync", nil, true, false); err != nil {
 		assert.FailNow(err.Error())
 	}
 
@@ -732,19 +731,32 @@ func TestMobilePreserveSync(t *testing.T) {
 	assert.NotNil(wrappedMCRequest)
 	xmem.Receive(wrappedMCRequest)
 
-	if err = checkTarget(bucket, key, "email", []byte("\"kingarthur@source.couchbase.com\""), false); err != nil {
+	if err = checkTarget(bucket, key, "email", []byte("\"kingarthur@source.couchbase.com\""), false, false); err != nil {
 		assert.FailNow(err.Error())
 	}
-	if err = checkTarget(bucket, key, "_sync", []byte("\"mobile sync XATTR target\""), true); err != nil {
+	if err = checkTarget(bucket, key, "_sync", []byte("\"mobile sync XATTR target\""), true, false); err != nil {
 		assert.FailNow(err.Error())
 	}
 }
 
-func checkTarget(bucket *gocb.Bucket, key, path string, expectedValue []byte, isXattr bool) error {
+// check if target key and path exists with the expectedValue.
+func checkTarget(bucket *gocb.Bucket, key, path string, expectedValue []byte, isXattr bool, accessDeleted bool) error {
 	var value []byte
+	var opts *gocb.LookupInOptions
+	if accessDeleted {
+		opts = &gocb.LookupInOptions{
+			Internal: struct {
+				DocFlags gocb.SubdocDocFlag
+				User     []byte
+			}{
+				DocFlags: gocb.SubdocDocFlagAccessDeleted,
+			},
+		}
+	}
+
 	for i := 0; i < 10; i++ {
 		res, err := bucket.DefaultCollection().LookupIn(key,
-			[]gocb.LookupInSpec{gocb.GetSpec(path, &gocb.GetSpecOptions{IsXattr: isXattr})}, nil)
+			[]gocb.LookupInSpec{gocb.GetSpec(path, &gocb.GetSpecOptions{IsXattr: isXattr})}, opts)
 		if err == nil {
 			res.ContentAt(0, &value)
 			if bytes.Equal(value, expectedValue) {
@@ -754,6 +766,33 @@ func checkTarget(bucket *gocb.Bucket, key, path string, expectedValue []byte, is
 		time.Sleep(1 * time.Second)
 	}
 	return fmt.Errorf("value %q is not expected %q", value, expectedValue)
+}
+
+// check if target key and path DNE.
+// returns nil if DNE, returns error otherwise.
+// Make sure to call this function only after target has changed.
+func checkTargetDNE(bucket *gocb.Bucket, key, path string, isXattr, accessDeleted bool) error {
+	var opts *gocb.LookupInOptions
+	if accessDeleted {
+		opts = &gocb.LookupInOptions{
+			Internal: struct {
+				DocFlags gocb.SubdocDocFlag
+				User     []byte
+			}{
+				DocFlags: gocb.SubdocDocFlagAccessDeleted,
+			},
+		}
+	}
+
+	res, err := bucket.DefaultCollection().LookupIn(key,
+		[]gocb.LookupInSpec{gocb.GetSpec(path, &gocb.GetSpecOptions{IsXattr: isXattr})}, opts)
+	if err != nil {
+		return err
+	}
+	if !res.Exists(0) {
+		return nil
+	}
+	return fmt.Errorf("path %q exists but should not exist", path)
 }
 
 // This test was useful in development but is disabled. TestMobilePreserveSync is used instead
@@ -807,7 +846,7 @@ func mobilePreserveSyncLiveRep(t *testing.T, bucketName string, crType gocb.Conf
 	assert.Nil(err)
 	err = waitForReplication(key, mutOut.Cas(), targetBucket)
 	assert.Nil(err)
-	if err = checkTarget(targetBucket, key, base.XATTR_MOBILE, nil, true); err != nil {
+	if err = checkTarget(targetBucket, key, base.XATTR_MOBILE, nil, true, false); err != nil {
 		assert.FailNow(err.Error())
 	}
 
@@ -819,7 +858,7 @@ func mobilePreserveSyncLiveRep(t *testing.T, bucketName string, crType gocb.Conf
 	assert.Nil(err)
 	err = waitForReplication(key, mutOut.Cas(), sourceBucket)
 	assert.Nil(err)
-	if err = checkTarget(sourceBucket, key, base.XATTR_MOBILE, []byte("\"cluster C1 value\""), true); err != nil {
+	if err = checkTarget(sourceBucket, key, base.XATTR_MOBILE, []byte("\"cluster C1 value\""), true, false); err != nil {
 		assert.FailNow(err.Error())
 	}
 }
@@ -853,7 +892,6 @@ func TestMobileImportCasLWW(t *testing.T) {
 	settings[base.EnableCrossClusterVersioningKey] = true
 	settings[MOBILE_COMPATBILE] = base.MobileCompatibilityActive
 	settings[base.VersionPruningWindowHrsKey] = 720
-	router.SetMobileCompatibility(base.MobileCompatibilityActive)
 
 	setupMocksXmem(xmem, utilsNotUsed, throttler, remoteClusterSvc, colManSvc, eventProducer)
 
@@ -877,7 +915,7 @@ func TestMobileImportCasLWW(t *testing.T) {
 	out, err := bucket.DefaultCollection().Get(key, nil)
 	assert.Nil(err)
 	assert.Equal(gocb.Cas(1700503142566854656), out.Cas())
-	err = checkTarget(bucket, key, base.XATTR_MOU, []byte(`{"importCAS":"0x0000223899669917","pRev":1}`), true)
+	err = checkTarget(bucket, key, base.XATTR_MOU, []byte(`{"cas":"0x0000223899669917","pRev":1}`), true, false)
 	assert.Nil(err)
 
 	// Test 2. Update the import document (Doc1). It should replicate with importCas removed
@@ -944,20 +982,17 @@ func TestMobileMixedMode(t *testing.T) {
 
 	settings[base.EnableCrossClusterVersioningKey] = true
 	settings[base.VersionPruningWindowHrsKey] = 720
-	router.crossClusterVersioning = 1
 
 	setupMocksXmem(xmem, utilsNotUsed, throttler, remoteClusterSvc, colManSvc, eventProducer)
 
 	settings[MOBILE_COMPATBILE] = base.MobileCompatibilityOff
 	xmem.sourceBucketUuid = "93fcf4f0fcc94fdb3d6196235029d6bf"
-	router.SetMobileCompatibility(base.MobileCompatibilityOff)
 	startTargetXmem(xmem, settings, bucketName, assert)
 	fmt.Println("=== Test mobile mixed mode with mobile off ===")
 	mobileMixedModeTest(xmem, router, settings, bucketName, assert)
 
 	fmt.Println("=== Test mobile mixed mode with mobile active ===")
 	xmem.config.mobileCompatible = base.MobileCompatibilityActive
-	router.SetMobileCompatibility(base.MobileCompatibilityActive)
 	mobileMixedModeTest(xmem, router, settings, bucketName, assert)
 }
 
@@ -1187,13 +1222,13 @@ func getVVXattr(bucket *gocb.Bucket, key, colName, scopeName string, a *assert.A
 //     importCAS which has the same value as the new CAS
 //
 // The resulting import mutation has the following properties:
-// 1. importCAS == document.CAS
+// 1. importCAS (_mou.cas) == document.CAS
 // 2. cvCAS == pre-import document CAS
 // cvCAS represents the HLV version. It is the CAS value used for conflict resolution
 // If there is a new mutation on the document, the new mutation will have:
-// document.CAS > importCAS
+// document.CAS > importCAS (_mou.cas)
 // This new mutation is no longer considered import mutation. It is a local mutation. When it is replicated to a target,
-// the importCAS XATTR will be removed.
+// the importCAS (_mou.cas) XATTR will be removed.
 func simulateImportOperation(a *assert.Assertions, bucket *gocb.Bucket, key, colName, scopeName string, bucketId hlv.DocumentSourceId, curNonImportCas uint64, preImportRevId uint64) gocb.Cas {
 	// xattr Lookup
 	cvCas, src, ver, mv, pv, _ := getVVXattr(bucket, key, colName, scopeName, a)
@@ -1224,7 +1259,7 @@ func simulateImportOperation(a *assert.Assertions, bucket *gocb.Bucket, key, col
 	mutateInSpec = append(mutateInSpec, gocb.UpsertSpec(crMeta.XATTR_VER_PATH, string(newVer), &gocb.UpsertSpecOptions{IsXattr: true, CreatePath: true}))
 	// Update cvCas to the same value
 	mutateInSpec = append(mutateInSpec, gocb.UpsertSpec(crMeta.XATTR_CVCAS_PATH, string(newVer), &gocb.UpsertSpecOptions{IsXattr: true, CreatePath: true}))
-	// Add _mou.importCas
+	// Add _mou.cas (importCAS)
 	mutateInSpec = append(mutateInSpec, gocb.UpsertSpec(crMeta.XATTR_IMPORTCAS, gocb.MutationMacroCAS, &gocb.UpsertSpecOptions{IsXattr: true, CreatePath: true}))
 	// Add _mou.pRev
 	mutateInSpec = append(mutateInSpec, gocb.UpsertSpec(crMeta.XATTR_PREVIOUSREV, fmt.Sprintf(`%v`, preImportRevId), &gocb.UpsertSpecOptions{IsXattr: true, CreatePath: true}))

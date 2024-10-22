@@ -45,7 +45,7 @@ type FilterImpl struct {
 	slicesToBeReleasedBuf    [][]byte
 	skipUncommittedTxn       uint32
 	skipBinaryDocs           uint32
-	mobileCompatible         uint32
+	mobileCompatible         int
 }
 
 func NewFilterWithSharedDP(id string, filterExpression string, utils FilterUtils, dp base.DataPool, filterModes base.FilterExpDelType, mobileCompatible int) (*FilterImpl, error) {
@@ -55,7 +55,7 @@ func NewFilterWithSharedDP(id string, filterExpression string, utils FilterUtils
 		dp:                    dp,
 		slicesToBeReleasedBuf: make([][]byte, 0, 2),
 	}
-	filter.mobileCompatible = uint32(mobileCompatible)
+	filter.mobileCompatible = mobileCompatible
 
 	if filterModes.IsSkipReplicateUncommittedTxnSet() {
 		filter.skipUncommittedTxn = 1
@@ -134,12 +134,13 @@ func (filter *FilterImpl) SetShouldSkipBinaryDocs(val bool) {
 	}
 }
 
-func (filter *FilterImpl) SetMobileCompatibility(val uint32) {
-	atomic.StoreUint32(&filter.mobileCompatible, val)
+// only used by xdcrDiffer
+func (filter *FilterImpl) SetMobileCompatibility(val int) {
+	filter.mobileCompatible = val
 }
 
-func (filter *FilterImpl) getMobileCompatibility() uint32 {
-	return atomic.LoadUint32(&filter.mobileCompatible)
+func (filter *FilterImpl) getMobileCompatibility() int {
+	return filter.mobileCompatible
 }
 
 func (filter *FilterImpl) FilterUprEvent(wrappedUprEvent *base.WrappedUprEvent) (bool, error, string, int64, base.FilteringStatusType) {

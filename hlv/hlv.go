@@ -137,7 +137,7 @@ type currentVersion struct {
 // - cas: this is the document CAS, representing the latest mutation excluding import mutation
 // - source: this is the bucket XDCR get this mutation from, either through DCP or subdoc_get
 // - {src,ver} these combined is the input cv
-// If cas > ver, then the document has been mutated since replication.
+// If cas > cvCas, then the document has been mutated since replication.
 // - If there is no mv, the input cv will be rolled into pv
 // - If there is an mv, the mv will be rolled into pv
 func NewHLV(source DocumentSourceId, cas uint64, cvCas uint64, src DocumentSourceId, ver uint64, pv, mv VersionsMap) (*HLV, error) {
@@ -330,7 +330,7 @@ func (h *HLV) String() string {
 	return fmt.Sprintf("{cvCAS:%v,cv:{%v,%v},pv:%v,mv:%v}", h.cvCAS, h.cv.source, h.cv.version, h.pv, h.mv)
 }
 
-// Bytes required when formatting the map to XATTR
+// Max bytes required when formatting the PV and MV array to XATTR
 func BytesRequired(vMap VersionsMap) int {
 	if vMap == nil {
 		return 0
@@ -339,10 +339,10 @@ func BytesRequired(vMap VersionsMap) int {
 	for k := range vMap {
 		res = res + len(k)
 		res = res + base.MaxHexCASLength
-		res = res + base.QuotesAndSepLenForVVEntry
+		res = res + base.QuotesAndSepLenForHLVEntry
 	}
 	if res != 0 {
-		res = res + len(base.EmptyJsonObject) + 1 // Add { and } and nil terminator
+		res = res + len(base.EmptyJsonArray) + 1 // Add [ and ] and nil terminator
 	}
 	return res
 }

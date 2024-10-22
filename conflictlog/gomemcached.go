@@ -25,41 +25,42 @@ type MemcachedConn struct {
 	id            int64
 	addr          string
 	logger        *log.CommonLogger
+	securityInfo  SecurityInfo
 	bucketName    string
 	connMap       map[string]mcc.ClientIface
 	manifestCache *ManifestCache
 	utilsObj      utils.UtilsIface
 	bucketInfo    *BucketInfo
 	opaque        uint32
-	certs         *ClientCerts
 	skipVerify    bool
 }
 
-func NewMemcachedConn(logger *log.CommonLogger, utilsObj utils.UtilsIface, manCache *ManifestCache, bucketName string, addr string, certs *ClientCerts, skipVerifiy bool) (m *MemcachedConn, err error) {
-	connId := newConnId()
+func NewMemcachedConn(logger *log.CommonLogger, utilsObj utils.UtilsIface, manCache *ManifestCache, bucketName string, addr string, securityInfo SecurityInfo, skipVerifiy bool) (m *MemcachedConn, err error) {
+	connId := NewConnId()
 
 	user, passwd, err := cbauth.GetMemcachedServiceAuth(addr)
 	if err != nil {
 		return
 	}
 
-	conn, err := newMemcNodeConn(logger, connId, utilsObj, user, passwd, bucketName, addr, nil, skipVerifiy)
+	m = &MemcachedConn{
+		id:            connId,
+		bucketName:    bucketName,
+		addr:          addr,
+		securityInfo:  securityInfo,
+		logger:        logger,
+		utilsObj:      utilsObj,
+		manifestCache: manCache,
+		skipVerify:    skipVerifiy,
+	}
+
+	conn, err := m.newMemcNodeConn(user, passwd, addr, false)
 	if err != nil {
 		return
 	}
 
-	m = &MemcachedConn{
-		id:         connId,
-		bucketName: bucketName,
-		addr:       addr,
-		logger:     logger,
-		connMap: map[string]mcc.ClientIface{
-			addr: conn,
-		},
-		utilsObj:      utilsObj,
-		manifestCache: manCache,
-		certs:         certs,
-		skipVerify:    skipVerifiy,
+	m.connMap = map[string]mcc.ClientIface{
+		addr: conn,
 	}
 
 	return
@@ -68,14 +69,13 @@ func NewMemcachedConn(logger *log.CommonLogger, utilsObj utils.UtilsIface, manCa
 // newTLSConn creates an SSL connection to a memcached node.
 // Note: this is subtly different than base.NewTlsConn(). In this we use cbauth's user/passwd
 // over SSL connection instead of client certificate's SAN
-func newTLSConn(addr string, certs *ClientCerts, user, passwd, bucketName string, skipVerification bool) (conn mcc.ClientIface, err error) {
+func (m *MemcachedConn) newTLSConn(addr, user, passwd string) (conn mcc.ClientIface, err error) {
 	// We load the certs everytime since the certs could have changed by ns_server
 	// This will be actually not needed as these will be loaded only when the notification
 	// from the ns_server. This will happen in security service.
-	clientCert, clientKey, caCert, err := certs.Load()
-	if err != nil {
-		return nil, err
-	}
+
+	caCert := m.securityInfo.GetCACertificates()
+	clientCert, clientKey := m.securityInfo.GetClientCertAndKey()
 
 	x509Cert, err := tls.X509KeyPair(clientCert, clientKey)
 	if err != nil {
@@ -87,7 +87,7 @@ func newTLSConn(addr string, certs *ClientCerts, user, passwd, bucketName string
 
 	// Setup HTTPS client
 	tlsConfig := &tls.Config{
-		InsecureSkipVerify: skipVerification,
+		InsecureSkipVerify: m.skipVerify,
 		Certificates:       []tls.Certificate{x509Cert},
 		RootCAs:            caCertPool,
 	}
@@ -104,7 +104,7 @@ func newTLSConn(addr string, certs *ClientCerts, user, passwd, bucketName string
 	}
 
 	defer func() {
-		if err != nil {
+		if err != nil && conn != nil {
 			conn.Close()
 		}
 	}()
@@ -114,21 +114,31 @@ func newTLSConn(addr string, certs *ClientCerts, user, passwd, bucketName string
 		return nil, err
 	}
 
-	_, err = conn.SelectBucket(bucketName)
+	_, err = conn.SelectBucket(m.bucketName)
 	if err != nil {
 		return nil, err
 	}
 	return
 }
 
-// newMemcNodeConn creates connection to a given memcached node
-func newMemcNodeConn(logger *log.CommonLogger, id int64, utilsObj utils.UtilsIface, user, passwd, bucketName string, addr string, certs *ClientCerts, skipVerify bool) (conn mcc.ClientIface, err error) {
-	logger.Infof("connecting to memcached id=%d user=%s addr=%s certsEnabled=%v tlsSkipVerify=%v", id, user, addr, certs != nil, skipVerify)
+// newMemcNodeConn creates the new connection to a KV node.
+// useSSL when false overrides the check for cluster being in strict mode.
+// useSSL=false is used when establishing the connection the 'thisNode' which is using localhost.
+// This is an initial connection to boot the rest of the connections and hence it has to be non-SSL
+// The flip side is that when useSSL=true then it futher depends on whether cluster has encryption
+// level strict or not. If yes then SSL connection is created
+func (m *MemcachedConn) newMemcNodeConn(user, passwd, addr string, useSSL bool) (conn mcc.ClientIface, err error) {
+	isEncStrict := false
+	if useSSL {
+		isEncStrict = m.securityInfo.IsClusterEncryptionLevelStrict()
+	}
 
-	if certs != nil {
-		conn, err = newTLSConn(addr, certs, user, passwd, bucketName, skipVerify)
+	m.logger.Infof("connecting to memcached id=%d user=%s addr=%s encStrict=%v tlsSkipVerify=%v", m.id, user, addr, isEncStrict, m.skipVerify)
+
+	if isEncStrict {
+		conn, err = m.newTLSConn(addr, user, passwd)
 	} else {
-		conn, err = base.NewConn(addr, user, passwd, bucketName, true, base.KeepAlivePeriod, logger)
+		conn, err = base.NewConn(addr, user, passwd, m.bucketName, true, base.KeepAlivePeriod, m.logger)
 	}
 
 	if err != nil {
@@ -147,12 +157,12 @@ func newMemcNodeConn(logger *log.CommonLogger, id int64, utilsObj utils.UtilsIfa
 	readTimeout := 30 * time.Second
 	writeTimeout := 30 * time.Second
 
-	retFeatures, err := utilsObj.SendHELOWithFeatures(conn, userAgent, readTimeout, writeTimeout, features, logger)
+	retFeatures, err := m.utilsObj.SendHELOWithFeatures(conn, userAgent, readTimeout, writeTimeout, features, m.logger)
 	if err != nil {
 		return
 	}
 
-	logger.Debugf("returned features: %s", retFeatures.String())
+	m.logger.Debugf("returned features: %s", retFeatures.String())
 
 	return
 }
@@ -299,6 +309,7 @@ func (m *MemcachedConn) getConnByVB(vbno uint16, replicaNum int) (conn mcc.Clien
 	//    m.bucketInfo == nil implies that so far we have not received NOT_MY_VBUCKET error.
 
 	addr2use := m.addr
+	isEncStrict := m.securityInfo.IsClusterEncryptionLevelStrict()
 	if m.bucketInfo != nil {
 		_, hostname, port, sslPort, thisNode, err := m.bucketInfo.GetAddrByVB(vbno, replicaNum)
 		if err != nil {
@@ -306,7 +317,7 @@ func (m *MemcachedConn) getConnByVB(vbno uint16, replicaNum int) (conn mcc.Clien
 		}
 
 		addr2use = fmt.Sprintf("%s:%d", hostname, port)
-		if !thisNode && m.certs != nil {
+		if !thisNode && isEncStrict {
 			addr2use = fmt.Sprintf("%s:%d", hostname, sslPort)
 		}
 	}
@@ -316,13 +327,13 @@ func (m *MemcachedConn) getConnByVB(vbno uint16, replicaNum int) (conn mcc.Clien
 		return
 	}
 
-	m.logger.Debugf("selecting id=%d certs=%v addr2use=%s for vb=%d", m.id, m.certs != nil, addr2use, vbno)
+	m.logger.Debugf("selecting id=%d certs=%v addr2use=%s for vb=%d", m.id, isEncStrict, addr2use, vbno)
 	conn, ok := m.connMap[addr2use]
 	if ok {
 		return
 	}
 
-	conn, err = newMemcNodeConn(m.logger, m.id, m.utilsObj, user, passwd, m.bucketName, addr2use, m.certs, m.skipVerify)
+	conn, err = m.newMemcNodeConn(user, passwd, addr2use, true)
 	if err != nil {
 		return
 	}

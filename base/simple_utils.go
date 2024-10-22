@@ -144,6 +144,14 @@ func GetVbListFromKvVbMap(kv_vb_map map[string][]uint16) []uint16 {
 	return vb_list
 }
 
+func CloneStringList(list []string) []string {
+	cloneList := make([]string, len(list))
+	for i, v := range list {
+		cloneList[i] = v
+	}
+	return cloneList
+}
+
 // type to facilitate the sorting of uint16 lists
 type Uint16List []uint16
 
@@ -359,8 +367,34 @@ func (s StringList) Len() int           { return len(s) }
 func (s StringList) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
 func (s StringList) Less(i, j int) bool { return s[i] < s[j] }
 
+func (s StringList) RemoveInstances(str string) StringList {
+	var replacementList StringList
+	for _, oneStr := range s {
+		if str == oneStr {
+			continue
+		}
+		replacementList = append(replacementList, oneStr)
+	}
+	return replacementList
+}
+
 // Not safe from concurrent access.
 // Caller has to make sure synchronisation is achieved, if necessary.
+func (s StringList) Search(str string, alreadySorted bool) (found bool) {
+	var listToSearch StringList
+	if !alreadySorted {
+		listToSearch = SortStringList(s)
+	} else {
+		listToSearch = s
+	}
+
+	searchIdx := sort.SearchStrings(listToSearch, str)
+	doesNotExist := searchIdx == len(listToSearch) || listToSearch[searchIdx] != str
+
+	found = !doesNotExist
+	return
+}
+
 func SortStringList(list []string) []string {
 	sort.Sort(StringList(list))
 	return list
@@ -887,15 +921,6 @@ func ShuffleVbList(list []uint16) {
 	}
 }
 
-func StringListContains(list []string, checkStr string) bool {
-	for _, str := range list {
-		if str == checkStr {
-			return true
-		}
-	}
-	return false
-}
-
 // Linearly combine two lists into one and also deduplicates duplicated entries, returns the result
 func StringListsDedupAndCombine(list1 []string, list2 []string) []string {
 	combineMap := make(map[string]bool)
@@ -1253,6 +1278,16 @@ func HexLittleEndianToUint64(hexLE []byte) (uint64, error) {
 		return 0, InvalidHexStringError(hexLE, true)
 	}
 
+	return HexLittleEndianToUint64WO0x(hexLE[2:])
+}
+
+// This routine is same as HexLittleEndianToUint64,
+// but this one doesn't expect 0x prefixed.
+func HexLittleEndianToUint64WO0x(hexLE []byte) (uint64, error) {
+	if len(hexLE) == 0 {
+		return 0, nil
+	}
+
 	// Decoding the hexLE will need the string to be of even length
 	// If hexLE is not of even length, it was probably stripped off of zeroes at the end as part of Uint64ToHexLittleEndianAndStrip
 	if len(hexLE)%2 != 0 {
@@ -1265,7 +1300,7 @@ func HexLittleEndianToUint64(hexLE []byte) (uint64, error) {
 
 	// hexLE may not necessarily be 16+2 bytes because of Uint64ToHexLittleEndianAndStrip0s
 	decoded := make([]byte, MaxHexDecodedLength)
-	_, err := hex.Decode(decoded, hexLE[2:])
+	_, err := hex.Decode(decoded, hexLE)
 	if err != nil {
 		return 0, err
 	}
@@ -1278,6 +1313,16 @@ func Uint64ToHexLittleEndian(u64 uint64) []byte {
 	binary.LittleEndian.PutUint64(le, u64)
 	encoded := make([]byte, hex.EncodedLen(8)+2)
 	hex.Encode(encoded[2:], le)
+	encoded[0] = '0'
+	encoded[1] = 'x'
+	return encoded
+}
+
+func Uint64ToHexBigEndian(u64 uint64) []byte {
+	be := make([]byte, 8)
+	binary.BigEndian.PutUint64(be, u64)
+	encoded := make([]byte, hex.EncodedLen(8)+2)
+	hex.Encode(encoded[2:], be)
 	encoded[0] = '0'
 	encoded[1] = 'x'
 	return encoded
@@ -1612,6 +1657,7 @@ const (
 	WriteJsonKey           WriteJsonRawMsgType = iota
 	WriteJsonValue         WriteJsonRawMsgType = iota
 	WriteJsonValueNoQuotes WriteJsonRawMsgType = iota
+	WriteJsonArrayEntry    WriteJsonRawMsgType = iota
 )
 
 // Given a correctly allocatedBytes slice that can contain the whole rawJSON message, write the given information without
@@ -1631,6 +1677,28 @@ const (
 //	original byte slice reference
 //	updated position
 func WriteJsonRawMsg(allocatedBytes, bytesToWrite []byte, pos int, mode WriteJsonRawMsgType, size int, isFirstKey bool) ([]byte, int) {
+	// JSON array
+	if mode == WriteJsonArrayEntry {
+		if isFirstKey {
+			// Need to do an open bracket
+			allocatedBytes[pos] = '['
+			pos++
+		} else {
+			allocatedBytes[pos] = ','
+			pos++
+		}
+		allocatedBytes[pos] = '"'
+		pos++
+		copy(allocatedBytes[pos:], bytesToWrite[:size])
+		pos += size
+		allocatedBytes[pos] = '"'
+		pos++
+		allocatedBytes[pos] = ']'
+
+		return allocatedBytes, pos
+	}
+
+	// JSON object
 	if mode == WriteJsonKey {
 		if isFirstKey {
 			// Need to do an open bracket
@@ -1642,7 +1710,7 @@ func WriteJsonRawMsg(allocatedBytes, bytesToWrite []byte, pos int, mode WriteJso
 		}
 		allocatedBytes[pos] = '"'
 		pos++
-		copy(allocatedBytes[pos:], bytesToWrite[:])
+		copy(allocatedBytes[pos:], bytesToWrite[:size])
 		pos += size
 		allocatedBytes[pos] = '"'
 		pos++
@@ -1653,7 +1721,7 @@ func WriteJsonRawMsg(allocatedBytes, bytesToWrite []byte, pos int, mode WriteJso
 			allocatedBytes[pos] = '"'
 			pos++
 		}
-		copy(allocatedBytes[pos:], bytesToWrite[:])
+		copy(allocatedBytes[pos:], bytesToWrite[:size])
 		pos += size
 		if mode == WriteJsonValue {
 			allocatedBytes[pos] = '"'
@@ -1677,6 +1745,19 @@ func GetNumberOfVbs(kvVBMap map[string][]uint16) int {
 // check whether source byte array contains the same string as target string
 // this impl avoids converting byte array to string
 func Equals(source []byte, target string) bool {
+	if len(source) != len(target) {
+		return false
+	}
+	for i := 0; i < len(target); i++ {
+		if target[i] != source[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// checks whether two byte slices are equal in content
+func EqualBytes(source []byte, target []byte) bool {
 	if len(source) != len(target) {
 		return false
 	}
@@ -1897,12 +1978,13 @@ func (ss *SubdocLookupPathSpecs) String() string {
 	if ss == nil {
 		return ""
 	}
-	s := ""
+	var s strings.Builder
 	for _, oneSpec := range *ss {
-		s += oneSpec.String() + " |"
+		s.WriteString(oneSpec.String())
+		s.WriteString(" |")
 	}
 
-	return s
+	return s.String()
 }
 
 func (ss *SubdocLookupPathSpecs) Size() int {
@@ -1928,6 +2010,9 @@ func (spec *SubdocLookupPathSpec) Size() int {
 }
 
 func (spec *SubdocLookupPathSpec) String() string {
+	if spec == nil {
+		return "<nil>"
+	}
 	return fmt.Sprintf("Opcode:%v,flags:%v,path:%s", spec.Opcode, spec.Flags, spec.Path)
 }
 
@@ -2114,17 +2199,18 @@ func (h *HighSeqnoAndVbUuidMap) Diff(prev HighSeqnoAndVbUuidMap) HighSeqnoAndVbU
 	}
 	return diffMap
 }
-func DecodeSetMetaReq(req *WrappedMCRequest) DocumentMetadata {
+func DecodeSetMetaReq(wrappedReq *WrappedMCRequest) DocumentMetadata {
+	req := wrappedReq.Req
 	ret := DocumentMetadata{}
-	ret.Key = req.Req.Key
-	ret.Flags = binary.BigEndian.Uint32(req.Req.Extras[0:4])
-	ret.Expiry = binary.BigEndian.Uint32(req.Req.Extras[4:8])
-	ret.RevSeq = binary.BigEndian.Uint64(req.Req.Extras[8:16])
-	ret.Cas = req.Req.Cas
-	ret.Deletion = (req.Req.Opcode == DELETE_WITH_META)
-	ret.DataType = req.Req.DataType
-	ret.Seqno = req.Seqno
-	ret.VbUUID = req.VbUUID
+	ret.Key = req.Key
+	ret.Flags = binary.BigEndian.Uint32(req.Extras[0:4])
+	ret.Expiry = binary.BigEndian.Uint32(req.Extras[4:8])
+	ret.RevSeq = binary.BigEndian.Uint64(req.Extras[8:16])
+	ret.Cas = req.Cas
+	ret.Deletion = (wrappedReq.GetMemcachedCommand() == DELETE_WITH_META)
+	ret.DataType = req.DataType
+	ret.Seqno = wrappedReq.Seqno
+	ret.VbUUID = wrappedReq.VbUUID
 
 	return ret
 }
@@ -2369,98 +2455,4 @@ func SeparateScopeCollection(scopeCol string) (scope string, collection string) 
 		collection = scopeColArr[1]
 	}
 	return
-}
-
-// iterator for byte encoded lists of strings for xtoc (xattrs table of content).
-// Eg: ["foo","bar"]
-type xtocIterator struct {
-	body []byte
-	pos  int
-}
-
-func NewXtocIterator(body []byte) *xtocIterator {
-	xi := xtocIterator{}
-	firstQuote := -1
-	lastQuote := -1
-
-	if body == nil {
-		xi.pos = len(body)
-		return &xi
-	}
-
-	for i := 0; i < len(body); i++ {
-		if body[i] == '"' {
-			firstQuote = i
-			break
-		}
-	}
-
-	for i := len(body) - 1; i > firstQuote; i-- {
-		if body[i] == '"' {
-			lastQuote = i
-			break
-		}
-	}
-
-	if lastQuote-firstQuote+1 > 2 {
-		xi.body = body[firstQuote : lastQuote+1]
-		xi.pos = 0
-	} else {
-		xi.pos = len(body)
-	}
-
-	return &xi
-}
-
-func (xi *xtocIterator) HasNext() bool {
-	return xi.pos < len(xi.body)
-}
-
-func (xi *xtocIterator) Next() ([]byte, error) {
-	if xi.pos >= len(xi.body) {
-		return nil, fmt.Errorf("no next item")
-	}
-
-	first, second := -1, -1
-	for i := xi.pos; i < len(xi.body) && (first == -1 || second == -1); i++ {
-		if xi.body[i] == '"' {
-			if first == -1 {
-				first = i
-			} else {
-				second = i
-			}
-		}
-	}
-
-	if first == -1 || second == -1 {
-		return nil, fmt.Errorf("invalid list, pos=%v, xi=%v", xi.pos, xi.body)
-	}
-
-	if second-first+1 <= 2 {
-		return nil, fmt.Errorf("invalid list items, pos=%v, xi=%v", xi.pos, xi.body)
-	}
-
-	xi.pos = second + 1
-
-	return xi.body[first+1 : second], nil
-}
-
-func (xi *xtocIterator) Len() (int, error) {
-	var len int
-	pos := xi.pos
-	defer func() {
-		xi.pos = pos
-	}()
-
-	l := NewXtocIterator(xi.body)
-
-	for l.HasNext() {
-		_, err := l.Next()
-		if err != nil {
-			return len, err
-		}
-		len++
-	}
-
-	return len, nil
 }

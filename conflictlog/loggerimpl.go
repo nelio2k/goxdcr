@@ -6,7 +6,9 @@ import (
 	"time"
 
 	"github.com/couchbase/goxdcr/v8/base"
+	"github.com/couchbase/goxdcr/v8/base/iopool"
 	"github.com/couchbase/goxdcr/v8/log"
+	"github.com/couchbase/goxdcr/v8/service_def/throttlerSvc"
 	"github.com/couchbase/goxdcr/v8/utils"
 )
 
@@ -29,13 +31,16 @@ type loggerImpl struct {
 	rulesLock sync.RWMutex
 
 	// connPool is used to get the connection to the cluster with conflict bucket
-	connPool ConnPool
+	connPool iopool.ConnPool
 
 	// opts are the logger options
 	opts LoggerOptions
 
 	// mu is the logger level lock
 	mu sync.Mutex
+
+	// throttlerSvc is the IOPS throttler
+	throttlerSvc throttlerSvc.ThroughputThrottlerSvc
 
 	// logReqCh is the work queue for all logging requests
 	logReqCh chan logRequest
@@ -57,7 +62,9 @@ type logRequest struct {
 	ackCh chan error
 }
 
-func newLoggerImpl(logger *log.CommonLogger, replId string, utils utils.UtilsIface, connPool ConnPool, opts ...LoggerOpt) (l *loggerImpl, err error) {
+// newLoggerImpl creates a new logger impl instance.
+// throttlerSvc is allowed to be nil, which means no throttling
+func newLoggerImpl(logger *log.CommonLogger, replId string, utils utils.UtilsIface, throttlerSvc throttlerSvc.ThroughputThrottlerSvc, connPool iopool.ConnPool, opts ...LoggerOpt) (l *loggerImpl, err error) {
 	// set the defaults
 	options := LoggerOptions{
 		rules:                nil,
@@ -87,6 +94,7 @@ func newLoggerImpl(logger *log.CommonLogger, replId string, utils utils.UtilsIfa
 		connPool:         connPool,
 		opts:             options,
 		mu:               sync.Mutex{},
+		throttlerSvc:     throttlerSvc,
 		logReqCh:         make(chan logRequest, options.logQueueCap),
 		finch:            make(chan bool, 1),
 		shutdownWorkerCh: make(chan bool, LoggerShutdownChCap),
@@ -283,10 +291,23 @@ func (l *loggerImpl) getFromPool(bucketName string) (conn Connection, err error)
 	return
 }
 
+func (l *loggerImpl) throttle() {
+	if l.throttlerSvc == nil {
+		return
+	}
+
+	ok := l.throttlerSvc.CanSend(false)
+	for !ok {
+		l.throttlerSvc.Wait()
+		ok = l.throttlerSvc.CanSend(false)
+	}
+}
+
 // setMetaTimeout is a wrapper on Connection's SetMeta using the timeout configured with the logger
 func (l *loggerImpl) setMetaTimeout(conn Connection, key string, body []byte, dataType uint8, target base.ConflictLogTarget) error {
 	resultCh := make(chan error, 1)
 	go func() {
+		l.throttle()
 		err := conn.SetMeta(key, body, dataType, target)
 		resultCh <- err
 	}()
@@ -353,7 +374,7 @@ func (l *loggerImpl) writeDocRetry(bucketName string, fn func(conn Connection) e
 			continue
 		}
 
-		l.logger.Debugf("got connection from pool, id=%d", conn.Id())
+		l.logger.Debugf("got connection from pool, id=%d rid=%s lid=%v", conn.Id(), l.replId, l.id)
 
 		// The call to connPool.Put is not advised to be done in a defer here.
 		// This is because calling defer in a loop accumulates multiple defers
@@ -361,14 +382,14 @@ func (l *loggerImpl) writeDocRetry(bucketName string, fn func(conn Connection) e
 		// will be error prone in this case
 		err = fn(conn)
 		if err == nil {
-			l.logger.Debugf("releasing connection to pool after success, id=%d damaged=%v", conn.Id(), false)
+			l.logger.Debugf("releasing connection to pool after success, id=%d damaged=%v rid=%s lid=%v", conn.Id(), false, l.replId, l.id)
 			l.connPool.Put(bucketName, conn, false)
 			break
 		}
 
-		l.logger.Errorf("error in writing doc to conflict bucket err=%v", err)
+		l.logger.Errorf("error in writing doc to conflict bucket err=%v, id=%d rid=%s lid=%v", err, conn.Id(), l.replId, l.id)
 		nwError := l.utils.IsSeriousNetError(err)
-		l.logger.Debugf("releasing connection to pool after failure, id=%d damaged=%v", conn.Id(), nwError)
+		l.logger.Debugf("releasing connection to pool after failure, id=%d damaged=%v rid=%s lid=%v", conn.Id(), nwError, l.replId, l.id)
 		l.connPool.Put(bucketName, conn, nwError)
 		if !nwError {
 			break

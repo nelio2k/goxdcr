@@ -19,6 +19,7 @@ import (
 
 	"github.com/couchbase/goxdcr/v8/conflictlog"
 	"github.com/couchbase/goxdcr/v8/peerToPeer"
+	"github.com/couchbase/goxdcr/v8/service_impl/throttlerSvcImpl"
 	"github.com/couchbase/goxdcr/v8/streamApiWatcher"
 
 	base "github.com/couchbase/goxdcr/v8/base"
@@ -140,7 +141,8 @@ func main() {
 
 	// This needs to be started immediately since some of the constructors will start to query the security setting
 	securitySvc := service_impl.NewSecurityService(options.caFileLocation, log.GetOrCreateContext(base.SecuritySvcKey))
-	securitySvc.Start()
+	securitySvc = securitySvc.SetClientKeyFile(options.clientKeyFile).SetClientCertFile(options.clientCertFile)
+	err := securitySvc.Start()
 
 	top_svc, err := service_impl.NewXDCRTopologySvc(uint16(options.sourceKVAdminPort), uint16(options.xdcrRestPort), options.isEnterprise, options.ipv4, options.ipv6, securitySvc, log.GetOrCreateContext(base.TopoSvcKey), utils)
 	if err != nil {
@@ -253,21 +255,13 @@ func main() {
 
 		p2pMgr, err := peerToPeer.NewPeerToPeerMgr(log.GetOrCreateContext(base.P2PManagerKey), top_svc, utils, bucketTopologyService,
 			replication_spec_svc, base.P2POpaqueCleanupInterval, checkpointsService, collectionsManifestService,
-			backfillReplService, securitySvc, rm.BackfillManager)
+			backfillReplService, securitySvc, rm.BackfillManager, remote_cluster_svc)
 		if err != nil {
 			fmt.Printf("Error starting P2P manager. err=%v\n", err)
 			os.Exit(1)
 		}
 
-		// Temp change: conflict manager will eventually use security service
-		// At present, the sec service does not have all certs, hence pass them
-		// explicitly
-		certs := &conflictlog.ClientCerts{
-			ClientCertFile: options.clientCertFile,
-			ClientKeyFile:  options.clientKeyFile,
-			ClusterCAFile:  options.caFileLocation,
-		}
-		conflictlog.InitManager(log.DefaultLoggerContext, utils, top_svc, top_svc, certs)
+		conflictlog.InitManager(log.DefaultLoggerContext, utils, top_svc, securitySvc)
 
 		// start replication manager in normal mode
 		rm.StartReplicationManager(host,
@@ -284,7 +278,7 @@ func main() {
 			eventlog_svc,
 			processSetting_svc,
 			internalSettings_svc,
-			service_impl.NewThroughputThrottlerSvc(log.GetOrCreateContext(base.TpThrottlerSvcKey)),
+			throttlerSvcImpl.NewThroughputThrottlerSvc(log.GetOrCreateContext(base.TpThrottlerSvcKey)),
 			resolver_svc,
 			utils,
 			collectionsManifestService,

@@ -17,12 +17,12 @@ CLUSTER_DEPENDENCY_MAP=(["C1P0"]="C1" ["C1P1"]="C1" ["C1P2"]="C1")
 CLUSTER_NAME_XDCR_PORT_MAP=(["C1"]=13000 ["C1P0"]=13001 ["C1P1"]=13002 ["C1P2"]=13003 ["C2"]=13004)
 # Set c1 to have 2 buckets and c2 to have 1 bucket
 CLUSTER_NAME_BUCKET_MAP=(["C1"]="B0" ["C2"]="B1")
-unset CLUSTER_SETUP_DONE_MAP
+CLUSTER_SETUP_DONE_MAP=()
 declare -gA CLUSTER_SETUP_DONE_MAP
 
 # Bucket properties
-declare -A BucketProperty=(["ramQuotaMB"]=100)
-declare -A Bucket1Properties=(["ramQuotaMB"]=100 ["CompressionMode"]="Active")
+declare -A BucketProperty=(["ramQuotaMB"]=1024 ["numVBuckets"]=1024)
+declare -A Bucket1Properties=(["ramQuotaMB"]=1024 ["CompressionMode"]="Active" ["numVBuckets"]=1024)
 insertPropertyIntoBucketNamePropertyMap "B0" BucketProperty
 insertPropertyIntoBucketNamePropertyMap "B1" Bucket1Properties
 
@@ -60,6 +60,8 @@ function runOneReplicationCycleAndPause {
 	local checkInt
 	setupCluster
 	setupTopologies
+	echo "Waiting 10 seconds to allow cluster setup to complete..."
+	sleep 10
 	# Shorten the amount of time pipeline restarts
 	setInternalSettings "C1" "TopologyChangeCheckInterval=$checkInterval" "MaxTopologyChangeCountBeforeRestart=$maxChangeCnt" "MaxTopologyStableCountBeforeRestart=$maxStableCnt" "TopologySvcCooldownPeriodSec=$coolDownPeriod"
 	sleep 5
@@ -133,6 +135,11 @@ function runOneRebalanceCycle {
 	echo "============================================================================"
 	echo "Rebalance Cycle $(($cycleCnt + 1))/$(($totalCycleCnt)) STARTING"
 	echo "============================================================================"
+
+	# Previous test may have messed with the CAs
+	setupCertsForTesting
+	cleanupClientCertMaps
+
 	addNodesIn
 	sleep 5
 	startRebalancing "C1"
@@ -248,6 +255,11 @@ function runTestCase {
 		validateInternalLogWithInstance "$dependentClusterName" "$P2P_PULL_ERR_MSG" 0
 		validateInternalLogWithInstance "$clusterName" "$CKPT_MAPPING_NOT_FOUND_MSG" 0
 	done
+
+	echo "Sleeping 60 seconds for heartbeat to be passed and parsed"
+	sleep 60
+	validatePrometheusSourceNodesCnt "C2" 4
+	validatePrometheusSourceRunningReplCnt "C2" 1
 
 	echo "============================================================================"
 	echo "PASSED"

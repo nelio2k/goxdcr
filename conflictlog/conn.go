@@ -22,8 +22,8 @@ type Connection interface {
 	SetMeta(key string, val []byte, dataType uint8, target base.ConflictLogTarget) (err error)
 }
 
-// newConnId generates new unique connection Id. This is used by the implementations
+// NewConnId generates new unique connection Id. This is used by the implementations
 // of the Connection interface
-func newConnId() int64 {
+func NewConnId() int64 {
 	return atomic.AddInt64(&gConnId, 1)
 }

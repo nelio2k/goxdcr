@@ -38,7 +38,7 @@ import (
 	_ "net/http/pprof"
 )
 
-var StaticPaths = []string{base.RemoteClustersPath, CreateReplicationPath, SettingsReplicationsPath, AllReplicationsPath, AllReplicationInfosPath, RegexpValidationPrefix, MemStatsPath, BlockProfileStartPath, BlockProfileStopPath, XDCRInternalSettingsPath, XDCRPrometheusStatsPath, XDCRPrometheusStatsHighPath, base.XDCRPeerToPeerPath, base.XDCRConnectionPreCheckPath, "xdcr/conflictlog"}
+var StaticPaths = []string{base.RemoteClustersPath, CreateReplicationPath, SettingsReplicationsPath, AllReplicationsPath, AllReplicationInfosPath, RegexpValidationPrefix, MemStatsPath, BlockProfileStartPath, BlockProfileStopPath, XDCRInternalSettingsPath, XDCRPrometheusStatsPath, XDCRPrometheusStatsHighPath, base.XDCRPeerToPeerPath, base.XDCRConnectionPreCheckPath, base.XDCRSourceClustersPath, "xdcr/conflictlog"}
 var DynamicPathPrefixes = []string{base.RemoteClustersPath, DeleteReplicationPrefix, SettingsReplicationsPath, StatisticsPrefix, AllReplicationsPath}
 
 var logger_ap *log.CommonLogger = log.NewLogger(base.AdminPortKey, log.GetOrCreateContext(base.AdminPortKey))
@@ -243,6 +243,8 @@ func (adminport *Adminport) handleRequest(
 		response, err = adminport.doPostConnectionPreCheckRequest(request)
 	case base.XDCRConnectionPreCheckPath + base.UrlDelimiter + base.MethodGet:
 		response, err = adminport.doGetConnectionPreCheckResultRequest(request)
+	case base.XDCRSourceClustersPath + base.UrlDelimiter + base.MethodGet:
+		response, err = adminport.doGetSourceClustersRequest(request)
 	// TODO: [TEMP] remove doChangeConflictLogSetting
 	case "xdcr/conflictlog" + base.UrlDelimiter + base.MethodPost:
 		response, err = adminport.doChangeConflictLogSetting(request)
@@ -311,6 +313,10 @@ type getRemoteClusterOpts struct {
 	RemoteClusterUuid        string
 }
 
+type getSourcesOpt struct {
+	getOptsCommon
+}
+
 func (g getRemoteClusterOpts) ShouldPopulateRemoteBucketManifest() bool {
 	return g.BucketManifestBucketName != "" && g.RemoteClusterUuid != ""
 }
@@ -351,6 +357,22 @@ func parseGetOptsCommon(query url.Values, opt *getOptsCommon) {
 
 func parseGetReplicationsRequestQuery(request *http.Request) getReplicationsOpt {
 	var opt getReplicationsOpt
+	if request == nil {
+		return opt
+	}
+
+	query := request.URL.Query()
+	if query == nil || len(query) == 0 {
+		return opt
+	}
+
+	parseGetOptsCommon(query, &opt.getOptsCommon)
+
+	return opt
+}
+
+func parseGetSourcesRequestQuery(request *http.Request) getSourcesOpt {
+	var opt getSourcesOpt
 	if request == nil {
 		return opt
 	}
@@ -1314,6 +1336,13 @@ func (adminport *Adminport) doGetPrometheusStatsRequest(request *http.Request, h
 		return nil, err
 	}
 	adminport.prometheusExporter.LoadExpVarMap(expVarMap)
+
+	sourceClusterNames, sourceSpecs, sourceNodes, err := adminport.p2pMgr.GetHeartbeatsReceivedV1()
+	if err != nil {
+		return nil, err
+	}
+	adminport.prometheusExporter.LoadSourceClustersInfoV1(sourceClusterNames, sourceSpecs, sourceNodes)
+
 	outputBytes, err := adminport.prometheusExporter.Export()
 	if err != nil {
 		return EncodeErrorMessageIntoResponse(err, http.StatusInternalServerError)
@@ -1340,7 +1369,7 @@ func (adminport *Adminport) doPostPeerToPeerRequest(request *http.Request) (*ap.
 	if response != nil || err != nil {
 		return response, err
 	}
-	req, err := peerToPeer.GenerateP2PReqOrResp(request, adminport.utils, adminport.securitySvc, adminport.Logger())
+	req, err := peerToPeer.GenerateP2PReqOrResp(request, adminport.utils, adminport.securitySvc, adminport.Logger(), adminport.xdcrCompTopologySvc)
 	if err != nil {
 		adminport.Logger().Errorf("Unable to generate req or resp from %v err: %v\n", localRemoteIPs.Remote, err)
 		return EncodeErrorMessageIntoResponse(err, http.StatusInternalServerError)
@@ -1405,6 +1434,34 @@ func (adminport *Adminport) doGetConnectionPreCheckResultRequest(request *http.R
 	return NewConnectionPreCheckGetResponse(taskId, res, done)
 }
 
+func (adminport *Adminport) doGetSourceClustersRequest(request *http.Request) (*ap.Response, error) {
+	logger_ap.Infof("doGetSourceClustersRequest req=%v\n", base.CloneAndTagHttpRequest(request))
+	defer logger_ap.Infof("Finished doGetSourceClustersRequest\n")
+
+	// Since getting source clusters information will return replication and its settings, use the same
+	// limiting privilege as what it takes to retrieve a replication and its settings
+	response, err := authWebCreds(request, base.PermissionXDCRInternalRead)
+	if response != nil || err != nil {
+		return response, err
+	}
+
+	options := parseGetSourcesRequestQuery(request)
+
+	srcNames, srcSpecs, srcNodes, err := adminport.p2pMgr.GetHeartbeatsReceivedV1()
+	if err != nil {
+		return nil, err
+	}
+
+	if options.RedactRequested {
+		for sourceUuid, specList := range srcSpecs {
+			list := metadata.ReplSpecList(specList)
+			srcSpecs[sourceUuid] = list.Redact()
+		}
+	}
+
+	return NewSourceClustersV1Response(srcNames, srcSpecs, srcNodes)
+}
+
 // TODO: [TEMP] remove doChangeConflictLogSetting
 func (adminport *Adminport) doChangeConflictLogSetting(request *http.Request) (*ap.Response, error) {
 	logger_ap.Infof("doChangeConflictConnectionType\n")
@@ -1432,24 +1489,10 @@ func (adminport *Adminport) doChangeConflictLogSetting(request *http.Request) (*
 
 			m, err := conflictlog.GetManager()
 			if err != nil {
-				errorsMap["error_connType"] = err
+				errorsMap["error_skipTlsVerify"] = err
 				return EncodeObjectIntoResponse(errorsMap)
 			}
 			m.SetSkipTlsVerify(tlsVerify)
-		case "connType":
-			connType := valArr[0]
-			logger_ap.Infof("changing conflict connection type = %s", connType)
-			m, err := conflictlog.GetManager()
-			if err != nil {
-				errorsMap["error_connType"] = err
-				return EncodeObjectIntoResponse(errorsMap)
-			}
-
-			err = m.SetConnType(connType)
-			if err != nil {
-				errorsMap["error_setConnType"] = err
-				return EncodeObjectIntoResponse(errorsMap)
-			}
 		case "workerCount":
 			workerCnt := valArr[0]
 			i, err := strconv.Atoi(workerCnt)
@@ -1459,6 +1502,31 @@ func (adminport *Adminport) doChangeConflictLogSetting(request *http.Request) (*
 			}
 			logger_ap.Infof("changing worker count = %s => %v", workerCnt, i)
 			conflictlog.DefaultLoggerWorkerCount = i
+		case "queueLen":
+			queueLen := valArr[0]
+			i, err := strconv.Atoi(queueLen)
+			if err != nil {
+				errorsMap[fmt.Sprintf("error_queueLen=%s", queueLen)] = err
+				return EncodeObjectIntoResponse(errorsMap)
+			}
+			logger_ap.Infof("changing queueLen = %s => %v", queueLen, i)
+			conflictlog.DefaultLogCapacity = i
+		case "connLimit":
+			connLimit := valArr[0]
+			i, err := strconv.Atoi(connLimit)
+			if err != nil {
+				errorsMap[fmt.Sprintf("error_connLimit=%s", connLimit)] = err
+				return EncodeObjectIntoResponse(errorsMap)
+			}
+
+			m, err := conflictlog.GetManager()
+			if err != nil {
+				errorsMap["error_ManagerConnLimit"] = err
+				return EncodeObjectIntoResponse(errorsMap)
+			}
+
+			logger_ap.Infof("changing connLimit = %s => %v", connLimit, i)
+			m.SetConnLimit(i)
 		default:
 			continue
 		}

@@ -28,6 +28,7 @@ import (
 	"github.com/couchbase/goxdcr/v8/log"
 	"github.com/couchbase/goxdcr/v8/metadata"
 	"github.com/couchbase/goxdcr/v8/service_def"
+	"github.com/couchbase/goxdcr/v8/service_def/throttlerSvc"
 	utilities "github.com/couchbase/goxdcr/v8/utils"
 )
 
@@ -127,7 +128,7 @@ type Router struct {
 	stopped         uint32
 	finCh           chan bool
 
-	throughputThrottlerSvc service_def.ThroughputThrottlerSvc
+	throughputThrottlerSvc throttlerSvc.ThroughputThrottlerSvc
 	// whether the current replication is a high priority replication
 	// when Priority or Ongoing setting is changed, this field will be updated through UpdateSettings() call
 	isHighReplication *base.AtomicBooleanType
@@ -153,9 +154,6 @@ type Router struct {
 	migrationUIRaiser func(string)
 
 	connectivityStatusGetter func() (metadata.ConnectivityStatus, error)
-
-	crossClusterVersioning uint32
-	mobileCompatMode       uint32
 
 	// RevID or CAS can't be used with doc key to create a unique-key when we skip targetCR
 	// This is because of the possibility of same revID or CAS mutations over the dcp stream
@@ -1376,7 +1374,7 @@ func (c CollectionsRoutingMap) UpdateBrokenMappingsPair(brokenMapsRO *metadata.C
  * 2. routingMap == vbNozzleMap, which is a map of <vbucketID> -> <targetNozzleID>
  * 3+ Rest should be relatively obv
  */
-func NewRouter(id string, spec *metadata.ReplicationSpecification, downStreamParts map[string]common.Part, routingMap map[uint16]string, sourceCRMode base.ConflictResolutionMode, logger_context *log.LoggerContext, utilsIn utilities.UtilsIface, throughputThrottlerSvc service_def.ThroughputThrottlerSvc, isHighReplication bool, filterExpDelType base.FilterExpDelType, collectionsManifestSvc service_def.CollectionsManifestSvc, dcpObjRecycler utilities.RecycleObjFunc, explicitMapChangeHandler func(diff metadata.CollectionNamespaceMappingsDiffPair), remoteClusterCapability metadata.Capability, migrationUIRaiser func(string), connectivityStatusGetter func() (metadata.ConnectivityStatus, error), eventsProducer common.PipelineEventsProducer) (*Router, error) {
+func NewRouter(id string, spec *metadata.ReplicationSpecification, downStreamParts map[string]common.Part, routingMap map[uint16]string, sourceCRMode base.ConflictResolutionMode, logger_context *log.LoggerContext, utilsIn utilities.UtilsIface, throughputThrottlerSvc throttlerSvc.ThroughputThrottlerSvc, isHighReplication bool, filterExpDelType base.FilterExpDelType, collectionsManifestSvc service_def.CollectionsManifestSvc, dcpObjRecycler utilities.RecycleObjFunc, explicitMapChangeHandler func(diff metadata.CollectionNamespaceMappingsDiffPair), remoteClusterCapability metadata.Capability, migrationUIRaiser func(string), connectivityStatusGetter func() (metadata.ConnectivityStatus, error), eventsProducer common.PipelineEventsProducer) (*Router, error) {
 
 	topic := spec.Id
 	filterExpression, exprFound := spec.Settings.Values[metadata.FilterExpressionKey].(string)
@@ -1607,16 +1605,6 @@ func (router *Router) ComposeMCRequest(wrappedEvent *base.WrappedUprEvent) (*bas
 	wrapped_req.ColInfoMtx.Lock()
 	wrapped_req.ColInfo = router.targetColInfoPool.Get()
 	wrapped_req.ColInfoMtx.Unlock()
-
-	isCCR := router.sourceCRMode == base.CRMode_Custom
-	isMobile := router.getMobileCompatMode() != base.MobileCompatibilityOff
-	crossClusterVersioning := router.getCrossClusterVersioning()
-	if isMobile {
-		wrapped_req.HLVModeOptions.PreserveSync = true
-	}
-	if crossClusterVersioning || isCCR {
-		wrapped_req.HLVModeOptions.SendHlv = true
-	}
 
 	return wrapped_req, nil
 }
@@ -2013,15 +2001,6 @@ func (router *Router) updateHighRepl(isHighReplicationObj interface{}) error {
 	return nil
 }
 
-func (router *Router) SetMobileCompatibility(val uint32) {
-	router.filter.SetMobileCompatibility(val)
-	atomic.StoreUint32(&router.mobileCompatMode, val)
-}
-
-func (router *Router) getMobileCompatMode() int {
-	return int(atomic.LoadUint32(&router.mobileCompatMode))
-}
-
 func (router *Router) UpdateSettings(settings metadata.ReplicationSettingsMap) error {
 	errMap := make(base.ErrorMap)
 
@@ -2083,16 +2062,6 @@ func (router *Router) UpdateSettings(settings metadata.ReplicationSettingsMap) e
 	collectionsMgtMode, ok := settings[metadata.CollectionsMgtMultiKey].(base.CollectionsMgtType)
 	if ok {
 		router.collectionModes.Set(collectionsMgtMode)
-	}
-
-	mobileCompatibleMode, ok := settings[metadata.MobileCompatibleKey].(int)
-	if ok {
-		router.SetMobileCompatibility(uint32(mobileCompatibleMode))
-	}
-
-	val, ok := settings[base.EnableCrossClusterVersioningKey].(bool)
-	if ok {
-		router.SetCrossClusterVersioning(val)
 	}
 
 	casDriftThreshold, ok := settings[metadata.CASDriftThresholdSecsKey].(int)
@@ -2197,18 +2166,6 @@ func (router *Router) recycleDataObj(obj interface{}) {
 	default:
 		panic(fmt.Sprintf("Coding bug type is %v", reflect.TypeOf(obj)))
 	}
-}
-
-func (router *Router) SetCrossClusterVersioning(val bool) {
-	var storeVal uint32
-	if val {
-		storeVal = 1
-	}
-	atomic.StoreUint32(&router.crossClusterVersioning, storeVal)
-}
-
-func (router *Router) getCrossClusterVersioning() bool {
-	return atomic.LoadUint32(&router.crossClusterVersioning) == 1
 }
 
 // Returns a bool set to true if not to be replicated

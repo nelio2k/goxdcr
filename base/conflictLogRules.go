@@ -13,6 +13,7 @@ var (
 	ErrInvalidTargetType       error = errors.New("invalid target type")
 	ErrInvalidCollection       error = errors.New("conflict logging collection not provided or wrong format")
 	ErrNilMapping              error = errors.New("conflict logging mapping input should not be nil")
+	ErrSystemNamespace         error = errors.New("conflict logging mapping target cannot be system scope or system collection")
 )
 
 // ConflictLogRules captures the logging rules for a replication
@@ -40,7 +41,7 @@ type ConflictLogTarget struct {
 }
 
 func (t ConflictLogTarget) String() string {
-	return fmt.Sprintf("%v.%v.%v", t.Bucket, t.NS.ScopeName, t.NS.CollectionName)
+	return fmt.Sprintf("%v.%v", t.Bucket, t.NS.ToIndexString())
 }
 
 func NewConflictLogTarget(bucket, scope, collection string) ConflictLogTarget {
@@ -69,6 +70,23 @@ func BlacklistConflictLogTarget() ConflictLogTarget {
 // are populated
 func (t ConflictLogTarget) IsComplete() bool {
 	return t.Bucket != "" && t.NS.ScopeName != "" && t.NS.CollectionName != ""
+}
+
+// Returns true if the scope and/or collection used is a system scope and/or collection.
+// The criteria checked is the underscore (_) at the beginning of the scope/collection name,
+// except the _default scope/collection.
+func (t ConflictLogTarget) IsSystemTarget() bool {
+	if t.NS.ScopeName != DefaultScopeCollectionName &&
+		len(t.NS.ScopeName) > 0 && t.NS.ScopeName[0] == '_' {
+		return true
+	}
+
+	if t.NS.CollectionName != DefaultScopeCollectionName &&
+		len(t.NS.CollectionName) > 0 && t.NS.CollectionName[0] == '_' {
+		return true
+	}
+
+	return false
 }
 
 // The function defaults the collection and scope names to _default if not set.
@@ -224,6 +242,11 @@ func (r *ConflictLogRules) Validate() (err error) {
 		return
 	}
 
+	if r.Target.IsSystemTarget() {
+		err = ErrSystemNamespace
+		return
+	}
+
 	for m, t := range r.Mapping {
 		if m.ScopeName == "" {
 			err = ErrEmptyScope
@@ -236,6 +259,11 @@ func (r *ConflictLogRules) Validate() (err error) {
 
 		if !t.IsComplete() {
 			err = ErrIncompleteTarget
+			return
+		}
+
+		if t.IsSystemTarget() {
+			err = ErrSystemNamespace
 			return
 		}
 	}

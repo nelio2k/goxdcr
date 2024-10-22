@@ -11,8 +11,8 @@ CLUSTER_NAME_XDCR_PORT_MAP=(["C1"]=13000 ["C2"]=13001)
 CLUSTER_NAME_BUCKET_MAP=(["C1"]="B1" ["C2"]="B2")
 
 # Bucket properties
-declare -A BucketProperty=(["ramQuotaMB"]=100)
-declare -A Bucket1Properties=(["ramQuotaMB"]=100 ["CompressionMode"]="Active")
+declare -A BucketProperty=(["ramQuotaMB"]=1024 ["numVBuckets"]=1024)
+declare -A Bucket1Properties=(["ramQuotaMB"]=1024 ["CompressionMode"]="Active" ["numVBuckets"]=1024)
 insertPropertyIntoBucketNamePropertyMap "B0" BucketProperty
 insertPropertyIntoBucketNamePropertyMap "B1" Bucket1Properties
 insertPropertyIntoBucketNamePropertyMap "B2" BucketProperty
@@ -66,6 +66,9 @@ function testReplicationSettings {
 		exit 1
 	fi
 
+	echo "sleeping 10 seconds for pipeline to restart"
+	sleep 10
+
 	writeJSONDocument "C1" "B1" "_sync:doc2" '{"foo":"bar"}'
 	writeJSONDocument "C1" "B1" "_sync:att:doc2" '{"foo":"bar"}'
 	sleep 20
@@ -85,6 +88,9 @@ function testReplicationSettings {
 		echo "mobile should be \"Active\" but got $mobile"
 		exit 1
 	fi
+
+	echo "sleeping 10 seconds for pipeline to restart"
+	sleep 10
 
 	writeJSONDocument "C1" "B1" "_sync:doc3" '{"foo":"bar"}'
 	writeJSONDocument "C1" "B1" "_sync:att:doc3" '{"foo":"bar"}'

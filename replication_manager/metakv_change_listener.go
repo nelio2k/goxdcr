@@ -453,6 +453,7 @@ func needToReconstructPipeline(oldSettings, newSettings *metadata.ReplicationSet
 	filterChanged := !(oldSettings.FilterExpression == newSettings.FilterExpression)
 	modesChanged := oldSettings.NeedToRestartPipelineDueToCollectionModeChanges(newSettings)
 	rulesChanged := !oldSettings.GetCollectionsRoutingRules().SameAs(newSettings.GetCollectionsRoutingRules())
+	mobileModeChanged := oldSettings.GetMobileCompatible() != newSettings.GetMobileCompatible()
 
 	// the following may qualify for live update in the future.
 	// batchCount is tricky since the sizes of xmem data channels depend on it.
@@ -461,7 +462,8 @@ func needToReconstructPipeline(oldSettings, newSettings *metadata.ReplicationSet
 	batchSizeChanged := (oldSettings.BatchSize != newSettings.BatchSize)
 
 	return repTypeChanged || sourceNozzlePerNodeChanged || targetNozzlePerNodeChanged ||
-		batchCountChanged || batchSizeChanged || compressionTypeChanged || filterChanged || modesChanged || rulesChanged
+		batchCountChanged || batchSizeChanged || compressionTypeChanged || filterChanged ||
+		modesChanged || rulesChanged || mobileModeChanged
 }
 
 func needToRestreamPipeline(oldSettings *metadata.ReplicationSettings, newSettings *metadata.ReplicationSettings) bool {
@@ -499,7 +501,6 @@ func (rscl *ReplicationSpecChangeListener) liveUpdatePipeline(topic string, oldS
 		isOldReplHighPriority != isNewReplHighPriority ||
 		oldSettings.GetExpDelMode() != newSettings.GetExpDelMode() ||
 		oldSettings.GetDevMainPipelineDelay() != newSettings.GetDevMainPipelineDelay() ||
-		oldSettings.GetMobileCompatible() != newSettings.GetMobileCompatible() ||
 		oldSettings.GetJsFunctionTimeoutMs() != newSettings.GetJsFunctionTimeoutMs() ||
 		oldSettings.GetDevBackfillPipelineDelay() != newSettings.GetDevBackfillPipelineDelay() ||
 		len(newMergeFuncMapping) > 0 && newMergeFuncMapping.SameAs(oldMergeFuncMapping) == false ||
@@ -737,7 +738,7 @@ func (pscl *GlobalSettingChangeListener) validateGlobalSetting(settingObj interf
 	return psettings, nil
 }
 
-// Handler callback for prcoess setting changed event
+// Handler callback for process setting changed event
 // In case of globalsettings oldsetting object will be null as we dont cache the object.. so we dont have access to old value
 func (pscl *GlobalSettingChangeListener) globalSettingChangeHandlerCallback(settingId string, oldSettingObj interface{}, newSettingObj interface{}) error {
 
@@ -769,23 +770,22 @@ func (pscl *GlobalSettingChangeListener) globalSettingChangeHandlerCallback(sett
 		pscl.logger.Infof("Successfully changed  GOGC setting from(old) %v to(New) %v\n", oldGoGCValue, newSetting.GoGC)
 	}
 	if newSetting.Settings != nil {
-		// represents a json containing the logLevel for individual services
-		genericServicesLogLevel, ok := newSetting.Settings.Values[metadata.GenericServicesLogLevelKey]
+		// represents a map containing the logLevel for individual services
+		val, ok := newSetting.Settings.Values[metadata.GenericServicesLogLevelKey]
 		if ok {
-			genericServicesLogLevelStr, valid := genericServicesLogLevel.(string)
+			// since setting value is defined as interface{}, the actual data type of a setting value may change
+			// after marshalling and unmarshalling
+			// in this case map[string]string becomes map[string]interface{}
+			serviceToLogLevelMap, valid := val.(map[string]interface{})
+
 			if !valid {
-				return fmt.Errorf("failed to apply the LogLevel for specified services. err=Invalid type %T for genericServicesLogLevel. Expected string", genericServicesLogLevel)
-			}
-			serviceToLogLevelMap, err1 := base.ValidateAndConvertStringToJsonType(genericServicesLogLevelStr)
-			if err1 != nil {
-				return fmt.Errorf("failed to apply the LogLevel for specified services. err: %v\n", err1)
+				return fmt.Errorf("failed to apply the LogLevel for specified services. err=Invalid type %T for genericServicesLogLevel. Expected map[string]interface{}", val)
 			}
 			for service, logLevelIface := range serviceToLogLevelMap {
 				log.ServiceToLoggerContext.Lock.RLock()
 				context, ok := log.ServiceToLoggerContext.ServiceToContextMap[service]
 				log.ServiceToLoggerContext.Lock.RUnlock()
 				if !ok {
-					pscl.logger.Errorf("no LoggerContext exists for the service %v", service)
 					continue
 				}
 				logLevelStr, valid := logLevelIface.(string)
@@ -793,8 +793,8 @@ func (pscl *GlobalSettingChangeListener) globalSettingChangeHandlerCallback(sett
 					pscl.logger.Errorf("failed to apply the LogLevel for service %v. err=Invalid type %T for logLevel. Expected string", service, logLevelIface)
 					continue
 				}
-				loglevel, err1 := log.LogLevelFromStr(logLevelStr)
-				if err1 != nil {
+				loglevel, err := log.LogLevelFromStr(logLevelStr)
+				if err != nil {
 					pscl.logger.Errorf("%v, setting the loglevel to Info for %v", err, service)
 					//reset it to logLevelInfo
 					loglevel = log.LogLevelInfo

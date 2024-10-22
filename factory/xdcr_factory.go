@@ -32,6 +32,7 @@ import (
 	"github.com/couchbase/goxdcr/v8/pipeline_svc"
 	"github.com/couchbase/goxdcr/v8/pipeline_utils"
 	"github.com/couchbase/goxdcr/v8/service_def"
+	"github.com/couchbase/goxdcr/v8/service_def/throttlerSvc"
 	"github.com/couchbase/goxdcr/v8/service_impl"
 	utilities "github.com/couchbase/goxdcr/v8/utils"
 )
@@ -68,7 +69,7 @@ type XDCRFactory struct {
 	checkpoint_svc           service_def.CheckpointsService
 	capi_svc                 service_def.CAPIService
 	uilog_svc                service_def.UILogSvc
-	throughput_throttler_svc service_def.ThroughputThrottlerSvc
+	throughput_throttler_svc throttlerSvc.ThroughputThrottlerSvc
 	collectionsManifestSvc   service_def.CollectionsManifestSvc
 	backfillReplSvc          service_def.BackfillReplSvc
 	resolverSvc              service_def.ResolverSvcIface
@@ -94,7 +95,7 @@ type BackfillMgrGetter func() service_def.BackfillMgrIface
 func NewXDCRFactory(repl_spec_svc service_def.ReplicationSpecSvc, remote_cluster_svc service_def.RemoteClusterSvc,
 	xdcr_topology_svc service_def.XDCRCompTopologySvc,
 	checkpoint_svc service_def.CheckpointsService, capi_svc service_def.CAPIService, uilog_svc service_def.UILogSvc,
-	throughput_throttler_svc service_def.ThroughputThrottlerSvc,
+	throughput_throttler_svc throttlerSvc.ThroughputThrottlerSvc,
 	pipeline_default_logger_ctx *log.LoggerContext, factory_logger_ctx *log.LoggerContext,
 	pipeline_failure_handler common.SupervisorFailureHandler, utilsIn utilities.UtilsIface,
 	resolver_svc service_def.ResolverSvcIface, collectionsManifestSvc service_def.CollectionsManifestSvc,
@@ -282,7 +283,7 @@ func (xdcrf *XDCRFactory) newPipelineCommon(topic string, pipelineType common.Pi
 
 	xdcrf.logger.Infof("%v kv_vb_map=%v\n", partTopic, kv_vb_map)
 
-	sourceClusterUUID, err := xdcrf.xdcr_topology_svc.MyClusterUuid()
+	sourceClusterUUID, err := xdcrf.xdcr_topology_svc.MyClusterUUID()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -338,8 +339,8 @@ func (xdcrf *XDCRFactory) newPipelineCommon(topic string, pipelineType common.Pi
 	conflictLoggingMap := spec.Settings.GetConflictLoggingMapping()
 	conflictLogger, err := conflictlog.NewLoggerWithRules(conflictLoggingMap, spec.UniqueId(), logger_ctx, xdcrf.logger)
 	if err != nil && err != conflictlog.ErrConflictLoggingIsOff {
-		// log the error and continue to create pipeline.
 		xdcrf.logger.Errorf("Error initialising new logger for conflict logging with input=%v, err=%v", conflictLoggingMap, err)
+		return nil, nil, err
 	}
 
 	// construct and initializes the pipeline
@@ -902,10 +903,6 @@ func (xdcrf *XDCRFactory) constructUpdateSettingsForXmemNozzle(pipeline common.P
 	if ok {
 		xmemSettings[parts.XMEM_DEV_BACKFILL_SLEEP_DELAY] = backfillSleepDelay
 	}
-	mobile, ok := settings[metadata.MobileCompatibleKey]
-	if ok {
-		xmemSettings[parts.MobileCompatible] = mobile
-	}
 	conflictLoggingMap, ok := settings[metadata.ConflictLoggingKey]
 	if ok {
 		xmemSettings[parts.ConflictLogging] = conflictLoggingMap
@@ -1370,11 +1367,6 @@ func (xdcrf *XDCRFactory) constructSettingsForRouter(pipeline common.Pipeline, s
 		routerSettings[parts.FilterExpDelKey] = filterExpDelMode
 	}
 
-	mobileCompatible, ok := settings[parts.MobileCompatible]
-	if ok {
-		routerSettings[parts.MobileCompatible] = mobileCompatible
-	}
-
 	xdcrf.disableCollectionIfNeeded(settings, routerSettings, pipeline.Specification().GetReplicationSpec())
 
 	// Router keeps a copy of the current highest target manifest ID
@@ -1396,11 +1388,6 @@ func (xdcrf *XDCRFactory) constructSettingsForRouter(pipeline common.Pipeline, s
 	explicitMappingRules, ok := settings[metadata.CollectionsMappingRulesKey]
 	if ok {
 		routerSettings[metadata.CollectionsMappingRulesKey] = explicitMappingRules
-	}
-
-	crossCluster, ok := settings[base.EnableCrossClusterVersioningKey]
-	if ok {
-		routerSettings[base.EnableCrossClusterVersioningKey] = crossCluster
 	}
 
 	casDriftThreshold, ok := settings[metadata.CASDriftThresholdSecsKey]

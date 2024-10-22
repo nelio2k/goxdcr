@@ -86,6 +86,7 @@ type UtilsIface interface {
 	GetVersionPruningWindowHrs(bucketInfo map[string]interface{}) (int, error)
 	GetVbucketsMaxCas(bucketInfo map[string]interface{}) ([]interface{}, error)
 	GetMaxCasStatsForVBs(vbnos []uint16, conn mcc.ClientIface, statsMap *map[string]string, recycledVbSeqnoMap *map[uint16]uint64) (map[uint16]uint64, []uint16, error)
+	GetTerseInfo(localConnStr string, username, password string, authMech base.HttpAuthMech, certificate []byte, sanInCertificate bool, clientCert, clientKey []byte, logger *log.CommonLogger) (map[string]interface{}, error)
 
 	ParseHighSeqnoStat(vbnos []uint16, stats_map map[string]string, highseqno_map map[uint16]uint64) ([]uint16, error)
 	ParseHighSeqnoAndVBUuidFromStats(vbnos []uint16, stats_map map[string]string, high_seqno_and_vbuuid_map map[uint16][]uint64) ([]uint16, map[uint16]string)
@@ -98,6 +99,7 @@ type UtilsIface interface {
 	GetServersListFromBucketInfo(bucketInfo map[string]interface{}) ([]string, error)
 	GetServerVBucketsMap(connStr, bucketName string, bucketInfo map[string]interface{}, recycledMapGetter func(nodes []string) *base.KvVBMapType, serversList []string) (*base.KvVBMapType, error)
 	GetHostNamesFromBucketInfo(bucketInfo map[string]interface{}) ([]string, error)
+	ParseClientCertOutput(clientCertInput map[string]interface{}) (isMandatory bool, err error)
 
 	// Network related utilities
 	ConstructHttpRequest(baseURL string, path string, preservePathEncoding bool, username string, password string, authMech base.HttpAuthMech, userAuthMode base.UserAuthMode, httpCommand string, contentType string, body []byte, logger *log.CommonLogger) (*http.Request, string, error)
