@@ -13,20 +13,18 @@ package main
 import (
 	"flag"
 	"fmt"
-	"os"
-	"runtime"
-	"time"
-
 	"github.com/couchbase/goxdcr/v8/conflictlog"
 	"github.com/couchbase/goxdcr/v8/peerToPeer"
 	"github.com/couchbase/goxdcr/v8/service_impl/throttlerSvcImpl"
 	"github.com/couchbase/goxdcr/v8/streamApiWatcher"
+	metadata_svc2 "github.com/nelio2k/goxdcr/metadata_svc"
+	"os"
+	"runtime"
 
 	base "github.com/couchbase/goxdcr/v8/base"
 	log "github.com/couchbase/goxdcr/v8/log"
 	"github.com/couchbase/goxdcr/v8/metadata_svc"
 	rm "github.com/couchbase/goxdcr/v8/replication_manager"
-	"github.com/couchbase/goxdcr/v8/service_def"
 	"github.com/couchbase/goxdcr/v8/service_impl"
 	utilities "github.com/couchbase/goxdcr/v8/utils"
 )
@@ -51,9 +49,6 @@ var options struct {
 	maxLogFileSize      uint64
 	maxNumberOfLogFiles uint64
 }
-
-var max_retry_wait_for_metadata_service = 30
-var retry_interval_wait_for_metadata_service = time.Second
 
 func argParse() {
 	flag.Uint64Var(&options.sourceKVAdminPort, "sourceKVAdminPort", 9000,
@@ -158,7 +153,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	err = waitForMetadataService(metakv_svc)
+	err = metakv_svc.WaitForMetadataService()
 	if err != nil {
 		fmt.Printf("%v\n", err)
 		os.Exit(1)
@@ -301,23 +296,5 @@ func main() {
 
 		// keep main alive in normal mode
 		<-done
-	}
-}
-
-// wait [for an upward of 30 seconds] for metadata service to become available
-func waitForMetadataService(metakv_svc service_def.MetadataSvc) error {
-	num_retry := 0
-	for {
-		_, err := metakv_svc.GetAllMetadataFromCatalog(metadata_svc.RemoteClustersCatalogKey)
-		if err == nil {
-			return nil
-		}
-		num_retry++
-		if num_retry > max_retry_wait_for_metadata_service {
-			return fmt.Errorf("Metadata service not available after %v retries. \n", num_retry-1)
-		} else {
-			fmt.Printf("Metadata service not available. Retrying after %v. \n", retry_interval_wait_for_metadata_service)
-			time.Sleep(retry_interval_wait_for_metadata_service)
-		}
 	}
 }

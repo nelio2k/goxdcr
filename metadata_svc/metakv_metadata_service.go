@@ -361,3 +361,23 @@ func GetKeyFromPath(path string) string {
 		panic(fmt.Sprintf("path=%v doesn't start with '/'", path))
 	}
 }
+
+// wait [for an upward of 30 seconds] for metadata service to become available
+func (metaSvc *MetaKVMetadataSvc) WaitForMetadataService() error {
+	var max_retry_wait_for_metadata_service = 30
+	var retry_interval_wait_for_metadata_service = time.Second
+	num_retry := 0
+	for {
+		_, err := metaSvc.GetAllMetadataFromCatalog(RemoteClustersCatalogKey)
+		if err == nil {
+			return nil
+		}
+		num_retry++
+		if num_retry > max_retry_wait_for_metadata_service {
+			return fmt.Errorf("Metadata service not available after %v retries. \n", num_retry-1)
+		} else {
+			fmt.Printf("Metadata service not available. Retrying after %v. \n", retry_interval_wait_for_metadata_service)
+			time.Sleep(retry_interval_wait_for_metadata_service)
+		}
+	}
+}
