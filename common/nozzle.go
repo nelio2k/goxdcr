@@ -49,4 +49,6 @@ type SourceNozzle interface {
 
 	// Source nozzles may have more than one connector related to it
 	MultiConnectable
+
+	SetCustomPlainAuth(func() (string, string, error))
 }
